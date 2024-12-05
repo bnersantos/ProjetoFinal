@@ -1,0 +1,50 @@
+<html>
+<head>
+<title>criar_fornecedor.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+.s1 { color: #e8bf6a;}
+.s2 { color: #bababa;}
+.s3 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+criar_fornecedor.html</font>
+</center></td></tr></table>
+<pre><span class="s0">{% extends 'modelo_base2.html' %}</span>
+
+<span class="s0">{% block conteudo %}</span>
+
+<span class="s0">{% with messages = get_flashed_messages(with_categories=true) %}</span>
+    <span class="s0">{% if messages %}</span>
+        <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;mensagens&quot;</span><span class="s1">&gt;</span>
+            <span class="s0">{% for category, message in messages %}</span>
+                <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;alert {{ 'alert-success' if category == 'success' else 'alert-danger' }}&quot;</span><span class="s1">&gt;</span>
+                    <span class="s0">{{ message }}</span>
+                <span class="s1">&lt;/div&gt;</span>
+            <span class="s0">{% endfor %}</span>
+        <span class="s1">&lt;/div&gt;</span>
+    <span class="s0">{% endif %}</span>
+<span class="s0">{% endwith %}</span>
+
+<span class="s1">&lt;form </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">action</span><span class="s3">=&quot;{{ url_for('criar_fornecedor') }}&quot; </span><span class="s2">method</span><span class="s3">=&quot;POST&quot;</span><span class="s1">&gt;</span>
+    <span class="s1">&lt;label </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">for</span><span class="s3">=&quot;nome_fornecedor&quot;</span><span class="s1">&gt;</span><span class="s0">Nome do Fornecedor:</span><span class="s1">&lt;/label&gt;</span>
+    <span class="s1">&lt;input </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">type</span><span class="s3">=&quot;text&quot; </span><span class="s2">name</span><span class="s3">=&quot;nome_fornecedor&quot; </span><span class="s2">id</span><span class="s3">=&quot;nome_fornecedor&quot; </span><span class="s2">required</span><span class="s1">&gt;&lt;br&gt;</span>
+
+    <span class="s1">&lt;label </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">for</span><span class="s3">=&quot;telefone_fornecedor&quot;</span><span class="s1">&gt;</span><span class="s0">Telefone:</span><span class="s1">&lt;/label&gt;</span>
+    <span class="s1">&lt;input </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">type</span><span class="s3">=&quot;tel&quot; </span><span class="s2">name</span><span class="s3">=&quot;telefone_fornecedor&quot; </span><span class="s2">id</span><span class="s3">=&quot;telefone_fornecedor&quot; </span><span class="s2">required pattern</span><span class="s3">=&quot;\d+&quot; </span><span class="s2">title</span><span class="s3">=&quot;O telefone deve conter apenas números.&quot;</span><span class="s1">&gt;&lt;br&gt;</span>
+
+    <span class="s1">&lt;label </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">for</span><span class="s3">=&quot;email_fornecedor&quot;</span><span class="s1">&gt;</span><span class="s0">E-mail:</span><span class="s1">&lt;/label&gt;</span>
+    <span class="s1">&lt;input </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">type</span><span class="s3">=&quot;email&quot; </span><span class="s2">name</span><span class="s3">=&quot;email_fornecedor&quot; </span><span class="s2">id</span><span class="s3">=&quot;email_fornecedor&quot; </span><span class="s2">required</span><span class="s1">&gt;&lt;br&gt;</span>
+
+    <span class="s1">&lt;button </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">type</span><span class="s3">=&quot;submit&quot;</span><span class="s1">&gt;</span><span class="s0">Criar Fornecedor</span><span class="s1">&lt;/button&gt;</span>
+<span class="s1">&lt;/form&gt;</span>
+<span class="s1">&lt;br&gt;</span>
+
+<span class="s0">{% endblock %}</span></pre>
+</body>
+</html>

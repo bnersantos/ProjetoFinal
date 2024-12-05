@@ -1,0 +1,107 @@
+<html>
+<head>
+<title>cymysql.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+cymysql.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/mysql/cymysql.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">r&quot;&quot;&quot; 
+ 
+.. dialect:: mysql+cymysql 
+    :name: CyMySQL 
+    :dbapi: cymysql 
+    :connectstring: mysql+cymysql://&lt;username&gt;:&lt;password&gt;@&lt;host&gt;/&lt;dbname&gt;[?&lt;options&gt;] 
+    :url: https://github.com/nakagami/CyMySQL 
+ 
+.. note:: 
+ 
+    The CyMySQL dialect is **not tested as part of SQLAlchemy's continuous 
+    integration** and may have unresolved issues.  The recommended MySQL 
+    dialects are mysqlclient and PyMySQL. 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">BIT</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">MySQLDialect</span>
+<span class="s3">from </span><span class="s1">.mysqldb </span><span class="s3">import </span><span class="s1">MySQLDialect_mysqldb</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+
+
+<span class="s3">class </span><span class="s1">_cymysqlBIT(BIT):</span>
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s5">&quot;&quot;&quot;Convert MySQL's 64 bit, variable length binary string to a long.&quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">process(value):</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">v = </span><span class="s6">0</span>
+                <span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">iter(value):</span>
+                    <span class="s1">v = v &lt;&lt; </span><span class="s6">8 </span><span class="s1">| i</span>
+                <span class="s3">return </span><span class="s1">v</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">process</span>
+
+
+<span class="s3">class </span><span class="s1">MySQLDialect_cymysql(MySQLDialect_mysqldb):</span>
+    <span class="s1">driver = </span><span class="s2">&quot;cymysql&quot;</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s1">description_encoding = </span><span class="s3">None</span>
+    <span class="s1">supports_sane_rowcount = </span><span class="s3">True</span>
+    <span class="s1">supports_sane_multi_rowcount = </span><span class="s3">False</span>
+    <span class="s1">supports_unicode_statements = </span><span class="s3">True</span>
+
+    <span class="s1">colspecs = util.update_copy(MySQLDialect.colspecs</span><span class="s4">, </span><span class="s1">{BIT: _cymysqlBIT})</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">return </span><span class="s1">__import__(</span><span class="s2">&quot;cymysql&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_detect_charset(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection.connection.charset</span>
+
+    <span class="s3">def </span><span class="s1">_extract_error_code(self</span><span class="s4">, </span><span class="s1">exception):</span>
+        <span class="s3">return </span><span class="s1">exception.errno</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s4">, </span><span class="s1">e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+        <span class="s3">if </span><span class="s1">isinstance(e</span><span class="s4">, </span><span class="s1">self.dbapi.OperationalError):</span>
+            <span class="s3">return </span><span class="s1">self._extract_error_code(e) </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s6">2006</span><span class="s4">,</span>
+                <span class="s6">2013</span><span class="s4">,</span>
+                <span class="s6">2014</span><span class="s4">,</span>
+                <span class="s6">2045</span><span class="s4">,</span>
+                <span class="s6">2055</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">isinstance(e</span><span class="s4">, </span><span class="s1">self.dbapi.InterfaceError):</span>
+            <span class="s0"># if underlying connection is closed,</span>
+            <span class="s0"># this is the error you get</span>
+            <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+
+
+<span class="s1">dialect = MySQLDialect_cymysql</span>
+</pre>
+</body>
+</html>

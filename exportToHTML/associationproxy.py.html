@@ -1,0 +1,2037 @@
+<html>
+<head>
+<title>associationproxy.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+associationproxy.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># ext/associationproxy.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Contain the ``AssociationProxy`` class. 
+ 
+The ``AssociationProxy`` is a Python property object which provides 
+transparent proxied access to the endpoint of an association object. 
+ 
+See the example ``examples/association/proxied_association.py``. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">operator</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">AbstractSet</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Collection</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generic</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">ItemsView</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">KeysView</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">MutableMapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">MutableSequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">MutableSet</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">ValuesView</span>
+
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">ColumnElement</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">inspect</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">orm</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..orm </span><span class="s3">import </span><span class="s1">collections</span>
+<span class="s3">from </span><span class="s1">..orm </span><span class="s3">import </span><span class="s1">InspectionAttrExtensionType</span>
+<span class="s3">from </span><span class="s1">..orm </span><span class="s3">import </span><span class="s1">interfaces</span>
+<span class="s3">from </span><span class="s1">..orm </span><span class="s3">import </span><span class="s1">ORMDescriptor</span>
+<span class="s3">from </span><span class="s1">..orm.base </span><span class="s3">import </span><span class="s1">SQLORMOperations</span>
+<span class="s3">from </span><span class="s1">..orm.interfaces </span><span class="s3">import </span><span class="s1">_AttributeOptions</span>
+<span class="s3">from </span><span class="s1">..orm.interfaces </span><span class="s3">import </span><span class="s1">_DCAttributeOptions</span>
+<span class="s3">from </span><span class="s1">..orm.interfaces </span><span class="s3">import </span><span class="s1">_DEFAULT_ATTRIBUTE_OPTIONS</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">operators</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">or_</span>
+<span class="s3">from </span><span class="s1">..sql.base </span><span class="s3">import </span><span class="s1">_NoArg</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Protocol</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Self</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">SupportsIndex</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">SupportsKeysAndGetItem</span>
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">..orm.interfaces </span><span class="s3">import </span><span class="s1">MapperProperty</span>
+    <span class="s3">from </span><span class="s1">..orm.interfaces </span><span class="s3">import </span><span class="s1">PropComparator</span>
+    <span class="s3">from </span><span class="s1">..orm.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">..sql._typing </span><span class="s3">import </span><span class="s1">_ColumnExpressionArgument</span>
+    <span class="s3">from </span><span class="s1">..sql._typing </span><span class="s3">import </span><span class="s1">_InfoType</span>
+
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_T_co = TypeVar(</span><span class="s4">&quot;_T_co&quot;</span><span class="s5">, </span><span class="s1">bound=Any</span><span class="s5">, </span><span class="s1">covariant=</span><span class="s3">True</span><span class="s1">)</span>
+<span class="s1">_T_con = TypeVar(</span><span class="s4">&quot;_T_con&quot;</span><span class="s5">, </span><span class="s1">bound=Any</span><span class="s5">, </span><span class="s1">contravariant=</span><span class="s3">True</span><span class="s1">)</span>
+<span class="s1">_S = TypeVar(</span><span class="s4">&quot;_S&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_KT = TypeVar(</span><span class="s4">&quot;_KT&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_VT = TypeVar(</span><span class="s4">&quot;_VT&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s3">def </span><span class="s1">association_proxy(</span>
+    <span class="s1">target_collection: str</span><span class="s5">,</span>
+    <span class="s1">attr: str</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">creator: Optional[_CreatorProtocol] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">getset_factory: Optional[_GetSetFactoryProtocol] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">proxy_factory: Optional[_ProxyFactoryProtocol] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">proxy_bulk_set: Optional[_ProxyBulkSetProtocol] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">info: Optional[_InfoType] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">cascade_scalar_deletes: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">create_on_none_assignment: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">init: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool] = _NoArg.NO_ARG</span><span class="s5">,</span>
+    <span class="s1">repr: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool] = _NoArg.NO_ARG</span><span class="s5">,  </span><span class="s0"># noqa: A002</span>
+    <span class="s1">default: Optional[Any] = _NoArg.NO_ARG</span><span class="s5">,</span>
+    <span class="s1">default_factory: Union[_NoArg</span><span class="s5">, </span><span class="s1">Callable[[]</span><span class="s5">, </span><span class="s1">_T]] = _NoArg.NO_ARG</span><span class="s5">,</span>
+    <span class="s1">compare: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool] = _NoArg.NO_ARG</span><span class="s5">,</span>
+    <span class="s1">kw_only: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool] = _NoArg.NO_ARG</span><span class="s5">,</span>
+    <span class="s1">hash: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool</span><span class="s5">, </span><span class="s3">None</span><span class="s1">] = _NoArg.NO_ARG</span><span class="s5">,  </span><span class="s0"># noqa: A002</span>
+<span class="s1">) -&gt; AssociationProxy[Any]:</span>
+    <span class="s2">r&quot;&quot;&quot;Return a Python property implementing a view of a target 
+    attribute which references an attribute on members of the 
+    target. 
+ 
+    The returned value is an instance of :class:`.AssociationProxy`. 
+ 
+    Implements a Python property representing a relationship as a collection 
+    of simpler values, or a scalar value.  The proxied property will mimic 
+    the collection type of the target (list, dict or set), or, in the case of 
+    a one to one relationship, a simple scalar value. 
+ 
+    :param target_collection: Name of the attribute that is the immediate 
+      target.  This attribute is typically mapped by 
+      :func:`~sqlalchemy.orm.relationship` to link to a target collection, but 
+      can also be a many-to-one or non-scalar relationship. 
+ 
+    :param attr: Attribute on the associated instance or instances that 
+      are available on instances of the target object. 
+ 
+    :param creator: optional. 
+ 
+      Defines custom behavior when new items are added to the proxied 
+      collection. 
+ 
+      By default, adding new items to the collection will trigger a 
+      construction of an instance of the target object, passing the given 
+      item as a positional argument to the target constructor.  For cases 
+      where this isn't sufficient, :paramref:`.association_proxy.creator` 
+      can supply a callable that will construct the object in the 
+      appropriate way, given the item that was passed. 
+ 
+      For list- and set- oriented collections, a single argument is 
+      passed to the callable. For dictionary oriented collections, two 
+      arguments are passed, corresponding to the key and value. 
+ 
+      The :paramref:`.association_proxy.creator` callable is also invoked 
+      for scalar (i.e. many-to-one, one-to-one) relationships. If the 
+      current value of the target relationship attribute is ``None``, the 
+      callable is used to construct a new object.  If an object value already 
+      exists, the given attribute value is populated onto that object. 
+ 
+      .. seealso:: 
+ 
+        :ref:`associationproxy_creator` 
+ 
+    :param cascade_scalar_deletes: when True, indicates that setting 
+        the proxied value to ``None``, or deleting it via ``del``, should 
+        also remove the source object.  Only applies to scalar attributes. 
+        Normally, removing the proxied target will not remove the proxy 
+        source, as this object may have other state that is still to be 
+        kept. 
+ 
+        .. versionadded:: 1.3 
+ 
+        .. seealso:: 
+ 
+            :ref:`cascade_scalar_deletes` - complete usage example 
+ 
+    :param create_on_none_assignment: when True, indicates that setting 
+      the proxied value to ``None`` should **create** the source object 
+      if it does not exist, using the creator.  Only applies to scalar 
+      attributes.  This is mutually exclusive 
+      vs. the :paramref:`.assocation_proxy.cascade_scalar_deletes`. 
+ 
+      .. versionadded:: 2.0.18 
+ 
+    :param init: Specific to :ref:`orm_declarative_native_dataclasses`, 
+     specifies if the mapped attribute should be part of the ``__init__()`` 
+     method as generated by the dataclass process. 
+ 
+     .. versionadded:: 2.0.0b4 
+ 
+    :param repr: Specific to :ref:`orm_declarative_native_dataclasses`, 
+     specifies if the attribute established by this :class:`.AssociationProxy` 
+     should be part of the ``__repr__()`` method as generated by the dataclass 
+     process. 
+ 
+     .. versionadded:: 2.0.0b4 
+ 
+    :param default_factory: Specific to 
+     :ref:`orm_declarative_native_dataclasses`, specifies a default-value 
+     generation function that will take place as part of the ``__init__()`` 
+     method as generated by the dataclass process. 
+ 
+     .. versionadded:: 2.0.0b4 
+ 
+    :param compare: Specific to 
+     :ref:`orm_declarative_native_dataclasses`, indicates if this field 
+     should be included in comparison operations when generating the 
+     ``__eq__()`` and ``__ne__()`` methods for the mapped class. 
+ 
+     .. versionadded:: 2.0.0b4 
+ 
+    :param kw_only: Specific to :ref:`orm_declarative_native_dataclasses`, 
+     indicates if this field should be marked as keyword-only when generating 
+     the ``__init__()`` method as generated by the dataclass process. 
+ 
+     .. versionadded:: 2.0.0b4 
+ 
+    :param hash: Specific to 
+     :ref:`orm_declarative_native_dataclasses`, controls if this field 
+     is included when generating the ``__hash__()`` method for the mapped 
+     class. 
+ 
+     .. versionadded:: 2.0.36 
+ 
+    :param info: optional, will be assigned to 
+     :attr:`.AssociationProxy.info` if present. 
+ 
+ 
+    The following additional parameters involve injection of custom behaviors 
+    within the :class:`.AssociationProxy` object and are for advanced use 
+    only: 
+ 
+    :param getset_factory: Optional.  Proxied attribute access is 
+        automatically handled by routines that get and set values based on 
+        the `attr` argument for this proxy. 
+ 
+        If you would like to customize this behavior, you may supply a 
+        `getset_factory` callable that produces a tuple of `getter` and 
+        `setter` functions.  The factory is called with two arguments, the 
+        abstract type of the underlying collection and this proxy instance. 
+ 
+    :param proxy_factory: Optional.  The type of collection to emulate is 
+        determined by sniffing the target collection.  If your collection 
+        type can't be determined by duck typing or you'd like to use a 
+        different collection implementation, you may supply a factory 
+        function to produce those collections.  Only applicable to 
+        non-scalar relationships. 
+ 
+    :param proxy_bulk_set: Optional, use with proxy_factory. 
+ 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">return </span><span class="s1">AssociationProxy(</span>
+        <span class="s1">target_collection</span><span class="s5">,</span>
+        <span class="s1">attr</span><span class="s5">,</span>
+        <span class="s1">creator=creator</span><span class="s5">,</span>
+        <span class="s1">getset_factory=getset_factory</span><span class="s5">,</span>
+        <span class="s1">proxy_factory=proxy_factory</span><span class="s5">,</span>
+        <span class="s1">proxy_bulk_set=proxy_bulk_set</span><span class="s5">,</span>
+        <span class="s1">info=info</span><span class="s5">,</span>
+        <span class="s1">cascade_scalar_deletes=cascade_scalar_deletes</span><span class="s5">,</span>
+        <span class="s1">create_on_none_assignment=create_on_none_assignment</span><span class="s5">,</span>
+        <span class="s1">attribute_options=_AttributeOptions(</span>
+            <span class="s1">init</span><span class="s5">, </span><span class="s1">repr</span><span class="s5">, </span><span class="s1">default</span><span class="s5">, </span><span class="s1">default_factory</span><span class="s5">, </span><span class="s1">compare</span><span class="s5">, </span><span class="s1">kw_only</span><span class="s5">, </span><span class="s1">hash</span>
+        <span class="s1">)</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">AssociationProxyExtensionType(InspectionAttrExtensionType):</span>
+    <span class="s1">ASSOCIATION_PROXY = </span><span class="s4">&quot;ASSOCIATION_PROXY&quot;</span>
+    <span class="s4">&quot;&quot;&quot;Symbol indicating an :class:`.InspectionAttr` that's 
+    of type :class:`.AssociationProxy`. 
+ 
+    Is assigned to the :attr:`.InspectionAttr.extension_type` 
+    attribute. 
+ 
+    &quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">_GetterProtocol(Protocol[_T_co]):</span>
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">instance: Any) -&gt; _T_co: ...</span>
+
+
+<span class="s0"># mypy 0.990 we are no longer allowed to make this Protocol[_T_con]</span>
+<span class="s3">class </span><span class="s1">_SetterProtocol(Protocol): ...</span>
+
+
+<span class="s3">class </span><span class="s1">_PlainSetterProtocol(_SetterProtocol</span><span class="s5">, </span><span class="s1">Protocol[_T_con]):</span>
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">instance: Any</span><span class="s5">, </span><span class="s1">value: _T_con) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_DictSetterProtocol(_SetterProtocol</span><span class="s5">, </span><span class="s1">Protocol[_T_con]):</span>
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">instance: Any</span><span class="s5">, </span><span class="s1">key: Any</span><span class="s5">, </span><span class="s1">value: _T_con) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s0"># mypy 0.990 we are no longer allowed to make this Protocol[_T_con]</span>
+<span class="s3">class </span><span class="s1">_CreatorProtocol(Protocol): ...</span>
+
+
+<span class="s3">class </span><span class="s1">_PlainCreatorProtocol(_CreatorProtocol</span><span class="s5">, </span><span class="s1">Protocol[_T_con]):</span>
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">value: _T_con) -&gt; Any: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_KeyCreatorProtocol(_CreatorProtocol</span><span class="s5">, </span><span class="s1">Protocol[_T_con]):</span>
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">key: Any</span><span class="s5">, </span><span class="s1">value: Optional[_T_con]) -&gt; Any: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_LazyCollectionProtocol(Protocol[_T]):</span>
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Union[</span>
+        <span class="s1">MutableSet[_T]</span><span class="s5">, </span><span class="s1">MutableMapping[Any</span><span class="s5">, </span><span class="s1">_T]</span><span class="s5">, </span><span class="s1">MutableSequence[_T]</span>
+    <span class="s1">]: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_GetSetFactoryProtocol(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">collection_class: Optional[Type[Any]]</span><span class="s5">,</span>
+        <span class="s1">assoc_instance: AssociationProxyInstance[Any]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Tuple[_GetterProtocol[Any]</span><span class="s5">, </span><span class="s1">_SetterProtocol]: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_ProxyFactoryProtocol(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">lazy_collection: _LazyCollectionProtocol[Any]</span><span class="s5">,</span>
+        <span class="s1">creator: _CreatorProtocol</span><span class="s5">,</span>
+        <span class="s1">value_attr: str</span><span class="s5">,</span>
+        <span class="s1">parent: AssociationProxyInstance[Any]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_ProxyBulkSetProtocol(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">proxy: _AssociationCollection[Any]</span><span class="s5">, </span><span class="s1">collection: Iterable[Any]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_AssociationProxyProtocol(Protocol[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;describes the interface of :class:`.AssociationProxy` 
+    without including descriptor methods in the interface.&quot;&quot;&quot;</span>
+
+    <span class="s1">creator: Optional[_CreatorProtocol]</span>
+    <span class="s1">key: str</span>
+    <span class="s1">target_collection: str</span>
+    <span class="s1">value_attr: str</span>
+    <span class="s1">cascade_scalar_deletes: bool</span>
+    <span class="s1">create_on_none_assignment: bool</span>
+    <span class="s1">getset_factory: Optional[_GetSetFactoryProtocol]</span>
+    <span class="s1">proxy_factory: Optional[_ProxyFactoryProtocol]</span>
+    <span class="s1">proxy_bulk_set: Optional[_ProxyBulkSetProtocol]</span>
+
+    <span class="s1">@util.ro_memoized_property</span>
+    <span class="s3">def </span><span class="s1">info(self) -&gt; _InfoType: ...</span>
+
+    <span class="s3">def </span><span class="s1">for_class(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">class_: Type[Any]</span><span class="s5">, </span><span class="s1">obj: Optional[object] = </span><span class="s3">None</span>
+    <span class="s1">) -&gt; AssociationProxyInstance[_T]: ...</span>
+
+    <span class="s3">def </span><span class="s1">_default_getset(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">collection_class: Any</span>
+    <span class="s1">) -&gt; Tuple[_GetterProtocol[Any]</span><span class="s5">, </span><span class="s1">_SetterProtocol]: ...</span>
+
+
+<span class="s3">class </span><span class="s1">AssociationProxy(</span>
+    <span class="s1">interfaces.InspectionAttrInfo</span><span class="s5">,</span>
+    <span class="s1">ORMDescriptor[_T]</span><span class="s5">,</span>
+    <span class="s1">_DCAttributeOptions</span><span class="s5">,</span>
+    <span class="s1">_AssociationProxyProtocol[_T]</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;A descriptor that presents a read/write view of an object attribute.&quot;&quot;&quot;</span>
+
+    <span class="s1">is_attribute = </span><span class="s3">True</span>
+    <span class="s1">extension_type = AssociationProxyExtensionType.ASSOCIATION_PROXY</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">target_collection: str</span><span class="s5">,</span>
+        <span class="s1">attr: str</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">creator: Optional[_CreatorProtocol] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">getset_factory: Optional[_GetSetFactoryProtocol] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">proxy_factory: Optional[_ProxyFactoryProtocol] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">proxy_bulk_set: Optional[_ProxyBulkSetProtocol] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">info: Optional[_InfoType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">cascade_scalar_deletes: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">create_on_none_assignment: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">attribute_options: Optional[_AttributeOptions] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Construct a new :class:`.AssociationProxy`. 
+ 
+        The :class:`.AssociationProxy` object is typically constructed using 
+        the :func:`.association_proxy` constructor function. See the 
+        description of :func:`.association_proxy` for a description of all 
+        parameters. 
+ 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.target_collection = target_collection</span>
+        <span class="s1">self.value_attr = attr</span>
+        <span class="s1">self.creator = creator</span>
+        <span class="s1">self.getset_factory = getset_factory</span>
+        <span class="s1">self.proxy_factory = proxy_factory</span>
+        <span class="s1">self.proxy_bulk_set = proxy_bulk_set</span>
+
+        <span class="s3">if </span><span class="s1">cascade_scalar_deletes </span><span class="s3">and </span><span class="s1">create_on_none_assignment:</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;The cascade_scalar_deletes and create_on_none_assignment &quot;</span>
+                <span class="s4">&quot;parameters are mutually exclusive.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">self.cascade_scalar_deletes = cascade_scalar_deletes</span>
+        <span class="s1">self.create_on_none_assignment = create_on_none_assignment</span>
+
+        <span class="s1">self.key = </span><span class="s4">&quot;_%s_%s_%s&quot; </span><span class="s1">% (</span>
+            <span class="s1">type(self).__name__</span><span class="s5">,</span>
+            <span class="s1">target_collection</span><span class="s5">,</span>
+            <span class="s1">id(self)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">info:</span>
+            <span class="s1">self.info = info  </span><span class="s0"># type: ignore</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">attribute_options</span>
+            <span class="s3">and </span><span class="s1">attribute_options != _DEFAULT_ATTRIBUTE_OPTIONS</span>
+        <span class="s1">):</span>
+            <span class="s1">self._has_dataclass_arguments = </span><span class="s3">True</span>
+            <span class="s1">self._attribute_options = attribute_options</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._has_dataclass_arguments = </span><span class="s3">False</span>
+            <span class="s1">self._attribute_options = _DEFAULT_ATTRIBUTE_OPTIONS</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__get__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">instance: Literal[</span><span class="s3">None</span><span class="s1">]</span><span class="s5">, </span><span class="s1">owner: Literal[</span><span class="s3">None</span><span class="s1">]</span>
+    <span class="s1">) -&gt; Self: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__get__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">instance: Literal[</span><span class="s3">None</span><span class="s1">]</span><span class="s5">, </span><span class="s1">owner: Any</span>
+    <span class="s1">) -&gt; AssociationProxyInstance[_T]: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">instance: object</span><span class="s5">, </span><span class="s1">owner: Any) -&gt; _T: ...</span>
+
+    <span class="s3">def </span><span class="s1">__get__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">instance: object</span><span class="s5">, </span><span class="s1">owner: Any</span>
+    <span class="s1">) -&gt; Union[AssociationProxyInstance[_T]</span><span class="s5">, </span><span class="s1">_T</span><span class="s5">, </span><span class="s1">AssociationProxy[_T]]:</span>
+        <span class="s3">if </span><span class="s1">owner </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+        <span class="s1">inst = self._as_instance(owner</span><span class="s5">, </span><span class="s1">instance)</span>
+        <span class="s3">if </span><span class="s1">inst:</span>
+            <span class="s3">return </span><span class="s1">inst.get(instance)</span>
+
+        <span class="s3">assert </span><span class="s1">instance </span><span class="s3">is None</span>
+
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__set__(self</span><span class="s5">, </span><span class="s1">instance: object</span><span class="s5">, </span><span class="s1">values: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">class_ = type(instance)</span>
+        <span class="s1">self._as_instance(class_</span><span class="s5">, </span><span class="s1">instance).set(instance</span><span class="s5">, </span><span class="s1">values)</span>
+
+    <span class="s3">def </span><span class="s1">__delete__(self</span><span class="s5">, </span><span class="s1">instance: object) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">class_ = type(instance)</span>
+        <span class="s1">self._as_instance(class_</span><span class="s5">, </span><span class="s1">instance).delete(instance)</span>
+
+    <span class="s3">def </span><span class="s1">for_class(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">class_: Type[Any]</span><span class="s5">, </span><span class="s1">obj: Optional[object] = </span><span class="s3">None</span>
+    <span class="s1">) -&gt; AssociationProxyInstance[_T]:</span>
+        <span class="s2">r&quot;&quot;&quot;Return the internal state local to a specific mapped class. 
+ 
+        E.g., given a class ``User``:: 
+ 
+            class User(Base): 
+                # ... 
+ 
+                keywords = association_proxy('kws', 'keyword') 
+ 
+        If we access this :class:`.AssociationProxy` from 
+        :attr:`_orm.Mapper.all_orm_descriptors`, and we want to view the 
+        target class for this proxy as mapped by ``User``:: 
+ 
+            inspect(User).all_orm_descriptors[&quot;keywords&quot;].for_class(User).target_class 
+ 
+        This returns an instance of :class:`.AssociationProxyInstance` that 
+        is specific to the ``User`` class.   The :class:`.AssociationProxy` 
+        object remains agnostic of its parent class. 
+ 
+        :param class\_: the class that we are returning state for. 
+ 
+        :param obj: optional, an instance of the class that is required 
+         if the attribute refers to a polymorphic target, e.g. where we have 
+         to look at the type of the actual destination object to get the 
+         complete path. 
+ 
+        .. versionadded:: 1.3 - :class:`.AssociationProxy` no longer stores 
+           any state specific to a particular parent class; the state is now 
+           stored in per-class :class:`.AssociationProxyInstance` objects. 
+ 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._as_instance(class_</span><span class="s5">, </span><span class="s1">obj)</span>
+
+    <span class="s3">def </span><span class="s1">_as_instance(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">class_: Any</span><span class="s5">, </span><span class="s1">obj: Any</span>
+    <span class="s1">) -&gt; AssociationProxyInstance[_T]:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">inst = class_.__dict__[self.key + </span><span class="s4">&quot;_inst&quot;</span><span class="s1">]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s1">inst = </span><span class="s3">None</span>
+
+        <span class="s0"># avoid exception context</span>
+        <span class="s3">if </span><span class="s1">inst </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">owner = self._calc_owner(class_)</span>
+            <span class="s3">if </span><span class="s1">owner </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">inst = AssociationProxyInstance.for_proxy(self</span><span class="s5">, </span><span class="s1">owner</span><span class="s5">, </span><span class="s1">obj)</span>
+                <span class="s1">setattr(class_</span><span class="s5">, </span><span class="s1">self.key + </span><span class="s4">&quot;_inst&quot;</span><span class="s5">, </span><span class="s1">inst)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">inst = </span><span class="s3">None</span>
+
+        <span class="s3">if </span><span class="s1">inst </span><span class="s3">is not None and not </span><span class="s1">inst._is_canonical:</span>
+            <span class="s0"># the AssociationProxyInstance can't be generalized</span>
+            <span class="s0"># since the proxied attribute is not on the targeted</span>
+            <span class="s0"># class, only on subclasses of it, which might be</span>
+            <span class="s0"># different.  only return for the specific</span>
+            <span class="s0"># object's current value</span>
+            <span class="s3">return </span><span class="s1">inst._non_canonical_get_for_object(obj)  </span><span class="s0"># type: ignore</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">inst  </span><span class="s0"># type: ignore  # TODO</span>
+
+    <span class="s3">def </span><span class="s1">_calc_owner(self</span><span class="s5">, </span><span class="s1">target_cls: Any) -&gt; Any:</span>
+        <span class="s0"># we might be getting invoked for a subclass</span>
+        <span class="s0"># that is not mapped yet, in some declarative situations.</span>
+        <span class="s0"># save until we are mapped</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">insp = inspect(target_cls)</span>
+        <span class="s3">except </span><span class="s1">exc.NoInspectionAvailable:</span>
+            <span class="s0"># can't find a mapper, don't set owner. if we are a not-yet-mapped</span>
+            <span class="s0"># subclass, we can also scan through __mro__ to find a mapped</span>
+            <span class="s0"># class, but instead just wait for us to be called again against a</span>
+            <span class="s0"># mapped class normally.</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">insp.mapper.class_manager.class_</span>
+
+    <span class="s3">def </span><span class="s1">_default_getset(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">collection_class: Any</span>
+    <span class="s1">) -&gt; Tuple[_GetterProtocol[Any]</span><span class="s5">, </span><span class="s1">_SetterProtocol]:</span>
+        <span class="s1">attr = self.value_attr</span>
+        <span class="s1">_getter = operator.attrgetter(attr)</span>
+
+        <span class="s3">def </span><span class="s1">getter(instance: Any) -&gt; Optional[Any]:</span>
+            <span class="s3">return </span><span class="s1">_getter(instance) </span><span class="s3">if </span><span class="s1">instance </span><span class="s3">is not None else None</span>
+
+        <span class="s3">if </span><span class="s1">collection_class </span><span class="s3">is </span><span class="s1">dict:</span>
+
+            <span class="s3">def </span><span class="s1">dict_setter(instance: Any</span><span class="s5">, </span><span class="s1">k: Any</span><span class="s5">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s1">setattr(instance</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">value)</span>
+
+            <span class="s3">return </span><span class="s1">getter</span><span class="s5">, </span><span class="s1">dict_setter</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">plain_setter(o: Any</span><span class="s5">, </span><span class="s1">v: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s1">setattr(o</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">v)</span>
+
+            <span class="s3">return </span><span class="s1">getter</span><span class="s5">, </span><span class="s1">plain_setter</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s4">&quot;AssociationProxy(%r, %r)&quot; </span><span class="s1">% (</span>
+            <span class="s1">self.target_collection</span><span class="s5">,</span>
+            <span class="s1">self.value_attr</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s0"># the pep-673 Self type does not work in Mypy for a &quot;hybrid&quot;</span>
+<span class="s0"># style method that returns type or Self, so for one specific case</span>
+<span class="s0"># we still need to use the pre-pep-673 workaround.</span>
+<span class="s1">_Self = TypeVar(</span><span class="s4">&quot;_Self&quot;</span><span class="s5">, </span><span class="s1">bound=</span><span class="s4">&quot;AssociationProxyInstance[Any]&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">AssociationProxyInstance(SQLORMOperations[_T]):</span>
+    <span class="s4">&quot;&quot;&quot;A per-class object that serves class- and object-specific results. 
+ 
+    This is used by :class:`.AssociationProxy` when it is invoked 
+    in terms of a specific class or instance of a class, i.e. when it is 
+    used as a regular Python descriptor. 
+ 
+    When referring to the :class:`.AssociationProxy` as a normal Python 
+    descriptor, the :class:`.AssociationProxyInstance` is the object that 
+    actually serves the information.   Under normal circumstances, its presence 
+    is transparent:: 
+ 
+        &gt;&gt;&gt; User.keywords.scalar 
+        False 
+ 
+    In the special case that the :class:`.AssociationProxy` object is being 
+    accessed directly, in order to get an explicit handle to the 
+    :class:`.AssociationProxyInstance`, use the 
+    :meth:`.AssociationProxy.for_class` method:: 
+ 
+        proxy_state = inspect(User).all_orm_descriptors[&quot;keywords&quot;].for_class(User) 
+ 
+        # view if proxy object is scalar or not 
+        &gt;&gt;&gt; proxy_state.scalar 
+        False 
+ 
+    .. versionadded:: 1.3 
+ 
+    &quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+
+    <span class="s1">collection_class: Optional[Type[Any]]</span>
+    <span class="s1">parent: _AssociationProxyProtocol[_T]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent: _AssociationProxyProtocol[_T]</span><span class="s5">,</span>
+        <span class="s1">owning_class: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">target_class: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">value_attr: str</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.parent = parent</span>
+        <span class="s1">self.key = parent.key</span>
+        <span class="s1">self.owning_class = owning_class</span>
+        <span class="s1">self.target_collection = parent.target_collection</span>
+        <span class="s1">self.collection_class = </span><span class="s3">None</span>
+        <span class="s1">self.target_class = target_class</span>
+        <span class="s1">self.value_attr = value_attr</span>
+
+    <span class="s1">target_class: Type[Any]</span>
+    <span class="s4">&quot;&quot;&quot;The intermediary class handled by this 
+    :class:`.AssociationProxyInstance`. 
+ 
+    Intercepted append/set/assignment events will result 
+    in the generation of new instances of this class. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">for_proxy(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">parent: AssociationProxy[_T]</span><span class="s5">,</span>
+        <span class="s1">owning_class: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">parent_instance: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; AssociationProxyInstance[_T]:</span>
+        <span class="s1">target_collection = parent.target_collection</span>
+        <span class="s1">value_attr = parent.value_attr</span>
+        <span class="s1">prop = cast(</span>
+            <span class="s4">&quot;orm.RelationshipProperty[_T]&quot;</span><span class="s5">,</span>
+            <span class="s1">orm.class_mapper(owning_class).get_property(target_collection)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s0"># this was never asserted before but this should be made clear.</span>
+        <span class="s3">if not </span><span class="s1">isinstance(prop</span><span class="s5">, </span><span class="s1">orm.RelationshipProperty):</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+                <span class="s4">&quot;association proxy to a non-relationship &quot;</span>
+                <span class="s4">&quot;intermediary is not supported&quot;</span>
+            <span class="s1">) </span><span class="s3">from None</span>
+
+        <span class="s1">target_class = prop.mapper.class_</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">target_assoc = cast(</span>
+                <span class="s4">&quot;AssociationProxyInstance[_T]&quot;</span><span class="s5">,</span>
+                <span class="s1">cls._cls_unwrap_target_assoc_proxy(target_class</span><span class="s5">, </span><span class="s1">value_attr)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">AttributeError:</span>
+            <span class="s0"># the proxied attribute doesn't exist on the target class;</span>
+            <span class="s0"># return an &quot;ambiguous&quot; instance that will work on a per-object</span>
+            <span class="s0"># basis</span>
+            <span class="s3">return </span><span class="s1">AmbiguousAssociationProxyInstance(</span>
+                <span class="s1">parent</span><span class="s5">, </span><span class="s1">owning_class</span><span class="s5">, </span><span class="s1">target_class</span><span class="s5">, </span><span class="s1">value_attr</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;Association proxy received an unexpected error when &quot;</span>
+                <span class="s4">f&quot;trying to retreive attribute &quot;</span>
+                <span class="s4">f'&quot;</span><span class="s6">{</span><span class="s1">target_class.__name__</span><span class="s6">}</span><span class="s4">.</span><span class="s6">{</span><span class="s1">parent.value_attr</span><span class="s6">}</span><span class="s4">&quot; from '</span>
+                <span class="s4">f'class &quot;</span><span class="s6">{</span><span class="s1">target_class.__name__</span><span class="s6">}</span><span class="s4">&quot;: </span><span class="s6">{</span><span class="s1">err</span><span class="s6">}</span><span class="s4">'</span>
+            <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">cls._construct_for_assoc(</span>
+                <span class="s1">target_assoc</span><span class="s5">, </span><span class="s1">parent</span><span class="s5">, </span><span class="s1">owning_class</span><span class="s5">, </span><span class="s1">target_class</span><span class="s5">, </span><span class="s1">value_attr</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_construct_for_assoc(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">target_assoc: Optional[AssociationProxyInstance[_T]]</span><span class="s5">,</span>
+        <span class="s1">parent: _AssociationProxyProtocol[_T]</span><span class="s5">,</span>
+        <span class="s1">owning_class: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">target_class: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">value_attr: str</span><span class="s5">,</span>
+    <span class="s1">) -&gt; AssociationProxyInstance[_T]:</span>
+        <span class="s3">if </span><span class="s1">target_assoc </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">ObjectAssociationProxyInstance(</span>
+                <span class="s1">parent</span><span class="s5">, </span><span class="s1">owning_class</span><span class="s5">, </span><span class="s1">target_class</span><span class="s5">, </span><span class="s1">value_attr</span>
+            <span class="s1">)</span>
+
+        <span class="s1">attr = getattr(target_class</span><span class="s5">, </span><span class="s1">value_attr)</span>
+        <span class="s3">if not </span><span class="s1">hasattr(attr</span><span class="s5">, </span><span class="s4">&quot;_is_internal_proxy&quot;</span><span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">AmbiguousAssociationProxyInstance(</span>
+                <span class="s1">parent</span><span class="s5">, </span><span class="s1">owning_class</span><span class="s5">, </span><span class="s1">target_class</span><span class="s5">, </span><span class="s1">value_attr</span>
+            <span class="s1">)</span>
+        <span class="s1">is_object = attr._impl_uses_objects</span>
+        <span class="s3">if </span><span class="s1">is_object:</span>
+            <span class="s3">return </span><span class="s1">ObjectAssociationProxyInstance(</span>
+                <span class="s1">parent</span><span class="s5">, </span><span class="s1">owning_class</span><span class="s5">, </span><span class="s1">target_class</span><span class="s5">, </span><span class="s1">value_attr</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">ColumnAssociationProxyInstance(</span>
+                <span class="s1">parent</span><span class="s5">, </span><span class="s1">owning_class</span><span class="s5">, </span><span class="s1">target_class</span><span class="s5">, </span><span class="s1">value_attr</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_get_property(self) -&gt; MapperProperty[Any]:</span>
+        <span class="s3">return </span><span class="s1">orm.class_mapper(self.owning_class).get_property(</span>
+            <span class="s1">self.target_collection</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_comparator(self) -&gt; PropComparator[Any]:</span>
+        <span class="s3">return </span><span class="s1">getattr(  </span><span class="s0"># type: ignore</span>
+            <span class="s1">self.owning_class</span><span class="s5">, </span><span class="s1">self.target_collection</span>
+        <span class="s1">).comparator</span>
+
+    <span class="s3">def </span><span class="s1">__clause_element__(self) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+            <span class="s4">&quot;The association proxy can't be used as a plain column &quot;</span>
+            <span class="s4">&quot;expression; it only works inside of a comparison expression&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_cls_unwrap_target_assoc_proxy(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">target_class: Any</span><span class="s5">, </span><span class="s1">value_attr: str</span>
+    <span class="s1">) -&gt; Optional[AssociationProxyInstance[_T]]:</span>
+        <span class="s1">attr = getattr(target_class</span><span class="s5">, </span><span class="s1">value_attr)</span>
+        <span class="s3">assert not </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">AssociationProxy)</span>
+        <span class="s3">if </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">AssociationProxyInstance):</span>
+            <span class="s3">return </span><span class="s1">attr</span>
+        <span class="s3">return None</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_unwrap_target_assoc_proxy(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Optional[AssociationProxyInstance[_T]]:</span>
+        <span class="s3">return </span><span class="s1">self._cls_unwrap_target_assoc_proxy(</span>
+            <span class="s1">self.target_class</span><span class="s5">, </span><span class="s1">self.value_attr</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">remote_attr(self) -&gt; SQLORMOperations[_T]:</span>
+        <span class="s2">&quot;&quot;&quot;The 'remote' class attribute referenced by this 
+        :class:`.AssociationProxyInstance`. 
+ 
+        .. seealso:: 
+ 
+            :attr:`.AssociationProxyInstance.attr` 
+ 
+            :attr:`.AssociationProxyInstance.local_attr` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">cast(</span>
+            <span class="s4">&quot;SQLORMOperations[_T]&quot;</span><span class="s5">, </span><span class="s1">getattr(self.target_class</span><span class="s5">, </span><span class="s1">self.value_attr)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">local_attr(self) -&gt; SQLORMOperations[Any]:</span>
+        <span class="s2">&quot;&quot;&quot;The 'local' class attribute referenced by this 
+        :class:`.AssociationProxyInstance`. 
+ 
+        .. seealso:: 
+ 
+            :attr:`.AssociationProxyInstance.attr` 
+ 
+            :attr:`.AssociationProxyInstance.remote_attr` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">cast(</span>
+            <span class="s4">&quot;SQLORMOperations[Any]&quot;</span><span class="s5">,</span>
+            <span class="s1">getattr(self.owning_class</span><span class="s5">, </span><span class="s1">self.target_collection)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">attr(self) -&gt; Tuple[SQLORMOperations[Any]</span><span class="s5">, </span><span class="s1">SQLORMOperations[_T]]:</span>
+        <span class="s2">&quot;&quot;&quot;Return a tuple of ``(local_attr, remote_attr)``. 
+ 
+        This attribute was originally intended to facilitate using the 
+        :meth:`_query.Query.join` method to join across the two relationships 
+        at once, however this makes use of a deprecated calling style. 
+ 
+        To use :meth:`_sql.select.join` or :meth:`_orm.Query.join` with 
+        an association proxy, the current method is to make use of the 
+        :attr:`.AssociationProxyInstance.local_attr` and 
+        :attr:`.AssociationProxyInstance.remote_attr` attributes separately:: 
+ 
+            stmt = ( 
+                select(Parent). 
+                join(Parent.proxied.local_attr). 
+                join(Parent.proxied.remote_attr) 
+            ) 
+ 
+        A future release may seek to provide a more succinct join pattern 
+        for association proxy attributes. 
+ 
+        .. seealso:: 
+ 
+            :attr:`.AssociationProxyInstance.local_attr` 
+ 
+            :attr:`.AssociationProxyInstance.remote_attr` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">(self.local_attr</span><span class="s5">, </span><span class="s1">self.remote_attr)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">scalar(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return ``True`` if this :class:`.AssociationProxyInstance` 
+        proxies a scalar relationship on the local side.&quot;&quot;&quot;</span>
+
+        <span class="s1">scalar = </span><span class="s3">not </span><span class="s1">self._get_property().uselist</span>
+        <span class="s3">if </span><span class="s1">scalar:</span>
+            <span class="s1">self._initialize_scalar_accessors()</span>
+        <span class="s3">return </span><span class="s1">scalar</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_value_is_scalar(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s3">not </span><span class="s1">self._get_property()</span>
+            <span class="s1">.mapper.get_property(self.value_attr)</span>
+            <span class="s1">.uselist</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_target_is_object(self) -&gt; bool:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">_scalar_get: _GetterProtocol[_T]</span>
+    <span class="s1">_scalar_set: _PlainSetterProtocol[_T]</span>
+
+    <span class="s3">def </span><span class="s1">_initialize_scalar_accessors(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">self.parent.getset_factory:</span>
+            <span class="s1">get</span><span class="s5">, </span><span class="s1">set_ = self.parent.getset_factory(</span><span class="s3">None</span><span class="s5">, </span><span class="s1">self)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">get</span><span class="s5">, </span><span class="s1">set_ = self.parent._default_getset(</span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">self._scalar_get</span><span class="s5">, </span><span class="s1">self._scalar_set = get</span><span class="s5">, </span><span class="s1">cast(</span>
+            <span class="s4">&quot;_PlainSetterProtocol[_T]&quot;</span><span class="s5">, </span><span class="s1">set_</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_default_getset(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">collection_class: Any</span>
+    <span class="s1">) -&gt; Tuple[_GetterProtocol[Any]</span><span class="s5">, </span><span class="s1">_SetterProtocol]:</span>
+        <span class="s1">attr = self.value_attr</span>
+        <span class="s1">_getter = operator.attrgetter(attr)</span>
+
+        <span class="s3">def </span><span class="s1">getter(instance: Any) -&gt; Optional[_T]:</span>
+            <span class="s3">return </span><span class="s1">_getter(instance) </span><span class="s3">if </span><span class="s1">instance </span><span class="s3">is not None else None</span>
+
+        <span class="s3">if </span><span class="s1">collection_class </span><span class="s3">is </span><span class="s1">dict:</span>
+
+            <span class="s3">def </span><span class="s1">dict_setter(instance: Any</span><span class="s5">, </span><span class="s1">k: Any</span><span class="s5">, </span><span class="s1">value: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s1">setattr(instance</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">value)</span>
+
+            <span class="s3">return </span><span class="s1">getter</span><span class="s5">, </span><span class="s1">dict_setter</span>
+        <span class="s3">else</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">plain_setter(o: Any</span><span class="s5">, </span><span class="s1">v: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s1">setattr(o</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">v)</span>
+
+            <span class="s3">return </span><span class="s1">getter</span><span class="s5">, </span><span class="s1">plain_setter</span>
+
+    <span class="s1">@util.ro_non_memoized_property</span>
+    <span class="s3">def </span><span class="s1">info(self) -&gt; _InfoType:</span>
+        <span class="s3">return </span><span class="s1">self.parent.info</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">get(self: _Self</span><span class="s5">, </span><span class="s1">obj: Literal[</span><span class="s3">None</span><span class="s1">]) -&gt; _Self: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">get(self</span><span class="s5">, </span><span class="s1">obj: Any) -&gt; _T: ...</span>
+
+    <span class="s3">def </span><span class="s1">get(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">obj: Any</span>
+    <span class="s1">) -&gt; Union[Optional[_T]</span><span class="s5">, </span><span class="s1">AssociationProxyInstance[_T]]:</span>
+        <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+
+        <span class="s1">proxy: _T</span>
+
+        <span class="s3">if </span><span class="s1">self.scalar:</span>
+            <span class="s1">target = getattr(obj</span><span class="s5">, </span><span class="s1">self.target_collection)</span>
+            <span class="s3">return </span><span class="s1">self._scalar_get(target)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s0"># If the owning instance is reborn (orm session resurrect,</span>
+                <span class="s0"># etc.), refresh the proxy cache.</span>
+                <span class="s1">creator_id</span><span class="s5">, </span><span class="s1">self_id</span><span class="s5">, </span><span class="s1">proxy = cast(</span>
+                    <span class="s4">&quot;Tuple[int, int, _T]&quot;</span><span class="s5">, </span><span class="s1">getattr(obj</span><span class="s5">, </span><span class="s1">self.key)</span>
+                <span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">AttributeError:</span>
+                <span class="s3">pass</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">id(obj) == creator_id </span><span class="s3">and </span><span class="s1">id(self) == self_id:</span>
+                    <span class="s3">assert </span><span class="s1">self.collection_class </span><span class="s3">is not None</span>
+                    <span class="s3">return </span><span class="s1">proxy</span>
+
+            <span class="s1">self.collection_class</span><span class="s5">, </span><span class="s1">proxy = self._new(</span>
+                <span class="s1">_lazy_collection(obj</span><span class="s5">, </span><span class="s1">self.target_collection)</span>
+            <span class="s1">)</span>
+            <span class="s1">setattr(obj</span><span class="s5">, </span><span class="s1">self.key</span><span class="s5">, </span><span class="s1">(id(obj)</span><span class="s5">, </span><span class="s1">id(self)</span><span class="s5">, </span><span class="s1">proxy))</span>
+            <span class="s3">return </span><span class="s1">proxy</span>
+
+    <span class="s3">def </span><span class="s1">set(self</span><span class="s5">, </span><span class="s1">obj: Any</span><span class="s5">, </span><span class="s1">values: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">self.scalar:</span>
+            <span class="s1">creator = cast(</span>
+                <span class="s4">&quot;_PlainCreatorProtocol[_T]&quot;</span><span class="s5">,</span>
+                <span class="s1">(</span>
+                    <span class="s1">self.parent.creator</span>
+                    <span class="s3">if </span><span class="s1">self.parent.creator</span>
+                    <span class="s3">else </span><span class="s1">self.target_class</span>
+                <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s1">target = getattr(obj</span><span class="s5">, </span><span class="s1">self.target_collection)</span>
+            <span class="s3">if </span><span class="s1">target </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s1">values </span><span class="s3">is None</span>
+                    <span class="s3">and not </span><span class="s1">self.parent.create_on_none_assignment</span>
+                <span class="s1">):</span>
+                    <span class="s3">return</span>
+                <span class="s1">setattr(obj</span><span class="s5">, </span><span class="s1">self.target_collection</span><span class="s5">, </span><span class="s1">creator(values))</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self._scalar_set(target</span><span class="s5">, </span><span class="s1">values)</span>
+                <span class="s3">if </span><span class="s1">values </span><span class="s3">is None and </span><span class="s1">self.parent.cascade_scalar_deletes:</span>
+                    <span class="s1">setattr(obj</span><span class="s5">, </span><span class="s1">self.target_collection</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">proxy = self.get(obj)</span>
+            <span class="s3">assert </span><span class="s1">self.collection_class </span><span class="s3">is not None</span>
+            <span class="s3">if </span><span class="s1">proxy </span><span class="s3">is not </span><span class="s1">values:</span>
+                <span class="s1">proxy._bulk_replace(self</span><span class="s5">, </span><span class="s1">values)</span>
+
+    <span class="s3">def </span><span class="s1">delete(self</span><span class="s5">, </span><span class="s1">obj: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">self.owning_class </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">self._calc_owner(obj</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self.scalar:</span>
+            <span class="s1">target = getattr(obj</span><span class="s5">, </span><span class="s1">self.target_collection)</span>
+            <span class="s3">if </span><span class="s1">target </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">delattr(target</span><span class="s5">, </span><span class="s1">self.value_attr)</span>
+        <span class="s1">delattr(obj</span><span class="s5">, </span><span class="s1">self.target_collection)</span>
+
+    <span class="s3">def </span><span class="s1">_new(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">lazy_collection: _LazyCollectionProtocol[_T]</span>
+    <span class="s1">) -&gt; Tuple[Type[Any]</span><span class="s5">, </span><span class="s1">_T]:</span>
+        <span class="s1">creator = (</span>
+            <span class="s1">self.parent.creator</span>
+            <span class="s3">if </span><span class="s1">self.parent.creator </span><span class="s3">is not None</span>
+            <span class="s3">else </span><span class="s1">cast(</span><span class="s4">&quot;_CreatorProtocol&quot;</span><span class="s5">, </span><span class="s1">self.target_class)</span>
+        <span class="s1">)</span>
+        <span class="s1">collection_class = util.duck_type_collection(lazy_collection())</span>
+
+        <span class="s3">if </span><span class="s1">collection_class </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;lazy collection factory did not return a &quot;</span>
+                <span class="s4">f&quot;valid collection type, got </span><span class="s6">{</span><span class="s1">collection_class</span><span class="s6">}</span><span class="s4">&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">self.parent.proxy_factory:</span>
+            <span class="s3">return </span><span class="s1">(</span>
+                <span class="s1">collection_class</span><span class="s5">,</span>
+                <span class="s1">self.parent.proxy_factory(</span>
+                    <span class="s1">lazy_collection</span><span class="s5">, </span><span class="s1">creator</span><span class="s5">, </span><span class="s1">self.value_attr</span><span class="s5">, </span><span class="s1">self</span>
+                <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self.parent.getset_factory:</span>
+            <span class="s1">getter</span><span class="s5">, </span><span class="s1">setter = self.parent.getset_factory(collection_class</span><span class="s5">, </span><span class="s1">self)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">getter</span><span class="s5">, </span><span class="s1">setter = self.parent._default_getset(collection_class)</span>
+
+        <span class="s3">if </span><span class="s1">collection_class </span><span class="s3">is </span><span class="s1">list:</span>
+            <span class="s3">return </span><span class="s1">(</span>
+                <span class="s1">collection_class</span><span class="s5">,</span>
+                <span class="s1">cast(</span>
+                    <span class="s1">_T</span><span class="s5">,</span>
+                    <span class="s1">_AssociationList(</span>
+                        <span class="s1">lazy_collection</span><span class="s5">, </span><span class="s1">creator</span><span class="s5">, </span><span class="s1">getter</span><span class="s5">, </span><span class="s1">setter</span><span class="s5">, </span><span class="s1">self</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">collection_class </span><span class="s3">is </span><span class="s1">dict:</span>
+            <span class="s3">return </span><span class="s1">(</span>
+                <span class="s1">collection_class</span><span class="s5">,</span>
+                <span class="s1">cast(</span>
+                    <span class="s1">_T</span><span class="s5">,</span>
+                    <span class="s1">_AssociationDict(</span>
+                        <span class="s1">lazy_collection</span><span class="s5">, </span><span class="s1">creator</span><span class="s5">, </span><span class="s1">getter</span><span class="s5">, </span><span class="s1">setter</span><span class="s5">, </span><span class="s1">self</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">collection_class </span><span class="s3">is </span><span class="s1">set:</span>
+            <span class="s3">return </span><span class="s1">(</span>
+                <span class="s1">collection_class</span><span class="s5">,</span>
+                <span class="s1">cast(</span>
+                    <span class="s1">_T</span><span class="s5">,</span>
+                    <span class="s1">_AssociationSet(</span>
+                        <span class="s1">lazy_collection</span><span class="s5">, </span><span class="s1">creator</span><span class="s5">, </span><span class="s1">getter</span><span class="s5">, </span><span class="s1">setter</span><span class="s5">, </span><span class="s1">self</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;could not guess which interface to use for &quot;</span>
+                <span class="s4">'collection_class &quot;%s&quot; backing &quot;%s&quot;; specify a '</span>
+                <span class="s4">&quot;proxy_factory and proxy_bulk_set manually&quot;</span>
+                <span class="s1">% (self.collection_class</span><span class="s5">, </span><span class="s1">self.target_collection)</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_set(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">proxy: _AssociationCollection[Any]</span><span class="s5">, </span><span class="s1">values: Iterable[Any]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">self.parent.proxy_bulk_set:</span>
+            <span class="s1">self.parent.proxy_bulk_set(proxy</span><span class="s5">, </span><span class="s1">values)</span>
+        <span class="s3">elif </span><span class="s1">self.collection_class </span><span class="s3">is </span><span class="s1">list:</span>
+            <span class="s1">cast(</span><span class="s4">&quot;_AssociationList[Any]&quot;</span><span class="s5">, </span><span class="s1">proxy).extend(values)</span>
+        <span class="s3">elif </span><span class="s1">self.collection_class </span><span class="s3">is </span><span class="s1">dict:</span>
+            <span class="s1">cast(</span><span class="s4">&quot;_AssociationDict[Any, Any]&quot;</span><span class="s5">, </span><span class="s1">proxy).update(values)</span>
+        <span class="s3">elif </span><span class="s1">self.collection_class </span><span class="s3">is </span><span class="s1">set:</span>
+            <span class="s1">cast(</span><span class="s4">&quot;_AssociationSet[Any]&quot;</span><span class="s5">, </span><span class="s1">proxy).update(values)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;no proxy_bulk_set supplied for custom &quot;</span>
+                <span class="s4">&quot;collection_class implementation&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_inflate(self</span><span class="s5">, </span><span class="s1">proxy: _AssociationCollection[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">creator = (</span>
+            <span class="s1">self.parent.creator</span>
+            <span class="s3">and </span><span class="s1">self.parent.creator</span>
+            <span class="s3">or </span><span class="s1">cast(_CreatorProtocol</span><span class="s5">, </span><span class="s1">self.target_class)</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self.parent.getset_factory:</span>
+            <span class="s1">getter</span><span class="s5">, </span><span class="s1">setter = self.parent.getset_factory(</span>
+                <span class="s1">self.collection_class</span><span class="s5">, </span><span class="s1">self</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">getter</span><span class="s5">, </span><span class="s1">setter = self.parent._default_getset(self.collection_class)</span>
+
+        <span class="s1">proxy.creator = creator</span>
+        <span class="s1">proxy.getter = getter</span>
+        <span class="s1">proxy.setter = setter</span>
+
+    <span class="s3">def </span><span class="s1">_criterion_exists(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">criterion: Optional[_ColumnExpressionArgument[bool]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; ColumnElement[bool]:</span>
+        <span class="s1">is_has = kwargs.pop(</span><span class="s4">&quot;is_has&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s1">target_assoc = self._unwrap_target_assoc_proxy</span>
+        <span class="s3">if </span><span class="s1">target_assoc </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">inner = target_assoc._criterion_exists(</span>
+                <span class="s1">criterion=criterion</span><span class="s5">, </span><span class="s1">**kwargs</span>
+            <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">self._comparator._criterion_exists(inner)</span>
+
+        <span class="s3">if </span><span class="s1">self._target_is_object:</span>
+            <span class="s1">attr = getattr(self.target_class</span><span class="s5">, </span><span class="s1">self.value_attr)</span>
+            <span class="s1">value_expr = attr.comparator._criterion_exists(criterion</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">kwargs:</span>
+                <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                    <span class="s4">&quot;Can't apply keyword arguments to column-targeted &quot;</span>
+                    <span class="s4">&quot;association proxy; use ==&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">is_has </span><span class="s3">and </span><span class="s1">criterion </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                    <span class="s4">&quot;Non-empty has() not allowed for &quot;</span>
+                    <span class="s4">&quot;column-targeted association proxy; use ==&quot;</span>
+                <span class="s1">)</span>
+
+            <span class="s1">value_expr = criterion</span>
+
+        <span class="s3">return </span><span class="s1">self._comparator._criterion_exists(value_expr)</span>
+
+    <span class="s3">def </span><span class="s1">any(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">criterion: Optional[_ColumnExpressionArgument[bool]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; ColumnElement[bool]:</span>
+        <span class="s2">&quot;&quot;&quot;Produce a proxied 'any' expression using EXISTS. 
+ 
+        This expression will be a composed product 
+        using the :meth:`.Relationship.Comparator.any` 
+        and/or :meth:`.Relationship.Comparator.has` 
+        operators of the underlying proxied attributes. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">self._unwrap_target_assoc_proxy </span><span class="s3">is None and </span><span class="s1">(</span>
+            <span class="s1">self.scalar</span>
+            <span class="s3">and </span><span class="s1">(</span><span class="s3">not </span><span class="s1">self._target_is_object </span><span class="s3">or </span><span class="s1">self._value_is_scalar)</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;'any()' not implemented for scalar attributes. Use has().&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self._criterion_exists(</span>
+            <span class="s1">criterion=criterion</span><span class="s5">, </span><span class="s1">is_has=</span><span class="s3">False</span><span class="s5">, </span><span class="s1">**kwargs</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">has(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">criterion: Optional[_ColumnExpressionArgument[bool]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; ColumnElement[bool]:</span>
+        <span class="s2">&quot;&quot;&quot;Produce a proxied 'has' expression using EXISTS. 
+ 
+        This expression will be a composed product 
+        using the :meth:`.Relationship.Comparator.any` 
+        and/or :meth:`.Relationship.Comparator.has` 
+        operators of the underlying proxied attributes. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">self._unwrap_target_assoc_proxy </span><span class="s3">is None and </span><span class="s1">(</span>
+            <span class="s3">not </span><span class="s1">self.scalar</span>
+            <span class="s3">or </span><span class="s1">(self._target_is_object </span><span class="s3">and not </span><span class="s1">self._value_is_scalar)</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;'has()' not implemented for collections. Use any().&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self._criterion_exists(</span>
+            <span class="s1">criterion=criterion</span><span class="s5">, </span><span class="s1">is_has=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">**kwargs</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s4">&quot;%s(%r)&quot; </span><span class="s1">% (self.__class__.__name__</span><span class="s5">, </span><span class="s1">self.parent)</span>
+
+
+<span class="s3">class </span><span class="s1">AmbiguousAssociationProxyInstance(AssociationProxyInstance[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;an :class:`.AssociationProxyInstance` where we cannot determine 
+    the type of target object. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_is_canonical = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">_ambiguous(self) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">AttributeError(</span>
+            <span class="s4">&quot;Association proxy %s.%s refers to an attribute '%s' that is not &quot;</span>
+            <span class="s4">&quot;directly mapped on class %s; therefore this operation cannot &quot;</span>
+            <span class="s4">&quot;proceed since we don't know what type of object is referred &quot;</span>
+            <span class="s4">&quot;towards&quot;</span>
+            <span class="s1">% (</span>
+                <span class="s1">self.owning_class.__name__</span><span class="s5">,</span>
+                <span class="s1">self.target_collection</span><span class="s5">,</span>
+                <span class="s1">self.value_attr</span><span class="s5">,</span>
+                <span class="s1">self.target_class</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get(self</span><span class="s5">, </span><span class="s1">obj: Any) -&gt; Any:</span>
+        <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">super().get(obj)</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">obj: object) -&gt; NoReturn:</span>
+        <span class="s1">self._ambiguous()</span>
+
+    <span class="s3">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">obj: object) -&gt; NoReturn:</span>
+        <span class="s1">self._ambiguous()</span>
+
+    <span class="s3">def </span><span class="s1">any(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">criterion: Optional[_ColumnExpressionArgument[bool]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; NoReturn:</span>
+        <span class="s1">self._ambiguous()</span>
+
+    <span class="s3">def </span><span class="s1">has(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">criterion: Optional[_ColumnExpressionArgument[bool]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; NoReturn:</span>
+        <span class="s1">self._ambiguous()</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_lookup_cache(self) -&gt; Dict[Type[Any]</span><span class="s5">, </span><span class="s1">AssociationProxyInstance[_T]]:</span>
+        <span class="s0"># mapping of &lt;subclass&gt;-&gt;AssociationProxyInstance.</span>
+        <span class="s0"># e.g. proxy is A-&gt; A.b -&gt; B -&gt; B.b_attr, but B.b_attr doesn't exist;</span>
+        <span class="s0"># only B1(B) and B2(B) have &quot;b_attr&quot;, keys in here would be B1, B2</span>
+        <span class="s3">return </span><span class="s1">{}</span>
+
+    <span class="s3">def </span><span class="s1">_non_canonical_get_for_object(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">parent_instance: Any</span>
+    <span class="s1">) -&gt; AssociationProxyInstance[_T]:</span>
+        <span class="s3">if </span><span class="s1">parent_instance </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">actual_obj = getattr(parent_instance</span><span class="s5">, </span><span class="s1">self.target_collection)</span>
+            <span class="s3">if </span><span class="s1">actual_obj </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">insp = inspect(actual_obj)</span>
+                <span class="s3">except </span><span class="s1">exc.NoInspectionAvailable:</span>
+                    <span class="s3">pass</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">mapper = insp.mapper</span>
+                    <span class="s1">instance_class = mapper.class_</span>
+                    <span class="s3">if </span><span class="s1">instance_class </span><span class="s3">not in </span><span class="s1">self._lookup_cache:</span>
+                        <span class="s1">self._populate_cache(instance_class</span><span class="s5">, </span><span class="s1">mapper)</span>
+
+                    <span class="s3">try</span><span class="s1">:</span>
+                        <span class="s3">return </span><span class="s1">self._lookup_cache[instance_class]</span>
+                    <span class="s3">except </span><span class="s1">KeyError:</span>
+                        <span class="s3">pass</span>
+
+        <span class="s0"># no object or ambiguous object given, so return &quot;self&quot;, which</span>
+        <span class="s0"># is a proxy with generally only instance-level functionality</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_populate_cache(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">instance_class: Any</span><span class="s5">, </span><span class="s1">mapper: Mapper[Any]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">prop = orm.class_mapper(self.owning_class).get_property(</span>
+            <span class="s1">self.target_collection</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">mapper.isa(prop.mapper):</span>
+            <span class="s1">target_class = instance_class</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">target_assoc = self._cls_unwrap_target_assoc_proxy(</span>
+                    <span class="s1">target_class</span><span class="s5">, </span><span class="s1">self.value_attr</span>
+                <span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">AttributeError:</span>
+                <span class="s3">pass</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self._lookup_cache[instance_class] = self._construct_for_assoc(</span>
+                    <span class="s1">cast(</span><span class="s4">&quot;AssociationProxyInstance[_T]&quot;</span><span class="s5">, </span><span class="s1">target_assoc)</span><span class="s5">,</span>
+                    <span class="s1">self.parent</span><span class="s5">,</span>
+                    <span class="s1">self.owning_class</span><span class="s5">,</span>
+                    <span class="s1">target_class</span><span class="s5">,</span>
+                    <span class="s1">self.value_attr</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">ObjectAssociationProxyInstance(AssociationProxyInstance[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;an :class:`.AssociationProxyInstance` that has an object as a target.&quot;&quot;&quot;</span>
+
+    <span class="s1">_target_is_object: bool = </span><span class="s3">True</span>
+    <span class="s1">_is_canonical = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">contains(self</span><span class="s5">, </span><span class="s1">other: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; ColumnElement[bool]:</span>
+        <span class="s2">&quot;&quot;&quot;Produce a proxied 'contains' expression using EXISTS. 
+ 
+        This expression will be a composed product 
+        using the :meth:`.Relationship.Comparator.any`, 
+        :meth:`.Relationship.Comparator.has`, 
+        and/or :meth:`.Relationship.Comparator.contains` 
+        operators of the underlying proxied attributes. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">target_assoc = self._unwrap_target_assoc_proxy</span>
+        <span class="s3">if </span><span class="s1">target_assoc </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._comparator._criterion_exists(</span>
+                <span class="s1">target_assoc.contains(other)</span>
+                <span class="s3">if not </span><span class="s1">target_assoc.scalar</span>
+                <span class="s3">else </span><span class="s1">target_assoc == other</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">(</span>
+            <span class="s1">self._target_is_object</span>
+            <span class="s3">and </span><span class="s1">self.scalar</span>
+            <span class="s3">and not </span><span class="s1">self._value_is_scalar</span>
+        <span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">self._comparator.has(</span>
+                <span class="s1">getattr(self.target_class</span><span class="s5">, </span><span class="s1">self.value_attr).contains(other)</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">self._target_is_object </span><span class="s3">and </span><span class="s1">self.scalar </span><span class="s3">and </span><span class="s1">self._value_is_scalar:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;contains() doesn't apply to a scalar object endpoint; use ==&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._comparator._criterion_exists(</span>
+                <span class="s1">**{self.value_attr: other}</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">obj: Any) -&gt; ColumnElement[bool]:  </span><span class="s0"># type: ignore[override]  # noqa: E501</span>
+        <span class="s0"># note the has() here will fail for collections; eq_()</span>
+        <span class="s0"># is only allowed with a scalar.</span>
+        <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">or_(</span>
+                <span class="s1">self._comparator.has(**{self.value_attr: obj})</span><span class="s5">,</span>
+                <span class="s1">self._comparator == </span><span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._comparator.has(**{self.value_attr: obj})</span>
+
+    <span class="s3">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">obj: Any) -&gt; ColumnElement[bool]:  </span><span class="s0"># type: ignore[override]  # noqa: E501</span>
+        <span class="s0"># note the has() here will fail for collections; eq_()</span>
+        <span class="s0"># is only allowed with a scalar.</span>
+        <span class="s3">return </span><span class="s1">self._comparator.has(</span>
+            <span class="s1">getattr(self.target_class</span><span class="s5">, </span><span class="s1">self.value_attr) != obj</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">ColumnAssociationProxyInstance(AssociationProxyInstance[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;an :class:`.AssociationProxyInstance` that has a database column as a 
+    target. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_target_is_object: bool = </span><span class="s3">False</span>
+    <span class="s1">_is_canonical = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; ColumnElement[bool]:  </span><span class="s0"># type: ignore[override]  # noqa: E501</span>
+        <span class="s0"># special case &quot;is None&quot; to check for no related row as well</span>
+        <span class="s1">expr = self._criterion_exists(</span>
+            <span class="s1">self.remote_attr.operate(operators.eq</span><span class="s5">, </span><span class="s1">other)</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">other </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">or_(expr</span><span class="s5">, </span><span class="s1">self._comparator == </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">expr</span>
+
+    <span class="s3">def </span><span class="s1">operate(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">op: operators.OperatorType</span><span class="s5">, </span><span class="s1">*other: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any</span>
+    <span class="s1">) -&gt; ColumnElement[Any]:</span>
+        <span class="s3">return </span><span class="s1">self._criterion_exists(</span>
+            <span class="s1">self.remote_attr.operate(op</span><span class="s5">, </span><span class="s1">*other</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_lazy_collection(_LazyCollectionProtocol[_T]):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">obj: Any</span><span class="s5">, </span><span class="s1">target: str):</span>
+        <span class="s1">self.parent = obj</span>
+        <span class="s1">self.target = target</span>
+
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Union[MutableSet[_T]</span><span class="s5">, </span><span class="s1">MutableMapping[Any</span><span class="s5">, </span><span class="s1">_T]</span><span class="s5">, </span><span class="s1">MutableSequence[_T]]:</span>
+        <span class="s3">return </span><span class="s1">getattr(self.parent</span><span class="s5">, </span><span class="s1">self.target)  </span><span class="s0"># type: ignore[no-any-return]</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">{</span><span class="s4">&quot;obj&quot;</span><span class="s1">: self.parent</span><span class="s5">, </span><span class="s4">&quot;target&quot;</span><span class="s1">: self.target}</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.parent = state[</span><span class="s4">&quot;obj&quot;</span><span class="s1">]</span>
+        <span class="s1">self.target = state[</span><span class="s4">&quot;target&quot;</span><span class="s1">]</span>
+
+
+<span class="s1">_IT = TypeVar(</span><span class="s4">&quot;_IT&quot;</span><span class="s5">, </span><span class="s1">bound=</span><span class="s4">&quot;Any&quot;</span><span class="s1">)</span>
+<span class="s4">&quot;&quot;&quot;instance type - this is the type of object inside a collection. 
+ 
+this is not the same as the _T of AssociationProxy and 
+AssociationProxyInstance itself, which will often refer to the 
+collection[_IT] type. 
+ 
+&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">_AssociationCollection(Generic[_IT]):</span>
+    <span class="s1">getter: _GetterProtocol[_IT]</span>
+    <span class="s4">&quot;&quot;&quot;A function.  Given an associated object, return the 'value'.&quot;&quot;&quot;</span>
+
+    <span class="s1">creator: _CreatorProtocol</span>
+    <span class="s4">&quot;&quot;&quot; 
+    A function that creates new target entities.  Given one parameter: 
+    value.  This assertion is assumed:: 
+ 
+    obj = creator(somevalue) 
+    assert getter(obj) == somevalue 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">parent: AssociationProxyInstance[_IT]</span>
+    <span class="s1">setter: _SetterProtocol</span>
+    <span class="s4">&quot;&quot;&quot;A function.  Given an associated object and a value, store that 
+        value on the object. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">lazy_collection: _LazyCollectionProtocol[_IT]</span>
+    <span class="s4">&quot;&quot;&quot;A callable returning a list-based collection of entities (usually an 
+          object attribute managed by a SQLAlchemy relationship())&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">lazy_collection: _LazyCollectionProtocol[_IT]</span><span class="s5">,</span>
+        <span class="s1">creator: _CreatorProtocol</span><span class="s5">,</span>
+        <span class="s1">getter: _GetterProtocol[_IT]</span><span class="s5">,</span>
+        <span class="s1">setter: _SetterProtocol</span><span class="s5">,</span>
+        <span class="s1">parent: AssociationProxyInstance[_IT]</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Constructs an _AssociationCollection. 
+ 
+        This will always be a subclass of either _AssociationList, 
+        _AssociationSet, or _AssociationDict. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.lazy_collection = lazy_collection</span>
+        <span class="s1">self.creator = creator</span>
+        <span class="s1">self.getter = getter</span>
+        <span class="s1">self.setter = setter</span>
+        <span class="s1">self.parent = parent</span>
+
+    <span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+        <span class="s1">col: Collection[_IT]</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">col = property(</span><span class="s3">lambda </span><span class="s1">self: self.lazy_collection())</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self.col)</span>
+
+    <span class="s3">def </span><span class="s1">__bool__(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">bool(self.col)</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">{</span><span class="s4">&quot;parent&quot;</span><span class="s1">: self.parent</span><span class="s5">, </span><span class="s4">&quot;lazy_collection&quot;</span><span class="s1">: self.lazy_collection}</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.parent = state[</span><span class="s4">&quot;parent&quot;</span><span class="s1">]</span>
+        <span class="s1">self.lazy_collection = state[</span><span class="s4">&quot;lazy_collection&quot;</span><span class="s1">]</span>
+        <span class="s1">self.parent._inflate(self)</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s3">class </span><span class="s1">_AssociationSingleItem(_AssociationCollection[_T]):</span>
+    <span class="s1">setter: _PlainSetterProtocol[_T]</span>
+    <span class="s1">creator: _PlainCreatorProtocol[_T]</span>
+
+    <span class="s3">def </span><span class="s1">_create(self</span><span class="s5">, </span><span class="s1">value: _T) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self.creator(value)</span>
+
+    <span class="s3">def </span><span class="s1">_get(self</span><span class="s5">, </span><span class="s1">object_: Any) -&gt; _T:</span>
+        <span class="s3">return </span><span class="s1">self.getter(object_)</span>
+
+    <span class="s3">def </span><span class="s1">_bulk_replace(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">assoc_proxy: AssociationProxyInstance[Any]</span><span class="s5">, </span><span class="s1">values: Iterable[_IT]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.clear()</span>
+        <span class="s1">assoc_proxy._set(self</span><span class="s5">, </span><span class="s1">values)</span>
+
+
+<span class="s3">class </span><span class="s1">_AssociationList(_AssociationSingleItem[_T]</span><span class="s5">, </span><span class="s1">MutableSequence[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Generic, converting, list-to-list proxy.&quot;&quot;&quot;</span>
+
+    <span class="s1">col: MutableSequence[_T]</span>
+
+    <span class="s3">def </span><span class="s1">_set(self</span><span class="s5">, </span><span class="s1">object_: Any</span><span class="s5">, </span><span class="s1">value: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.setter(object_</span><span class="s5">, </span><span class="s1">value)</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">index: int) -&gt; _T: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">index: slice) -&gt; MutableSequence[_T]: ...</span>
+
+    <span class="s3">def </span><span class="s1">__getitem__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">index: Union[int</span><span class="s5">, </span><span class="s1">slice]</span>
+    <span class="s1">) -&gt; Union[_T</span><span class="s5">, </span><span class="s1">MutableSequence[_T]]:</span>
+        <span class="s3">if not </span><span class="s1">isinstance(index</span><span class="s5">, </span><span class="s1">slice):</span>
+            <span class="s3">return </span><span class="s1">self._get(self.col[index])</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">[self._get(member) </span><span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">self.col[index]]</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__setitem__(self</span><span class="s5">, </span><span class="s1">index: int</span><span class="s5">, </span><span class="s1">value: _T) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__setitem__(self</span><span class="s5">, </span><span class="s1">index: slice</span><span class="s5">, </span><span class="s1">value: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s3">def </span><span class="s1">__setitem__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">index: Union[int</span><span class="s5">, </span><span class="s1">slice]</span><span class="s5">, </span><span class="s1">value: Union[_T</span><span class="s5">, </span><span class="s1">Iterable[_T]]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if not </span><span class="s1">isinstance(index</span><span class="s5">, </span><span class="s1">slice):</span>
+            <span class="s1">self._set(self.col[index]</span><span class="s5">, </span><span class="s1">cast(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">value))</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">index.stop </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">stop = len(self)</span>
+            <span class="s3">elif </span><span class="s1">index.stop &lt; </span><span class="s7">0</span><span class="s1">:</span>
+                <span class="s1">stop = len(self) + index.stop</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">stop = index.stop</span>
+            <span class="s1">step = index.step </span><span class="s3">or </span><span class="s7">1</span>
+
+            <span class="s1">start = index.start </span><span class="s3">or </span><span class="s7">0</span>
+            <span class="s1">rng = list(range(index.start </span><span class="s3">or </span><span class="s7">0</span><span class="s5">, </span><span class="s1">stop</span><span class="s5">, </span><span class="s1">step))</span>
+
+            <span class="s1">sized_value = list(value)</span>
+
+            <span class="s3">if </span><span class="s1">step == </span><span class="s7">1</span><span class="s1">:</span>
+                <span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">rng:</span>
+                    <span class="s3">del </span><span class="s1">self[start]</span>
+                <span class="s1">i = start</span>
+                <span class="s3">for </span><span class="s1">item </span><span class="s3">in </span><span class="s1">sized_value:</span>
+                    <span class="s1">self.insert(i</span><span class="s5">, </span><span class="s1">item)</span>
+                    <span class="s1">i += </span><span class="s7">1</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">len(sized_value) != len(rng):</span>
+                    <span class="s3">raise </span><span class="s1">ValueError(</span>
+                        <span class="s4">&quot;attempt to assign sequence of size %s to &quot;</span>
+                        <span class="s4">&quot;extended slice of size %s&quot;</span>
+                        <span class="s1">% (len(sized_value)</span><span class="s5">, </span><span class="s1">len(rng))</span>
+                    <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">i</span><span class="s5">, </span><span class="s1">item </span><span class="s3">in </span><span class="s1">zip(rng</span><span class="s5">, </span><span class="s1">value):</span>
+                    <span class="s1">self._set(self.col[i]</span><span class="s5">, </span><span class="s1">item)</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__delitem__(self</span><span class="s5">, </span><span class="s1">index: int) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__delitem__(self</span><span class="s5">, </span><span class="s1">index: slice) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s3">def </span><span class="s1">__delitem__(self</span><span class="s5">, </span><span class="s1">index: Union[slice</span><span class="s5">, </span><span class="s1">int]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">del </span><span class="s1">self.col[index]</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">value: object) -&gt; bool:</span>
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">self.col:</span>
+            <span class="s0"># testlib.pragma exempt:__eq__</span>
+            <span class="s3">if </span><span class="s1">self._get(member) == value:</span>
+                <span class="s3">return True</span>
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[_T]:</span>
+        <span class="s2">&quot;&quot;&quot;Iterate over proxied values. 
+ 
+        For the actual domain objects, iterate over .col instead or 
+        just use the underlying collection directly from its property 
+        on the parent. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">self.col:</span>
+            <span class="s3">yield </span><span class="s1">self._get(member)</span>
+        <span class="s3">return</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">value: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">col = self.col</span>
+        <span class="s1">item = self._create(value)</span>
+        <span class="s1">col.append(item)</span>
+
+    <span class="s3">def </span><span class="s1">count(self</span><span class="s5">, </span><span class="s1">value: Any) -&gt; int:</span>
+        <span class="s1">count = </span><span class="s7">0</span>
+        <span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">self:</span>
+            <span class="s3">if </span><span class="s1">v == value:</span>
+                <span class="s1">count += </span><span class="s7">1</span>
+        <span class="s3">return </span><span class="s1">count</span>
+
+    <span class="s3">def </span><span class="s1">extend(self</span><span class="s5">, </span><span class="s1">values: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">values:</span>
+            <span class="s1">self.append(v)</span>
+
+    <span class="s3">def </span><span class="s1">insert(self</span><span class="s5">, </span><span class="s1">index: int</span><span class="s5">, </span><span class="s1">value: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.col[index:index] = [self._create(value)]</span>
+
+    <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">index: int = -</span><span class="s7">1</span><span class="s1">) -&gt; _T:</span>
+        <span class="s3">return </span><span class="s1">self.getter(self.col.pop(index))</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">value: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">i</span><span class="s5">, </span><span class="s1">val </span><span class="s3">in </span><span class="s1">enumerate(self):</span>
+            <span class="s3">if </span><span class="s1">val == value:</span>
+                <span class="s3">del </span><span class="s1">self.col[i]</span>
+                <span class="s3">return</span>
+        <span class="s3">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;value not in list&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">reverse(self) -&gt; NoReturn:</span>
+        <span class="s2">&quot;&quot;&quot;Not supported, use reversed(mylist)&quot;&quot;&quot;</span>
+
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">sort(self) -&gt; NoReturn:</span>
+        <span class="s2">&quot;&quot;&quot;Not supported, use sorted(mylist)&quot;&quot;&quot;</span>
+
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">del </span><span class="s1">self.col[</span><span class="s7">0 </span><span class="s1">: len(self.col)]</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">list(self) == other</span>
+
+    <span class="s3">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">list(self) != other</span>
+
+    <span class="s3">def </span><span class="s1">__lt__(self</span><span class="s5">, </span><span class="s1">other: List[_T]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">list(self) &lt; other</span>
+
+    <span class="s3">def </span><span class="s1">__le__(self</span><span class="s5">, </span><span class="s1">other: List[_T]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">list(self) &lt;= other</span>
+
+    <span class="s3">def </span><span class="s1">__gt__(self</span><span class="s5">, </span><span class="s1">other: List[_T]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">list(self) &gt; other</span>
+
+    <span class="s3">def </span><span class="s1">__ge__(self</span><span class="s5">, </span><span class="s1">other: List[_T]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">list(self) &gt;= other</span>
+
+    <span class="s3">def </span><span class="s1">__add__(self</span><span class="s5">, </span><span class="s1">other: List[_T]) -&gt; List[_T]:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">other = list(other)</span>
+        <span class="s3">except </span><span class="s1">TypeError:</span>
+            <span class="s3">return </span><span class="s1">NotImplemented</span>
+        <span class="s3">return </span><span class="s1">list(self) + other</span>
+
+    <span class="s3">def </span><span class="s1">__radd__(self</span><span class="s5">, </span><span class="s1">other: List[_T]) -&gt; List[_T]:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">other = list(other)</span>
+        <span class="s3">except </span><span class="s1">TypeError:</span>
+            <span class="s3">return </span><span class="s1">NotImplemented</span>
+        <span class="s3">return </span><span class="s1">other + list(self)</span>
+
+    <span class="s3">def </span><span class="s1">__mul__(self</span><span class="s5">, </span><span class="s1">n: SupportsIndex) -&gt; List[_T]:</span>
+        <span class="s3">if not </span><span class="s1">isinstance(n</span><span class="s5">, </span><span class="s1">int):</span>
+            <span class="s3">return </span><span class="s1">NotImplemented</span>
+        <span class="s3">return </span><span class="s1">list(self) * n</span>
+
+    <span class="s3">def </span><span class="s1">__rmul__(self</span><span class="s5">, </span><span class="s1">n: SupportsIndex) -&gt; List[_T]:</span>
+        <span class="s3">if not </span><span class="s1">isinstance(n</span><span class="s5">, </span><span class="s1">int):</span>
+            <span class="s3">return </span><span class="s1">NotImplemented</span>
+        <span class="s3">return </span><span class="s1">n * list(self)</span>
+
+    <span class="s3">def </span><span class="s1">__iadd__(self</span><span class="s5">, </span><span class="s1">iterable: Iterable[_T]) -&gt; Self:</span>
+        <span class="s1">self.extend(iterable)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__imul__(self</span><span class="s5">, </span><span class="s1">n: SupportsIndex) -&gt; Self:</span>
+        <span class="s0"># unlike a regular list *=, proxied __imul__ will generate unique</span>
+        <span class="s0"># backing objects for each copy.  *= on proxied lists is a bit of</span>
+        <span class="s0"># a stretch anyhow, and this interpretation of the __imul__ contract</span>
+        <span class="s0"># is more plausibly useful than copying the backing objects.</span>
+        <span class="s3">if not </span><span class="s1">isinstance(n</span><span class="s5">, </span><span class="s1">int):</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+        <span class="s3">if </span><span class="s1">n == </span><span class="s7">0</span><span class="s1">:</span>
+            <span class="s1">self.clear()</span>
+        <span class="s3">elif </span><span class="s1">n &gt; </span><span class="s7">1</span><span class="s1">:</span>
+            <span class="s1">self.extend(list(self) * (n - </span><span class="s7">1</span><span class="s1">))</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+        <span class="s0"># TODO: no idea how to do this without separate &quot;stub&quot;</span>
+        <span class="s3">def </span><span class="s1">index(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">value: Any</span><span class="s5">, </span><span class="s1">start: int = ...</span><span class="s5">, </span><span class="s1">stop: int = ...</span>
+        <span class="s1">) -&gt; int: ...</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+
+        <span class="s3">def </span><span class="s1">index(self</span><span class="s5">, </span><span class="s1">value: Any</span><span class="s5">, </span><span class="s1">*arg) -&gt; int:</span>
+            <span class="s1">ls = list(self)</span>
+            <span class="s3">return </span><span class="s1">ls.index(value</span><span class="s5">, </span><span class="s1">*arg)</span>
+
+    <span class="s3">def </span><span class="s1">copy(self) -&gt; List[_T]:</span>
+        <span class="s3">return </span><span class="s1">list(self)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s1">repr(list(self))</span>
+
+    <span class="s3">def </span><span class="s1">__hash__(self) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;%s objects are unhashable&quot; </span><span class="s1">% type(self).__name__)</span>
+
+    <span class="s3">if not </span><span class="s1">typing.TYPE_CHECKING:</span>
+        <span class="s3">for </span><span class="s1">func_name</span><span class="s5">, </span><span class="s1">func </span><span class="s3">in </span><span class="s1">list(locals().items()):</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">callable(func)</span>
+                <span class="s3">and </span><span class="s1">func.__name__ == func_name</span>
+                <span class="s3">and not </span><span class="s1">func.__doc__</span>
+                <span class="s3">and </span><span class="s1">hasattr(list</span><span class="s5">, </span><span class="s1">func_name)</span>
+            <span class="s1">):</span>
+                <span class="s1">func.__doc__ = getattr(list</span><span class="s5">, </span><span class="s1">func_name).__doc__</span>
+        <span class="s3">del </span><span class="s1">func_name</span><span class="s5">, </span><span class="s1">func</span>
+
+
+<span class="s3">class </span><span class="s1">_AssociationDict(_AssociationCollection[_VT]</span><span class="s5">, </span><span class="s1">MutableMapping[_KT</span><span class="s5">, </span><span class="s1">_VT]):</span>
+    <span class="s2">&quot;&quot;&quot;Generic, converting, dict-to-dict proxy.&quot;&quot;&quot;</span>
+
+    <span class="s1">setter: _DictSetterProtocol[_VT]</span>
+    <span class="s1">creator: _KeyCreatorProtocol[_VT]</span>
+    <span class="s1">col: MutableMapping[_KT</span><span class="s5">, </span><span class="s1">Optional[_VT]]</span>
+
+    <span class="s3">def </span><span class="s1">_create(self</span><span class="s5">, </span><span class="s1">key: _KT</span><span class="s5">, </span><span class="s1">value: Optional[_VT]) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self.creator(key</span><span class="s5">, </span><span class="s1">value)</span>
+
+    <span class="s3">def </span><span class="s1">_get(self</span><span class="s5">, </span><span class="s1">object_: Any) -&gt; _VT:</span>
+        <span class="s3">return </span><span class="s1">self.getter(object_)</span>
+
+    <span class="s3">def </span><span class="s1">_set(self</span><span class="s5">, </span><span class="s1">object_: Any</span><span class="s5">, </span><span class="s1">key: _KT</span><span class="s5">, </span><span class="s1">value: _VT) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">self.setter(object_</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value)</span>
+
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">key: _KT) -&gt; _VT:</span>
+        <span class="s3">return </span><span class="s1">self._get(self.col[key])</span>
+
+    <span class="s3">def </span><span class="s1">__setitem__(self</span><span class="s5">, </span><span class="s1">key: _KT</span><span class="s5">, </span><span class="s1">value: _VT) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.col:</span>
+            <span class="s1">self._set(self.col[key]</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.col[key] = self._create(key</span><span class="s5">, </span><span class="s1">value)</span>
+
+    <span class="s3">def </span><span class="s1">__delitem__(self</span><span class="s5">, </span><span class="s1">key: _KT) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">del </span><span class="s1">self.col[key]</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">key: object) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.col</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[_KT]:</span>
+        <span class="s3">return </span><span class="s1">iter(self.col.keys())</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.col.clear()</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">dict(self) == other</span>
+
+    <span class="s3">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">dict(self) != other</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s1">repr(dict(self))</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">get(self</span><span class="s5">, </span><span class="s1">__key: _KT) -&gt; Optional[_VT]: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">get(self</span><span class="s5">, </span><span class="s1">__key: _KT</span><span class="s5">, </span><span class="s1">default: Union[_VT</span><span class="s5">, </span><span class="s1">_T]) -&gt; Union[_VT</span><span class="s5">, </span><span class="s1">_T]: ...</span>
+
+    <span class="s3">def </span><span class="s1">get(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">key: _KT</span><span class="s5">, </span><span class="s1">default: Optional[Union[_VT</span><span class="s5">, </span><span class="s1">_T]] = </span><span class="s3">None</span>
+    <span class="s1">) -&gt; Union[_VT</span><span class="s5">, </span><span class="s1">_T</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self[key]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s3">return </span><span class="s1">default</span>
+
+    <span class="s3">def </span><span class="s1">setdefault(self</span><span class="s5">, </span><span class="s1">key: _KT</span><span class="s5">, </span><span class="s1">default: Optional[_VT] = </span><span class="s3">None</span><span class="s1">) -&gt; _VT:</span>
+        <span class="s0"># TODO: again, no idea how to create an actual MutableMapping.</span>
+        <span class="s0"># default must allow None, return type can't include None,</span>
+        <span class="s0"># the stub explicitly allows for default of None with a cryptic message</span>
+        <span class="s0"># &quot;This overload should be allowed only if the value type is</span>
+        <span class="s0"># compatible with None.&quot;.</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">self.col:</span>
+            <span class="s1">self.col[key] = self._create(key</span><span class="s5">, </span><span class="s1">default)</span>
+            <span class="s3">return </span><span class="s1">default  </span><span class="s0"># type: ignore</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self[key]</span>
+
+    <span class="s3">def </span><span class="s1">keys(self) -&gt; KeysView[_KT]:</span>
+        <span class="s3">return </span><span class="s1">self.col.keys()</span>
+
+    <span class="s3">def </span><span class="s1">items(self) -&gt; ItemsView[_KT</span><span class="s5">, </span><span class="s1">_VT]:</span>
+        <span class="s3">return </span><span class="s1">ItemsView(self)</span>
+
+    <span class="s3">def </span><span class="s1">values(self) -&gt; ValuesView[_VT]:</span>
+        <span class="s3">return </span><span class="s1">ValuesView(self)</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">__key: _KT) -&gt; _VT: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">pop(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">__key: _KT</span><span class="s5">, </span><span class="s1">default: Union[_VT</span><span class="s5">, </span><span class="s1">_T] = ...</span>
+    <span class="s1">) -&gt; Union[_VT</span><span class="s5">, </span><span class="s1">_T]: ...</span>
+
+    <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">__key: _KT</span><span class="s5">, </span><span class="s1">*arg: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; Union[_VT</span><span class="s5">, </span><span class="s1">_T]:</span>
+        <span class="s1">member = self.col.pop(__key</span><span class="s5">, </span><span class="s1">*arg</span><span class="s5">, </span><span class="s1">**kw)</span>
+        <span class="s3">return </span><span class="s1">self._get(member)</span>
+
+    <span class="s3">def </span><span class="s1">popitem(self) -&gt; Tuple[_KT</span><span class="s5">, </span><span class="s1">_VT]:</span>
+        <span class="s1">item = self.col.popitem()</span>
+        <span class="s3">return </span><span class="s1">(item[</span><span class="s7">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">self._get(item[</span><span class="s7">1</span><span class="s1">]))</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">update(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">__m: SupportsKeysAndGetItem[_KT</span><span class="s5">, </span><span class="s1">_VT]</span><span class="s5">, </span><span class="s1">**kwargs: _VT</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">update(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">__m: Iterable[tuple[_KT</span><span class="s5">, </span><span class="s1">_VT]]</span><span class="s5">, </span><span class="s1">**kwargs: _VT</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">update(self</span><span class="s5">, </span><span class="s1">**kwargs: _VT) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s3">def </span><span class="s1">update(self</span><span class="s5">, </span><span class="s1">*a: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">up: Dict[_KT</span><span class="s5">, </span><span class="s1">_VT] = {}</span>
+        <span class="s1">up.update(*a</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">up.items():</span>
+            <span class="s1">self[key] = value</span>
+
+    <span class="s3">def </span><span class="s1">_bulk_replace(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">assoc_proxy: AssociationProxyInstance[Any]</span><span class="s5">,</span>
+        <span class="s1">values: Mapping[_KT</span><span class="s5">, </span><span class="s1">_VT]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">existing = set(self)</span>
+        <span class="s1">constants = existing.intersection(values </span><span class="s3">or </span><span class="s1">())</span>
+        <span class="s1">additions = set(values </span><span class="s3">or </span><span class="s1">()).difference(constants)</span>
+        <span class="s1">removals = existing.difference(constants)</span>
+
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">member </span><span class="s3">in </span><span class="s1">values.items() </span><span class="s3">or </span><span class="s1">():</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">additions:</span>
+                <span class="s1">self[key] = member</span>
+            <span class="s3">elif </span><span class="s1">key </span><span class="s3">in </span><span class="s1">constants:</span>
+                <span class="s1">self[key] = member</span>
+
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">removals:</span>
+            <span class="s3">del </span><span class="s1">self[key]</span>
+
+    <span class="s3">def </span><span class="s1">copy(self) -&gt; Dict[_KT</span><span class="s5">, </span><span class="s1">_VT]:</span>
+        <span class="s3">return </span><span class="s1">dict(self.items())</span>
+
+    <span class="s3">def </span><span class="s1">__hash__(self) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;%s objects are unhashable&quot; </span><span class="s1">% type(self).__name__)</span>
+
+    <span class="s3">if not </span><span class="s1">typing.TYPE_CHECKING:</span>
+        <span class="s3">for </span><span class="s1">func_name</span><span class="s5">, </span><span class="s1">func </span><span class="s3">in </span><span class="s1">list(locals().items()):</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">callable(func)</span>
+                <span class="s3">and </span><span class="s1">func.__name__ == func_name</span>
+                <span class="s3">and not </span><span class="s1">func.__doc__</span>
+                <span class="s3">and </span><span class="s1">hasattr(dict</span><span class="s5">, </span><span class="s1">func_name)</span>
+            <span class="s1">):</span>
+                <span class="s1">func.__doc__ = getattr(dict</span><span class="s5">, </span><span class="s1">func_name).__doc__</span>
+        <span class="s3">del </span><span class="s1">func_name</span><span class="s5">, </span><span class="s1">func</span>
+
+
+<span class="s3">class </span><span class="s1">_AssociationSet(_AssociationSingleItem[_T]</span><span class="s5">, </span><span class="s1">MutableSet[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Generic, converting, set-to-set proxy.&quot;&quot;&quot;</span>
+
+    <span class="s1">col: MutableSet[_T]</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self.col)</span>
+
+    <span class="s3">def </span><span class="s1">__bool__(self) -&gt; bool:</span>
+        <span class="s3">if </span><span class="s1">self.col:</span>
+            <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">__o: object) -&gt; bool:</span>
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">self.col:</span>
+            <span class="s3">if </span><span class="s1">self._get(member) == __o:</span>
+                <span class="s3">return True</span>
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[_T]:</span>
+        <span class="s2">&quot;&quot;&quot;Iterate over proxied values. 
+ 
+        For the actual domain objects, iterate over .col instead or just use 
+        the underlying collection directly from its property on the parent. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">self.col:</span>
+            <span class="s3">yield </span><span class="s1">self._get(member)</span>
+        <span class="s3">return</span>
+
+    <span class="s3">def </span><span class="s1">add(self</span><span class="s5">, </span><span class="s1">__element: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">__element </span><span class="s3">not in </span><span class="s1">self:</span>
+            <span class="s1">self.col.add(self._create(__element))</span>
+
+    <span class="s0"># for discard and remove, choosing a more expensive check strategy rather</span>
+    <span class="s0"># than call self.creator()</span>
+    <span class="s3">def </span><span class="s1">discard(self</span><span class="s5">, </span><span class="s1">__element: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">self.col:</span>
+            <span class="s3">if </span><span class="s1">self._get(member) == __element:</span>
+                <span class="s1">self.col.discard(member)</span>
+                <span class="s3">break</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">__element: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">self.col:</span>
+            <span class="s3">if </span><span class="s1">self._get(member) == __element:</span>
+                <span class="s1">self.col.discard(member)</span>
+                <span class="s3">return</span>
+        <span class="s3">raise </span><span class="s1">KeyError(__element)</span>
+
+    <span class="s3">def </span><span class="s1">pop(self) -&gt; _T:</span>
+        <span class="s3">if not </span><span class="s1">self.col:</span>
+            <span class="s3">raise </span><span class="s1">KeyError(</span><span class="s4">&quot;pop from an empty set&quot;</span><span class="s1">)</span>
+        <span class="s1">member = self.col.pop()</span>
+        <span class="s3">return </span><span class="s1">self._get(member)</span>
+
+    <span class="s3">def </span><span class="s1">update(self</span><span class="s5">, </span><span class="s1">*s: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">iterable </span><span class="s3">in </span><span class="s1">s:</span>
+            <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">iterable:</span>
+                <span class="s1">self.add(value)</span>
+
+    <span class="s3">def </span><span class="s1">_bulk_replace(self</span><span class="s5">, </span><span class="s1">assoc_proxy: Any</span><span class="s5">, </span><span class="s1">values: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">existing = set(self)</span>
+        <span class="s1">constants = existing.intersection(values </span><span class="s3">or </span><span class="s1">())</span>
+        <span class="s1">additions = set(values </span><span class="s3">or </span><span class="s1">()).difference(constants)</span>
+        <span class="s1">removals = existing.difference(constants)</span>
+
+        <span class="s1">appender = self.add</span>
+        <span class="s1">remover = self.remove</span>
+
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">values </span><span class="s3">or </span><span class="s1">():</span>
+            <span class="s3">if </span><span class="s1">member </span><span class="s3">in </span><span class="s1">additions:</span>
+                <span class="s1">appender(member)</span>
+            <span class="s3">elif </span><span class="s1">member </span><span class="s3">in </span><span class="s1">constants:</span>
+                <span class="s1">appender(member)</span>
+
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">removals:</span>
+            <span class="s1">remover(member)</span>
+
+    <span class="s3">def </span><span class="s1">__ior__(  </span><span class="s0"># type: ignore</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">other: AbstractSet[_S]</span>
+    <span class="s1">) -&gt; MutableSet[Union[_T</span><span class="s5">, </span><span class="s1">_S]]:</span>
+        <span class="s3">if not </span><span class="s1">collections._set_binops_check_strict(self</span><span class="s5">, </span><span class="s1">other):</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+        <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">other:</span>
+            <span class="s1">self.add(value)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_set(self) -&gt; Set[_T]:</span>
+        <span class="s3">return </span><span class="s1">set(iter(self))</span>
+
+    <span class="s3">def </span><span class="s1">union(self</span><span class="s5">, </span><span class="s1">*s: Iterable[_S]) -&gt; MutableSet[Union[_T</span><span class="s5">, </span><span class="s1">_S]]:</span>
+        <span class="s3">return </span><span class="s1">set(self).union(*s)</span>
+
+    <span class="s3">def </span><span class="s1">__or__(self</span><span class="s5">, </span><span class="s1">__s: AbstractSet[_S]) -&gt; MutableSet[Union[_T</span><span class="s5">, </span><span class="s1">_S]]:</span>
+        <span class="s3">return </span><span class="s1">self.union(__s)</span>
+
+    <span class="s3">def </span><span class="s1">difference(self</span><span class="s5">, </span><span class="s1">*s: Iterable[Any]) -&gt; MutableSet[_T]:</span>
+        <span class="s3">return </span><span class="s1">set(self).difference(*s)</span>
+
+    <span class="s3">def </span><span class="s1">__sub__(self</span><span class="s5">, </span><span class="s1">s: AbstractSet[Any]) -&gt; MutableSet[_T]:</span>
+        <span class="s3">return </span><span class="s1">self.difference(s)</span>
+
+    <span class="s3">def </span><span class="s1">difference_update(self</span><span class="s5">, </span><span class="s1">*s: Iterable[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">other </span><span class="s3">in </span><span class="s1">s:</span>
+            <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">other:</span>
+                <span class="s1">self.discard(value)</span>
+
+    <span class="s3">def </span><span class="s1">__isub__(self</span><span class="s5">, </span><span class="s1">s: AbstractSet[Any]) -&gt; Self:</span>
+        <span class="s3">if not </span><span class="s1">collections._set_binops_check_strict(self</span><span class="s5">, </span><span class="s1">s):</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+        <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">s:</span>
+            <span class="s1">self.discard(value)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">intersection(self</span><span class="s5">, </span><span class="s1">*s: Iterable[Any]) -&gt; MutableSet[_T]:</span>
+        <span class="s3">return </span><span class="s1">set(self).intersection(*s)</span>
+
+    <span class="s3">def </span><span class="s1">__and__(self</span><span class="s5">, </span><span class="s1">s: AbstractSet[Any]) -&gt; MutableSet[_T]:</span>
+        <span class="s3">return </span><span class="s1">self.intersection(s)</span>
+
+    <span class="s3">def </span><span class="s1">intersection_update(self</span><span class="s5">, </span><span class="s1">*s: Iterable[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">other </span><span class="s3">in </span><span class="s1">s:</span>
+            <span class="s1">want</span><span class="s5">, </span><span class="s1">have = self.intersection(other)</span><span class="s5">, </span><span class="s1">set(self)</span>
+
+            <span class="s1">remove</span><span class="s5">, </span><span class="s1">add = have - want</span><span class="s5">, </span><span class="s1">want - have</span>
+
+            <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">remove:</span>
+                <span class="s1">self.remove(value)</span>
+            <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">add:</span>
+                <span class="s1">self.add(value)</span>
+
+    <span class="s3">def </span><span class="s1">__iand__(self</span><span class="s5">, </span><span class="s1">s: AbstractSet[Any]) -&gt; Self:</span>
+        <span class="s3">if not </span><span class="s1">collections._set_binops_check_strict(self</span><span class="s5">, </span><span class="s1">s):</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+        <span class="s1">want = self.intersection(s)</span>
+        <span class="s1">have: Set[_T] = set(self)</span>
+
+        <span class="s1">remove</span><span class="s5">, </span><span class="s1">add = have - want</span><span class="s5">, </span><span class="s1">want - have</span>
+
+        <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">remove:</span>
+            <span class="s1">self.remove(value)</span>
+        <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">add:</span>
+            <span class="s1">self.add(value)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">symmetric_difference(self</span><span class="s5">, </span><span class="s1">__s: Iterable[_T]) -&gt; MutableSet[_T]:</span>
+        <span class="s3">return </span><span class="s1">set(self).symmetric_difference(__s)</span>
+
+    <span class="s3">def </span><span class="s1">__xor__(self</span><span class="s5">, </span><span class="s1">s: AbstractSet[_S]) -&gt; MutableSet[Union[_T</span><span class="s5">, </span><span class="s1">_S]]:</span>
+        <span class="s3">return </span><span class="s1">self.symmetric_difference(s)</span>
+
+    <span class="s3">def </span><span class="s1">symmetric_difference_update(self</span><span class="s5">, </span><span class="s1">other: Iterable[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">want</span><span class="s5">, </span><span class="s1">have = self.symmetric_difference(other)</span><span class="s5">, </span><span class="s1">set(self)</span>
+
+        <span class="s1">remove</span><span class="s5">, </span><span class="s1">add = have - want</span><span class="s5">, </span><span class="s1">want - have</span>
+
+        <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">remove:</span>
+            <span class="s1">self.remove(value)</span>
+        <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">add:</span>
+            <span class="s1">self.add(value)</span>
+
+    <span class="s3">def </span><span class="s1">__ixor__(self</span><span class="s5">, </span><span class="s1">other: AbstractSet[_S]) -&gt; MutableSet[Union[_T</span><span class="s5">, </span><span class="s1">_S]]:  </span><span class="s0"># type: ignore  # noqa: E501</span>
+        <span class="s3">if not </span><span class="s1">collections._set_binops_check_strict(self</span><span class="s5">, </span><span class="s1">other):</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+        <span class="s1">self.symmetric_difference_update(other)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">issubset(self</span><span class="s5">, </span><span class="s1">__s: Iterable[Any]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">set(self).issubset(__s)</span>
+
+    <span class="s3">def </span><span class="s1">issuperset(self</span><span class="s5">, </span><span class="s1">__s: Iterable[Any]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">set(self).issuperset(__s)</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.col.clear()</span>
+
+    <span class="s3">def </span><span class="s1">copy(self) -&gt; AbstractSet[_T]:</span>
+        <span class="s3">return </span><span class="s1">set(self)</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">set(self) == other</span>
+
+    <span class="s3">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">set(self) != other</span>
+
+    <span class="s3">def </span><span class="s1">__lt__(self</span><span class="s5">, </span><span class="s1">other: AbstractSet[Any]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">set(self) &lt; other</span>
+
+    <span class="s3">def </span><span class="s1">__le__(self</span><span class="s5">, </span><span class="s1">other: AbstractSet[Any]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">set(self) &lt;= other</span>
+
+    <span class="s3">def </span><span class="s1">__gt__(self</span><span class="s5">, </span><span class="s1">other: AbstractSet[Any]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">set(self) &gt; other</span>
+
+    <span class="s3">def </span><span class="s1">__ge__(self</span><span class="s5">, </span><span class="s1">other: AbstractSet[Any]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">set(self) &gt;= other</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s1">repr(set(self))</span>
+
+    <span class="s3">def </span><span class="s1">__hash__(self) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;%s objects are unhashable&quot; </span><span class="s1">% type(self).__name__)</span>
+
+    <span class="s3">if not </span><span class="s1">typing.TYPE_CHECKING:</span>
+        <span class="s3">for </span><span class="s1">func_name</span><span class="s5">, </span><span class="s1">func </span><span class="s3">in </span><span class="s1">list(locals().items()):</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">callable(func)</span>
+                <span class="s3">and </span><span class="s1">func.__name__ == func_name</span>
+                <span class="s3">and not </span><span class="s1">func.__doc__</span>
+                <span class="s3">and </span><span class="s1">hasattr(set</span><span class="s5">, </span><span class="s1">func_name)</span>
+            <span class="s1">):</span>
+                <span class="s1">func.__doc__ = getattr(set</span><span class="s5">, </span><span class="s1">func_name).__doc__</span>
+        <span class="s3">del </span><span class="s1">func_name</span><span class="s5">, </span><span class="s1">func</span>
+</pre>
+</body>
+</html>

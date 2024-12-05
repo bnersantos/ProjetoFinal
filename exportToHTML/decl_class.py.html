@@ -1,0 +1,538 @@
+<html>
+<head>
+<title>decl_class.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+decl_class.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># ext/mypy/decl_class.py</span>
+<span class="s0"># Copyright (C) 2021-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">List</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">AssignmentStmt</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">CallExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">ClassDef</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">Decorator</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">LambdaExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">ListExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">MemberExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">NameExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">PlaceholderNode</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">RefExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">StrExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">SymbolNode</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">SymbolTableNode</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">TempNode</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">TypeInfo</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">Var</span>
+<span class="s2">from </span><span class="s1">mypy.plugin </span><span class="s2">import </span><span class="s1">SemanticAnalyzerPluginInterface</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">AnyType</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">CallableType</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">get_proper_type</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">Instance</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">NoneType</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">ProperType</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">Type</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">TypeOfAny</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">UnboundType</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">UnionType</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">apply</span>
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">infer</span>
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">names</span>
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">util</span>
+
+
+<span class="s2">def </span><span class="s1">scan_declarative_assignments_and_apply_types(</span>
+    <span class="s1">cls: ClassDef</span><span class="s3">,</span>
+    <span class="s1">api: SemanticAnalyzerPluginInterface</span><span class="s3">,</span>
+    <span class="s1">is_mixin_scan: bool = </span><span class="s2">False</span><span class="s3">,</span>
+<span class="s1">) -&gt; Optional[List[util.SQLAlchemyAttribute]]:</span>
+    <span class="s1">info = util.info_for_cls(cls</span><span class="s3">, </span><span class="s1">api)</span>
+
+    <span class="s2">if </span><span class="s1">info </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s0"># this can occur during cached passes</span>
+        <span class="s2">return None</span>
+    <span class="s2">elif </span><span class="s1">cls.fullname.startswith(</span><span class="s4">&quot;builtins&quot;</span><span class="s1">):</span>
+        <span class="s2">return None</span>
+
+    <span class="s1">mapped_attributes: Optional[List[util.SQLAlchemyAttribute]] = (</span>
+        <span class="s1">util.get_mapped_attributes(info</span><span class="s3">, </span><span class="s1">api)</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># used by assign.add_additional_orm_attributes among others</span>
+    <span class="s1">util.establish_as_sqlalchemy(info)</span>
+
+    <span class="s2">if </span><span class="s1">mapped_attributes </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s0"># ensure that a class that's mapped is always picked up by</span>
+        <span class="s0"># its mapped() decorator or declarative metaclass before</span>
+        <span class="s0"># it would be detected as an unmapped mixin class</span>
+
+        <span class="s2">if not </span><span class="s1">is_mixin_scan:</span>
+            <span class="s0"># mypy can call us more than once.  it then *may* have reset the</span>
+            <span class="s0"># left hand side of everything, but not the right that we removed,</span>
+            <span class="s0"># removing our ability to re-scan.   but we have the types</span>
+            <span class="s0"># here, so lets re-apply them, or if we have an UnboundType,</span>
+            <span class="s0"># we can re-scan</span>
+
+            <span class="s1">apply.re_apply_declarative_assignments(cls</span><span class="s3">, </span><span class="s1">api</span><span class="s3">, </span><span class="s1">mapped_attributes)</span>
+
+        <span class="s2">return </span><span class="s1">mapped_attributes</span>
+
+    <span class="s1">mapped_attributes = []</span>
+
+    <span class="s2">if not </span><span class="s1">cls.defs.body:</span>
+        <span class="s0"># when we get a mixin class from another file, the body is</span>
+        <span class="s0"># empty (!) but the names are in the symbol table.  so use that.</span>
+
+        <span class="s2">for </span><span class="s1">sym_name</span><span class="s3">, </span><span class="s1">sym </span><span class="s2">in </span><span class="s1">info.names.items():</span>
+            <span class="s1">_scan_symbol_table_entry(</span>
+                <span class="s1">cls</span><span class="s3">, </span><span class="s1">api</span><span class="s3">, </span><span class="s1">sym_name</span><span class="s3">, </span><span class="s1">sym</span><span class="s3">, </span><span class="s1">mapped_attributes</span>
+            <span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">for </span><span class="s1">stmt </span><span class="s2">in </span><span class="s1">util.flatten_typechecking(cls.defs.body):</span>
+            <span class="s2">if </span><span class="s1">isinstance(stmt</span><span class="s3">, </span><span class="s1">AssignmentStmt):</span>
+                <span class="s1">_scan_declarative_assignment_stmt(</span>
+                    <span class="s1">cls</span><span class="s3">, </span><span class="s1">api</span><span class="s3">, </span><span class="s1">stmt</span><span class="s3">, </span><span class="s1">mapped_attributes</span>
+                <span class="s1">)</span>
+            <span class="s2">elif </span><span class="s1">isinstance(stmt</span><span class="s3">, </span><span class="s1">Decorator):</span>
+                <span class="s1">_scan_declarative_decorator_stmt(</span>
+                    <span class="s1">cls</span><span class="s3">, </span><span class="s1">api</span><span class="s3">, </span><span class="s1">stmt</span><span class="s3">, </span><span class="s1">mapped_attributes</span>
+                <span class="s1">)</span>
+    <span class="s1">_scan_for_mapped_bases(cls</span><span class="s3">, </span><span class="s1">api)</span>
+
+    <span class="s2">if not </span><span class="s1">is_mixin_scan:</span>
+        <span class="s1">apply.add_additional_orm_attributes(cls</span><span class="s3">, </span><span class="s1">api</span><span class="s3">, </span><span class="s1">mapped_attributes)</span>
+
+    <span class="s1">util.set_mapped_attributes(info</span><span class="s3">, </span><span class="s1">mapped_attributes)</span>
+
+    <span class="s2">return </span><span class="s1">mapped_attributes</span>
+
+
+<span class="s2">def </span><span class="s1">_scan_symbol_table_entry(</span>
+    <span class="s1">cls: ClassDef</span><span class="s3">,</span>
+    <span class="s1">api: SemanticAnalyzerPluginInterface</span><span class="s3">,</span>
+    <span class="s1">name: str</span><span class="s3">,</span>
+    <span class="s1">value: SymbolTableNode</span><span class="s3">,</span>
+    <span class="s1">attributes: List[util.SQLAlchemyAttribute]</span><span class="s3">,</span>
+<span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+    <span class="s5">&quot;&quot;&quot;Extract mapping information from a SymbolTableNode that's in the 
+    type.names dictionary. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">value_type = get_proper_type(value.type)</span>
+    <span class="s2">if not </span><span class="s1">isinstance(value_type</span><span class="s3">, </span><span class="s1">Instance):</span>
+        <span class="s2">return</span>
+
+    <span class="s1">left_hand_explicit_type = </span><span class="s2">None</span>
+    <span class="s1">type_id = names.type_id_for_named_node(value_type.type)</span>
+    <span class="s0"># type_id = names._type_id_for_unbound_type(value.type.type, cls, api)</span>
+
+    <span class="s1">err = </span><span class="s2">False</span>
+
+    <span class="s0"># TODO: this is nearly the same logic as that of</span>
+    <span class="s0"># _scan_declarative_decorator_stmt, likely can be merged</span>
+    <span class="s2">if </span><span class="s1">type_id </span><span class="s2">in </span><span class="s1">{</span>
+        <span class="s1">names.MAPPED</span><span class="s3">,</span>
+        <span class="s1">names.RELATIONSHIP</span><span class="s3">,</span>
+        <span class="s1">names.COMPOSITE_PROPERTY</span><span class="s3">,</span>
+        <span class="s1">names.MAPPER_PROPERTY</span><span class="s3">,</span>
+        <span class="s1">names.SYNONYM_PROPERTY</span><span class="s3">,</span>
+        <span class="s1">names.COLUMN_PROPERTY</span><span class="s3">,</span>
+    <span class="s1">}:</span>
+        <span class="s2">if </span><span class="s1">value_type.args:</span>
+            <span class="s1">left_hand_explicit_type = get_proper_type(value_type.args[</span><span class="s6">0</span><span class="s1">])</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">err = </span><span class="s2">True</span>
+    <span class="s2">elif </span><span class="s1">type_id </span><span class="s2">is </span><span class="s1">names.COLUMN:</span>
+        <span class="s2">if not </span><span class="s1">value_type.args:</span>
+            <span class="s1">err = </span><span class="s2">True</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">typeengine_arg: Union[ProperType</span><span class="s3">, </span><span class="s1">TypeInfo] = get_proper_type(</span>
+                <span class="s1">value_type.args[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">isinstance(typeengine_arg</span><span class="s3">, </span><span class="s1">Instance):</span>
+                <span class="s1">typeengine_arg = typeengine_arg.type</span>
+
+            <span class="s2">if </span><span class="s1">isinstance(typeengine_arg</span><span class="s3">, </span><span class="s1">(UnboundType</span><span class="s3">, </span><span class="s1">TypeInfo)):</span>
+                <span class="s1">sym = api.lookup_qualified(typeengine_arg.name</span><span class="s3">, </span><span class="s1">typeengine_arg)</span>
+                <span class="s2">if </span><span class="s1">sym </span><span class="s2">is not None and </span><span class="s1">isinstance(sym.node</span><span class="s3">, </span><span class="s1">TypeInfo):</span>
+                    <span class="s2">if </span><span class="s1">names.has_base_type_id(sym.node</span><span class="s3">, </span><span class="s1">names.TYPEENGINE):</span>
+                        <span class="s1">left_hand_explicit_type = UnionType(</span>
+                            <span class="s1">[</span>
+                                <span class="s1">infer.extract_python_type_from_typeengine(</span>
+                                    <span class="s1">api</span><span class="s3">, </span><span class="s1">sym.node</span><span class="s3">, </span><span class="s1">[]</span>
+                                <span class="s1">)</span><span class="s3">,</span>
+                                <span class="s1">NoneType()</span><span class="s3">,</span>
+                            <span class="s1">]</span>
+                        <span class="s1">)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">util.fail(</span>
+                            <span class="s1">api</span><span class="s3">,</span>
+                            <span class="s4">&quot;Column type should be a TypeEngine &quot;</span>
+                            <span class="s4">&quot;subclass not '{}'&quot;</span><span class="s1">.format(sym.node.fullname)</span><span class="s3">,</span>
+                            <span class="s1">value_type</span><span class="s3">,</span>
+                        <span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">err:</span>
+        <span class="s1">msg = (</span>
+            <span class="s4">&quot;Can't infer type from attribute {} on class {}. &quot;</span>
+            <span class="s4">&quot;please specify a return type from this function that is &quot;</span>
+            <span class="s4">&quot;one of: Mapped[&lt;python type&gt;], relationship[&lt;target class&gt;], &quot;</span>
+            <span class="s4">&quot;Column[&lt;TypeEngine&gt;], MapperProperty[&lt;python type&gt;]&quot;</span>
+        <span class="s1">)</span>
+        <span class="s1">util.fail(api</span><span class="s3">, </span><span class="s1">msg.format(name</span><span class="s3">, </span><span class="s1">cls.name)</span><span class="s3">, </span><span class="s1">cls)</span>
+
+        <span class="s1">left_hand_explicit_type = AnyType(TypeOfAny.special_form)</span>
+
+    <span class="s2">if </span><span class="s1">left_hand_explicit_type </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s2">assert </span><span class="s1">value.node </span><span class="s2">is not None</span>
+        <span class="s1">attributes.append(</span>
+            <span class="s1">util.SQLAlchemyAttribute(</span>
+                <span class="s1">name=name</span><span class="s3">,</span>
+                <span class="s1">line=value.node.line</span><span class="s3">,</span>
+                <span class="s1">column=value.node.column</span><span class="s3">,</span>
+                <span class="s1">typ=left_hand_explicit_type</span><span class="s3">,</span>
+                <span class="s1">info=cls.info</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_scan_declarative_decorator_stmt(</span>
+    <span class="s1">cls: ClassDef</span><span class="s3">,</span>
+    <span class="s1">api: SemanticAnalyzerPluginInterface</span><span class="s3">,</span>
+    <span class="s1">stmt: Decorator</span><span class="s3">,</span>
+    <span class="s1">attributes: List[util.SQLAlchemyAttribute]</span><span class="s3">,</span>
+<span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+    <span class="s5">&quot;&quot;&quot;Extract mapping information from a @declared_attr in a declarative 
+    class. 
+ 
+    E.g.:: 
+ 
+        @reg.mapped 
+        class MyClass: 
+            # ... 
+ 
+            @declared_attr 
+            def updated_at(cls) -&gt; Column[DateTime]: 
+                return Column(DateTime) 
+ 
+    Will resolve in mypy as:: 
+ 
+        @reg.mapped 
+        class MyClass: 
+            # ... 
+ 
+            updated_at: Mapped[Optional[datetime.datetime]] 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">for </span><span class="s1">dec </span><span class="s2">in </span><span class="s1">stmt.decorators:</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">isinstance(dec</span><span class="s3">, </span><span class="s1">(NameExpr</span><span class="s3">, </span><span class="s1">MemberExpr</span><span class="s3">, </span><span class="s1">SymbolNode))</span>
+            <span class="s2">and </span><span class="s1">names.type_id_for_named_node(dec) </span><span class="s2">is </span><span class="s1">names.DECLARED_ATTR</span>
+        <span class="s1">):</span>
+            <span class="s2">break</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return</span>
+
+    <span class="s1">dec_index = cls.defs.body.index(stmt)</span>
+
+    <span class="s1">left_hand_explicit_type: Optional[ProperType] = </span><span class="s2">None</span>
+
+    <span class="s2">if </span><span class="s1">util.name_is_dunder(stmt.name):</span>
+        <span class="s0"># for dunder names like __table_args__, __tablename__,</span>
+        <span class="s0"># __mapper_args__ etc., rewrite these as simple assignment</span>
+        <span class="s0"># statements; otherwise mypy doesn't like if the decorated</span>
+        <span class="s0"># function has an annotation like ``cls: Type[Foo]`` because</span>
+        <span class="s0"># it isn't @classmethod</span>
+        <span class="s1">any_ = AnyType(TypeOfAny.special_form)</span>
+        <span class="s1">left_node = NameExpr(stmt.var.name)</span>
+        <span class="s1">left_node.node = stmt.var</span>
+        <span class="s1">new_stmt = AssignmentStmt([left_node]</span><span class="s3">, </span><span class="s1">TempNode(any_))</span>
+        <span class="s1">new_stmt.type = left_node.node.type</span>
+        <span class="s1">cls.defs.body[dec_index] = new_stmt</span>
+        <span class="s2">return</span>
+    <span class="s2">elif </span><span class="s1">isinstance(stmt.func.type</span><span class="s3">, </span><span class="s1">CallableType):</span>
+        <span class="s1">func_type = stmt.func.type.ret_type</span>
+        <span class="s2">if </span><span class="s1">isinstance(func_type</span><span class="s3">, </span><span class="s1">UnboundType):</span>
+            <span class="s1">type_id = names.type_id_for_unbound_type(func_type</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">, </span><span class="s1">api)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># this does not seem to occur unless the type argument is</span>
+            <span class="s0"># incorrect</span>
+            <span class="s2">return</span>
+
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">type_id</span>
+            <span class="s2">in </span><span class="s1">{</span>
+                <span class="s1">names.MAPPED</span><span class="s3">,</span>
+                <span class="s1">names.RELATIONSHIP</span><span class="s3">,</span>
+                <span class="s1">names.COMPOSITE_PROPERTY</span><span class="s3">,</span>
+                <span class="s1">names.MAPPER_PROPERTY</span><span class="s3">,</span>
+                <span class="s1">names.SYNONYM_PROPERTY</span><span class="s3">,</span>
+                <span class="s1">names.COLUMN_PROPERTY</span><span class="s3">,</span>
+            <span class="s1">}</span>
+            <span class="s2">and </span><span class="s1">func_type.args</span>
+        <span class="s1">):</span>
+            <span class="s1">left_hand_explicit_type = get_proper_type(func_type.args[</span><span class="s6">0</span><span class="s1">])</span>
+        <span class="s2">elif </span><span class="s1">type_id </span><span class="s2">is </span><span class="s1">names.COLUMN </span><span class="s2">and </span><span class="s1">func_type.args:</span>
+            <span class="s1">typeengine_arg = func_type.args[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s2">if </span><span class="s1">isinstance(typeengine_arg</span><span class="s3">, </span><span class="s1">UnboundType):</span>
+                <span class="s1">sym = api.lookup_qualified(typeengine_arg.name</span><span class="s3">, </span><span class="s1">typeengine_arg)</span>
+                <span class="s2">if </span><span class="s1">sym </span><span class="s2">is not None and </span><span class="s1">isinstance(sym.node</span><span class="s3">, </span><span class="s1">TypeInfo):</span>
+                    <span class="s2">if </span><span class="s1">names.has_base_type_id(sym.node</span><span class="s3">, </span><span class="s1">names.TYPEENGINE):</span>
+                        <span class="s1">left_hand_explicit_type = UnionType(</span>
+                            <span class="s1">[</span>
+                                <span class="s1">infer.extract_python_type_from_typeengine(</span>
+                                    <span class="s1">api</span><span class="s3">, </span><span class="s1">sym.node</span><span class="s3">, </span><span class="s1">[]</span>
+                                <span class="s1">)</span><span class="s3">,</span>
+                                <span class="s1">NoneType()</span><span class="s3">,</span>
+                            <span class="s1">]</span>
+                        <span class="s1">)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">util.fail(</span>
+                            <span class="s1">api</span><span class="s3">,</span>
+                            <span class="s4">&quot;Column type should be a TypeEngine &quot;</span>
+                            <span class="s4">&quot;subclass not '{}'&quot;</span><span class="s1">.format(sym.node.fullname)</span><span class="s3">,</span>
+                            <span class="s1">func_type</span><span class="s3">,</span>
+                        <span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">left_hand_explicit_type </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s0"># no type on the decorated function.  our option here is to</span>
+        <span class="s0"># dig into the function body and get the return type, but they</span>
+        <span class="s0"># should just have an annotation.</span>
+        <span class="s1">msg = (</span>
+            <span class="s4">&quot;Can't infer type from @declared_attr on function '{}';  &quot;</span>
+            <span class="s4">&quot;please specify a return type from this function that is &quot;</span>
+            <span class="s4">&quot;one of: Mapped[&lt;python type&gt;], relationship[&lt;target class&gt;], &quot;</span>
+            <span class="s4">&quot;Column[&lt;TypeEngine&gt;], MapperProperty[&lt;python type&gt;]&quot;</span>
+        <span class="s1">)</span>
+        <span class="s1">util.fail(api</span><span class="s3">, </span><span class="s1">msg.format(stmt.var.name)</span><span class="s3">, </span><span class="s1">stmt)</span>
+
+        <span class="s1">left_hand_explicit_type = AnyType(TypeOfAny.special_form)</span>
+
+    <span class="s1">left_node = NameExpr(stmt.var.name)</span>
+    <span class="s1">left_node.node = stmt.var</span>
+
+    <span class="s0"># totally feeling around in the dark here as I don't totally understand</span>
+    <span class="s0"># the significance of UnboundType.  It seems to be something that is</span>
+    <span class="s0"># not going to do what's expected when it is applied as the type of</span>
+    <span class="s0"># an AssignmentStatement.  So do a feeling-around-in-the-dark version</span>
+    <span class="s0"># of converting it to the regular Instance/TypeInfo/UnionType structures</span>
+    <span class="s0"># we see everywhere else.</span>
+    <span class="s2">if </span><span class="s1">isinstance(left_hand_explicit_type</span><span class="s3">, </span><span class="s1">UnboundType):</span>
+        <span class="s1">left_hand_explicit_type = get_proper_type(</span>
+            <span class="s1">util.unbound_to_instance(api</span><span class="s3">, </span><span class="s1">left_hand_explicit_type)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">left_node.node.type = api.named_type(</span>
+        <span class="s1">names.NAMED_TYPE_SQLA_MAPPED</span><span class="s3">, </span><span class="s1">[left_hand_explicit_type]</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># this will ignore the rvalue entirely</span>
+    <span class="s0"># rvalue = TempNode(AnyType(TypeOfAny.special_form))</span>
+
+    <span class="s0"># rewrite the node as:</span>
+    <span class="s0"># &lt;attr&gt; : Mapped[&lt;typ&gt;] =</span>
+    <span class="s0"># _sa_Mapped._empty_constructor(lambda: &lt;function body&gt;)</span>
+    <span class="s0"># the function body is maintained so it gets type checked internally</span>
+    <span class="s1">rvalue = names.expr_to_mapped_constructor(</span>
+        <span class="s1">LambdaExpr(stmt.func.arguments</span><span class="s3">, </span><span class="s1">stmt.func.body)</span>
+    <span class="s1">)</span>
+
+    <span class="s1">new_stmt = AssignmentStmt([left_node]</span><span class="s3">, </span><span class="s1">rvalue)</span>
+    <span class="s1">new_stmt.type = left_node.node.type</span>
+
+    <span class="s1">attributes.append(</span>
+        <span class="s1">util.SQLAlchemyAttribute(</span>
+            <span class="s1">name=left_node.name</span><span class="s3">,</span>
+            <span class="s1">line=stmt.line</span><span class="s3">,</span>
+            <span class="s1">column=stmt.column</span><span class="s3">,</span>
+            <span class="s1">typ=left_hand_explicit_type</span><span class="s3">,</span>
+            <span class="s1">info=cls.info</span><span class="s3">,</span>
+        <span class="s1">)</span>
+    <span class="s1">)</span>
+    <span class="s1">cls.defs.body[dec_index] = new_stmt</span>
+
+
+<span class="s2">def </span><span class="s1">_scan_declarative_assignment_stmt(</span>
+    <span class="s1">cls: ClassDef</span><span class="s3">,</span>
+    <span class="s1">api: SemanticAnalyzerPluginInterface</span><span class="s3">,</span>
+    <span class="s1">stmt: AssignmentStmt</span><span class="s3">,</span>
+    <span class="s1">attributes: List[util.SQLAlchemyAttribute]</span><span class="s3">,</span>
+<span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+    <span class="s5">&quot;&quot;&quot;Extract mapping information from an assignment statement in a 
+    declarative class. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">lvalue = stmt.lvalues[</span><span class="s6">0</span><span class="s1">]</span>
+    <span class="s2">if not </span><span class="s1">isinstance(lvalue</span><span class="s3">, </span><span class="s1">NameExpr):</span>
+        <span class="s2">return</span>
+
+    <span class="s1">sym = cls.info.names.get(lvalue.name)</span>
+
+    <span class="s0"># this establishes that semantic analysis has taken place, which</span>
+    <span class="s0"># means the nodes are populated and we are called from an appropriate</span>
+    <span class="s0"># hook.</span>
+    <span class="s2">assert </span><span class="s1">sym </span><span class="s2">is not None</span>
+    <span class="s1">node = sym.node</span>
+
+    <span class="s2">if </span><span class="s1">isinstance(node</span><span class="s3">, </span><span class="s1">PlaceholderNode):</span>
+        <span class="s2">return</span>
+
+    <span class="s2">assert </span><span class="s1">node </span><span class="s2">is </span><span class="s1">lvalue.node</span>
+    <span class="s2">assert </span><span class="s1">isinstance(node</span><span class="s3">, </span><span class="s1">Var)</span>
+
+    <span class="s2">if </span><span class="s1">node.name == </span><span class="s4">&quot;__abstract__&quot;</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">api.parse_bool(stmt.rvalue) </span><span class="s2">is True</span><span class="s1">:</span>
+            <span class="s1">util.set_is_base(cls.info)</span>
+        <span class="s2">return</span>
+    <span class="s2">elif </span><span class="s1">node.name == </span><span class="s4">&quot;__tablename__&quot;</span><span class="s1">:</span>
+        <span class="s1">util.set_has_table(cls.info)</span>
+    <span class="s2">elif </span><span class="s1">node.name.startswith(</span><span class="s4">&quot;__&quot;</span><span class="s1">):</span>
+        <span class="s2">return</span>
+    <span class="s2">elif </span><span class="s1">node.name == </span><span class="s4">&quot;_mypy_mapped_attrs&quot;</span><span class="s1">:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(stmt.rvalue</span><span class="s3">, </span><span class="s1">ListExpr):</span>
+            <span class="s1">util.fail(api</span><span class="s3">, </span><span class="s4">&quot;_mypy_mapped_attrs is expected to be a list&quot;</span><span class="s3">, </span><span class="s1">stmt)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">for </span><span class="s1">item </span><span class="s2">in </span><span class="s1">stmt.rvalue.items:</span>
+                <span class="s2">if </span><span class="s1">isinstance(item</span><span class="s3">, </span><span class="s1">(NameExpr</span><span class="s3">, </span><span class="s1">StrExpr)):</span>
+                    <span class="s1">apply.apply_mypy_mapped_attr(cls</span><span class="s3">, </span><span class="s1">api</span><span class="s3">, </span><span class="s1">item</span><span class="s3">, </span><span class="s1">attributes)</span>
+
+    <span class="s1">left_hand_mapped_type: Optional[Type] = </span><span class="s2">None</span>
+    <span class="s1">left_hand_explicit_type: Optional[ProperType] = </span><span class="s2">None</span>
+
+    <span class="s2">if </span><span class="s1">node.is_inferred </span><span class="s2">or </span><span class="s1">node.type </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">isinstance(stmt.type</span><span class="s3">, </span><span class="s1">UnboundType):</span>
+            <span class="s0"># look for an explicit Mapped[] type annotation on the left</span>
+            <span class="s0"># side with nothing on the right</span>
+
+            <span class="s0"># print(stmt.type)</span>
+            <span class="s0"># Mapped?[Optional?[A?]]</span>
+
+            <span class="s1">left_hand_explicit_type = stmt.type</span>
+
+            <span class="s2">if </span><span class="s1">stmt.type.name == </span><span class="s4">&quot;Mapped&quot;</span><span class="s1">:</span>
+                <span class="s1">mapped_sym = api.lookup_qualified(</span><span class="s4">&quot;Mapped&quot;</span><span class="s3">, </span><span class="s1">cls)</span>
+                <span class="s2">if </span><span class="s1">(</span>
+                    <span class="s1">mapped_sym </span><span class="s2">is not None</span>
+                    <span class="s2">and </span><span class="s1">mapped_sym.node </span><span class="s2">is not None</span>
+                    <span class="s2">and </span><span class="s1">names.type_id_for_named_node(mapped_sym.node)</span>
+                    <span class="s2">is </span><span class="s1">names.MAPPED</span>
+                <span class="s1">):</span>
+                    <span class="s1">left_hand_explicit_type = get_proper_type(</span>
+                        <span class="s1">stmt.type.args[</span><span class="s6">0</span><span class="s1">]</span>
+                    <span class="s1">)</span>
+                    <span class="s1">left_hand_mapped_type = stmt.type</span>
+
+            <span class="s0"># TODO: do we need to convert from unbound for this case?</span>
+            <span class="s0"># left_hand_explicit_type = util._unbound_to_instance(</span>
+            <span class="s0">#     api, left_hand_explicit_type</span>
+            <span class="s0"># )</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">node_type = get_proper_type(node.type)</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">isinstance(node_type</span><span class="s3">, </span><span class="s1">Instance)</span>
+            <span class="s2">and </span><span class="s1">names.type_id_for_named_node(node_type.type) </span><span class="s2">is </span><span class="s1">names.MAPPED</span>
+        <span class="s1">):</span>
+            <span class="s0"># print(node.type)</span>
+            <span class="s0"># sqlalchemy.orm.attributes.Mapped[&lt;python type&gt;]</span>
+            <span class="s1">left_hand_explicit_type = get_proper_type(node_type.args[</span><span class="s6">0</span><span class="s1">])</span>
+            <span class="s1">left_hand_mapped_type = node_type</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># print(node.type)</span>
+            <span class="s0"># &lt;python type&gt;</span>
+            <span class="s1">left_hand_explicit_type = node_type</span>
+            <span class="s1">left_hand_mapped_type = </span><span class="s2">None</span>
+
+    <span class="s2">if </span><span class="s1">isinstance(stmt.rvalue</span><span class="s3">, </span><span class="s1">TempNode) </span><span class="s2">and </span><span class="s1">left_hand_mapped_type </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s0"># annotation without assignment and Mapped is present</span>
+        <span class="s0"># as type annotation</span>
+        <span class="s0"># equivalent to using _infer_type_from_left_hand_type_only.</span>
+
+        <span class="s1">python_type_for_type = left_hand_explicit_type</span>
+    <span class="s2">elif </span><span class="s1">isinstance(stmt.rvalue</span><span class="s3">, </span><span class="s1">CallExpr) </span><span class="s2">and </span><span class="s1">isinstance(</span>
+        <span class="s1">stmt.rvalue.callee</span><span class="s3">, </span><span class="s1">RefExpr</span>
+    <span class="s1">):</span>
+        <span class="s1">python_type_for_type = infer.infer_type_from_right_hand_nameexpr(</span>
+            <span class="s1">api</span><span class="s3">, </span><span class="s1">stmt</span><span class="s3">, </span><span class="s1">node</span><span class="s3">, </span><span class="s1">left_hand_explicit_type</span><span class="s3">, </span><span class="s1">stmt.rvalue.callee</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">python_type_for_type </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return</span>
+
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return</span>
+
+    <span class="s2">assert </span><span class="s1">python_type_for_type </span><span class="s2">is not None</span>
+
+    <span class="s1">attributes.append(</span>
+        <span class="s1">util.SQLAlchemyAttribute(</span>
+            <span class="s1">name=node.name</span><span class="s3">,</span>
+            <span class="s1">line=stmt.line</span><span class="s3">,</span>
+            <span class="s1">column=stmt.column</span><span class="s3">,</span>
+            <span class="s1">typ=python_type_for_type</span><span class="s3">,</span>
+            <span class="s1">info=cls.info</span><span class="s3">,</span>
+        <span class="s1">)</span>
+    <span class="s1">)</span>
+
+    <span class="s1">apply.apply_type_to_mapped_statement(</span>
+        <span class="s1">api</span><span class="s3">,</span>
+        <span class="s1">stmt</span><span class="s3">,</span>
+        <span class="s1">lvalue</span><span class="s3">,</span>
+        <span class="s1">left_hand_explicit_type</span><span class="s3">,</span>
+        <span class="s1">python_type_for_type</span><span class="s3">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_scan_for_mapped_bases(</span>
+    <span class="s1">cls: ClassDef</span><span class="s3">,</span>
+    <span class="s1">api: SemanticAnalyzerPluginInterface</span><span class="s3">,</span>
+<span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+    <span class="s5">&quot;&quot;&quot;Given a class, iterate through its superclass hierarchy to find 
+    all other classes that are considered as ORM-significant. 
+ 
+    Locates non-mapped mixins and scans them for mapped attributes to be 
+    applied to subclasses. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">info = util.info_for_cls(cls</span><span class="s3">, </span><span class="s1">api)</span>
+
+    <span class="s2">if </span><span class="s1">info </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">return</span>
+
+    <span class="s2">for </span><span class="s1">base_info </span><span class="s2">in </span><span class="s1">info.mro[</span><span class="s6">1</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]:</span>
+        <span class="s2">if </span><span class="s1">base_info.fullname.startswith(</span><span class="s4">&quot;builtins&quot;</span><span class="s1">):</span>
+            <span class="s2">continue</span>
+
+        <span class="s0"># scan each base for mapped attributes.  if they are not already</span>
+        <span class="s0"># scanned (but have all their type info), that means they are unmapped</span>
+        <span class="s0"># mixins</span>
+        <span class="s1">scan_declarative_assignments_and_apply_types(</span>
+            <span class="s1">base_info.defn</span><span class="s3">, </span><span class="s1">api</span><span class="s3">, </span><span class="s1">is_mixin_scan=</span><span class="s2">True</span>
+        <span class="s1">)</span>
+</pre>
+</body>
+</html>

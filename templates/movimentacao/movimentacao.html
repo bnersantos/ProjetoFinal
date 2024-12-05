@@ -1,0 +1,34 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+<h2>Registrar Movimentação de Produto</h2>
+<form action="{{ url_for('movimentacao_produto') }}" method="POST">
+    <label for="tipo">Tipo de Movimentação:</label>
+    <select name="tipo" id="tipo" required>
+        <option value="entrada">Entrada</option>
+        <option value="saida">Saída</option>
+    </select><br><br>
+
+    <label for="id_produto">Produto:</label>
+    <select name="id_produto" id="id_produto" required>
+        {% for produto in produtos %}
+        <option value="{{ produto.id }}">{{ produto.nome }}</option>
+        {% endfor %}
+    </select><br><br>
+
+    <label for="id_funcionario">Funcionário:</label>
+    <select name="id_funcionario" id="id_funcionario" required>
+        {% for funcionario in funcionarios %}
+        <option value="{{ funcionario.id_funcionario }}">{{ funcionario.nome_funcionario }}</option>
+        {% endfor %}
+    </select><br><br>
+
+    <label for="quantidade">Quantidade:</label>
+    <input type="number" name="quantidade" id="quantidade" min="1" required><br><br>
+
+    <label for="data">Data:</label>
+    <input type="date" name="data" id="data" required><br><br>
+
+    <a href="{{ url_for('grafico_movimentacoes') }}" ><button type="submit">Registrar Movimentação</button></a>
+</form>
+{% endblock %}

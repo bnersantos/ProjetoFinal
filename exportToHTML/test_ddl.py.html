@@ -1,0 +1,412 @@
+<html>
+<head>
+<title>test_ddl.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #bbb55b;}
+.s6 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+test_ddl.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/suite/test_ddl.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">import </span><span class="s1">random</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">testing</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">config</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">fixtures</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">eq_</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">is_false</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">is_true</span>
+<span class="s2">from </span><span class="s1">..config </span><span class="s2">import </span><span class="s1">requirements</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">Table</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">CheckConstraint</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Column</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">ForeignKeyConstraint</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Index</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">inspect</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Integer</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">schema</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">String</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">UniqueConstraint</span>
+
+
+<span class="s2">class </span><span class="s1">TableDDLTest(fixtures.TestBase):</span>
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_simple_fixture(self</span><span class="s3">, </span><span class="s1">schema=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">Table(</span>
+            <span class="s4">&quot;test_table&quot;</span><span class="s3">,</span>
+            <span class="s1">self.metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s3">, </span><span class="s1">autoincrement=</span><span class="s2">False</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;data&quot;</span><span class="s3">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s3">,</span>
+            <span class="s1">schema=schema</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_underscore_fixture(self):</span>
+        <span class="s2">return </span><span class="s1">Table(</span>
+            <span class="s4">&quot;_test_table&quot;</span><span class="s3">,</span>
+            <span class="s1">self.metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s3">, </span><span class="s1">autoincrement=</span><span class="s2">False</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;_data&quot;</span><span class="s3">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_table_index_fixture(self</span><span class="s3">, </span><span class="s1">schema=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">table = self._simple_fixture(schema=schema)</span>
+        <span class="s1">idx = Index(</span><span class="s4">&quot;test_index&quot;</span><span class="s3">, </span><span class="s1">table.c.data)</span>
+        <span class="s2">return </span><span class="s1">table</span><span class="s3">, </span><span class="s1">idx</span>
+
+    <span class="s2">def </span><span class="s1">_simple_roundtrip(self</span><span class="s3">, </span><span class="s1">table):</span>
+        <span class="s2">with </span><span class="s1">config.db.begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+            <span class="s1">conn.execute(table.insert().values((</span><span class="s5">1</span><span class="s3">, </span><span class="s4">&quot;some data&quot;</span><span class="s1">)))</span>
+            <span class="s1">result = conn.execute(table.select())</span>
+            <span class="s1">eq_(result.first()</span><span class="s3">, </span><span class="s1">(</span><span class="s5">1</span><span class="s3">, </span><span class="s4">&quot;some data&quot;</span><span class="s1">))</span>
+
+    <span class="s1">@requirements.create_table</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_create_table(self):</span>
+        <span class="s1">table = self._simple_fixture()</span>
+        <span class="s1">table.create(config.db</span><span class="s3">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">self._simple_roundtrip(table)</span>
+
+    <span class="s1">@requirements.create_table</span>
+    <span class="s1">@requirements.schemas</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_create_table_schema(self):</span>
+        <span class="s1">table = self._simple_fixture(schema=config.test_schema)</span>
+        <span class="s1">table.create(config.db</span><span class="s3">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">self._simple_roundtrip(table)</span>
+
+    <span class="s1">@requirements.drop_table</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_drop_table(self):</span>
+        <span class="s1">table = self._simple_fixture()</span>
+        <span class="s1">table.create(config.db</span><span class="s3">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">table.drop(config.db</span><span class="s3">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s1">)</span>
+
+    <span class="s1">@requirements.create_table</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_underscore_names(self):</span>
+        <span class="s1">table = self._underscore_fixture()</span>
+        <span class="s1">table.create(config.db</span><span class="s3">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">self._simple_roundtrip(table)</span>
+
+    <span class="s1">@requirements.comment_reflection</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_add_table_comment(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">table = self._simple_fixture()</span>
+        <span class="s1">table.create(connection</span><span class="s3">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">table.comment = </span><span class="s4">&quot;a comment&quot;</span>
+        <span class="s1">connection.execute(schema.SetTableComment(table))</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">inspect(connection).get_table_comment(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">{</span><span class="s4">&quot;text&quot;</span><span class="s1">: </span><span class="s4">&quot;a comment&quot;</span><span class="s1">}</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@requirements.comment_reflection</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_drop_table_comment(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">table = self._simple_fixture()</span>
+        <span class="s1">table.create(connection</span><span class="s3">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">table.comment = </span><span class="s4">&quot;a comment&quot;</span>
+        <span class="s1">connection.execute(schema.SetTableComment(table))</span>
+        <span class="s1">connection.execute(schema.DropTableComment(table))</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">inspect(connection).get_table_comment(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">)</span><span class="s3">, </span><span class="s1">{</span><span class="s4">&quot;text&quot;</span><span class="s1">: </span><span class="s2">None</span><span class="s1">}</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@requirements.table_ddl_if_exists</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_create_table_if_not_exists(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">table = self._simple_fixture()</span>
+
+        <span class="s1">connection.execute(schema.CreateTable(table</span><span class="s3">, </span><span class="s1">if_not_exists=</span><span class="s2">True</span><span class="s1">))</span>
+
+        <span class="s1">is_true(inspect(connection).has_table(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">))</span>
+        <span class="s1">connection.execute(schema.CreateTable(table</span><span class="s3">, </span><span class="s1">if_not_exists=</span><span class="s2">True</span><span class="s1">))</span>
+
+    <span class="s1">@requirements.index_ddl_if_exists</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_create_index_if_not_exists(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">table</span><span class="s3">, </span><span class="s1">idx = self._table_index_fixture()</span>
+
+        <span class="s1">connection.execute(schema.CreateTable(table</span><span class="s3">, </span><span class="s1">if_not_exists=</span><span class="s2">True</span><span class="s1">))</span>
+        <span class="s1">is_true(inspect(connection).has_table(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">))</span>
+        <span class="s1">is_false(</span>
+            <span class="s4">&quot;test_index&quot;</span>
+            <span class="s2">in </span><span class="s1">[</span>
+                <span class="s1">ix[</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+                <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">inspect(connection).get_indexes(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">)</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+
+        <span class="s1">connection.execute(schema.CreateIndex(idx</span><span class="s3">, </span><span class="s1">if_not_exists=</span><span class="s2">True</span><span class="s1">))</span>
+
+        <span class="s1">is_true(</span>
+            <span class="s4">&quot;test_index&quot;</span>
+            <span class="s2">in </span><span class="s1">[</span>
+                <span class="s1">ix[</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+                <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">inspect(connection).get_indexes(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">)</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+
+        <span class="s1">connection.execute(schema.CreateIndex(idx</span><span class="s3">, </span><span class="s1">if_not_exists=</span><span class="s2">True</span><span class="s1">))</span>
+
+    <span class="s1">@requirements.table_ddl_if_exists</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_drop_table_if_exists(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">table = self._simple_fixture()</span>
+
+        <span class="s1">table.create(connection)</span>
+
+        <span class="s1">is_true(inspect(connection).has_table(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">))</span>
+
+        <span class="s1">connection.execute(schema.DropTable(table</span><span class="s3">, </span><span class="s1">if_exists=</span><span class="s2">True</span><span class="s1">))</span>
+
+        <span class="s1">is_false(inspect(connection).has_table(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">))</span>
+
+        <span class="s1">connection.execute(schema.DropTable(table</span><span class="s3">, </span><span class="s1">if_exists=</span><span class="s2">True</span><span class="s1">))</span>
+
+    <span class="s1">@requirements.index_ddl_if_exists</span>
+    <span class="s1">@util.provide_metadata</span>
+    <span class="s2">def </span><span class="s1">test_drop_index_if_exists(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">table</span><span class="s3">, </span><span class="s1">idx = self._table_index_fixture()</span>
+
+        <span class="s1">table.create(connection)</span>
+
+        <span class="s1">is_true(</span>
+            <span class="s4">&quot;test_index&quot;</span>
+            <span class="s2">in </span><span class="s1">[</span>
+                <span class="s1">ix[</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+                <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">inspect(connection).get_indexes(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">)</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+
+        <span class="s1">connection.execute(schema.DropIndex(idx</span><span class="s3">, </span><span class="s1">if_exists=</span><span class="s2">True</span><span class="s1">))</span>
+
+        <span class="s1">is_false(</span>
+            <span class="s4">&quot;test_index&quot;</span>
+            <span class="s2">in </span><span class="s1">[</span>
+                <span class="s1">ix[</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+                <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">inspect(connection).get_indexes(</span><span class="s4">&quot;test_table&quot;</span><span class="s1">)</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+
+        <span class="s1">connection.execute(schema.DropIndex(idx</span><span class="s3">, </span><span class="s1">if_exists=</span><span class="s2">True</span><span class="s1">))</span>
+
+
+<span class="s2">class </span><span class="s1">FutureTableDDLTest(fixtures.FutureEngineMixin</span><span class="s3">, </span><span class="s1">TableDDLTest):</span>
+    <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">LongNameBlowoutTest(fixtures.TestBase):</span>
+    <span class="s6">&quot;&quot;&quot;test the creation of a variety of DDL structures and ensure 
+    label length limits pass on backends 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">fk(self</span><span class="s3">, </span><span class="s1">metadata</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">convention = {</span>
+            <span class="s4">&quot;fk&quot;</span><span class="s1">: </span><span class="s4">&quot;foreign_key_%(table_name)s_&quot;</span>
+            <span class="s4">&quot;%(column_0_N_name)s_&quot;</span>
+            <span class="s4">&quot;%(referred_table_name)s_&quot;</span>
+            <span class="s1">+ (</span>
+                <span class="s4">&quot;_&quot;</span><span class="s1">.join(</span>
+                    <span class="s4">&quot;&quot;</span><span class="s1">.join(random.choice(</span><span class="s4">&quot;abcdef&quot;</span><span class="s1">) </span><span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">20</span><span class="s1">))</span>
+                    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">10</span><span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">}</span>
+        <span class="s1">metadata.naming_convention = convention</span>
+
+        <span class="s1">Table(</span>
+            <span class="s4">&quot;a_things_with_stuff&quot;</span><span class="s3">,</span>
+            <span class="s1">metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id_long_column_name&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">test_needs_fk=</span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">cons = ForeignKeyConstraint(</span>
+            <span class="s1">[</span><span class="s4">&quot;aid&quot;</span><span class="s1">]</span><span class="s3">, </span><span class="s1">[</span><span class="s4">&quot;a_things_with_stuff.id_long_column_name&quot;</span><span class="s1">]</span>
+        <span class="s1">)</span>
+        <span class="s1">Table(</span>
+            <span class="s4">&quot;b_related_things_of_value&quot;</span><span class="s3">,</span>
+            <span class="s1">metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span>
+                <span class="s4">&quot;aid&quot;</span><span class="s3">,</span>
+            <span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">cons</span><span class="s3">,</span>
+            <span class="s1">test_needs_fk=</span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">actual_name = cons.name</span>
+
+        <span class="s1">metadata.create_all(connection)</span>
+
+        <span class="s2">if </span><span class="s1">testing.requires.foreign_key_constraint_name_reflection.enabled:</span>
+            <span class="s1">insp = inspect(connection)</span>
+            <span class="s1">fks = insp.get_foreign_keys(</span><span class="s4">&quot;b_related_things_of_value&quot;</span><span class="s1">)</span>
+            <span class="s1">reflected_name = fks[</span><span class="s5">0</span><span class="s1">][</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+
+            <span class="s2">return </span><span class="s1">actual_name</span><span class="s3">, </span><span class="s1">reflected_name</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">actual_name</span><span class="s3">, </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">pk(self</span><span class="s3">, </span><span class="s1">metadata</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">convention = {</span>
+            <span class="s4">&quot;pk&quot;</span><span class="s1">: </span><span class="s4">&quot;primary_key_%(table_name)s_&quot;</span>
+            <span class="s4">&quot;%(column_0_N_name)s&quot;</span>
+            <span class="s1">+ (</span>
+                <span class="s4">&quot;_&quot;</span><span class="s1">.join(</span>
+                    <span class="s4">&quot;&quot;</span><span class="s1">.join(random.choice(</span><span class="s4">&quot;abcdef&quot;</span><span class="s1">) </span><span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">30</span><span class="s1">))</span>
+                    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">10</span><span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">}</span>
+        <span class="s1">metadata.naming_convention = convention</span>
+
+        <span class="s1">a = Table(</span>
+            <span class="s4">&quot;a_things_with_stuff&quot;</span><span class="s3">,</span>
+            <span class="s1">metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id_long_column_name&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id_another_long_name&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">cons = a.primary_key</span>
+        <span class="s1">actual_name = cons.name</span>
+
+        <span class="s1">metadata.create_all(connection)</span>
+        <span class="s1">insp = inspect(connection)</span>
+        <span class="s1">pk = insp.get_pk_constraint(</span><span class="s4">&quot;a_things_with_stuff&quot;</span><span class="s1">)</span>
+        <span class="s1">reflected_name = pk[</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+        <span class="s2">return </span><span class="s1">actual_name</span><span class="s3">, </span><span class="s1">reflected_name</span>
+
+    <span class="s2">def </span><span class="s1">ix(self</span><span class="s3">, </span><span class="s1">metadata</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">convention = {</span>
+            <span class="s4">&quot;ix&quot;</span><span class="s1">: </span><span class="s4">&quot;index_%(table_name)s_&quot;</span>
+            <span class="s4">&quot;%(column_0_N_name)s&quot;</span>
+            <span class="s1">+ (</span>
+                <span class="s4">&quot;_&quot;</span><span class="s1">.join(</span>
+                    <span class="s4">&quot;&quot;</span><span class="s1">.join(random.choice(</span><span class="s4">&quot;abcdef&quot;</span><span class="s1">) </span><span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">30</span><span class="s1">))</span>
+                    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">10</span><span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">}</span>
+        <span class="s1">metadata.naming_convention = convention</span>
+
+        <span class="s1">a = Table(</span>
+            <span class="s4">&quot;a_things_with_stuff&quot;</span><span class="s3">,</span>
+            <span class="s1">metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id_long_column_name&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id_another_long_name&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">cons = Index(</span><span class="s2">None</span><span class="s3">, </span><span class="s1">a.c.id_long_column_name</span><span class="s3">, </span><span class="s1">a.c.id_another_long_name)</span>
+        <span class="s1">actual_name = cons.name</span>
+
+        <span class="s1">metadata.create_all(connection)</span>
+        <span class="s1">insp = inspect(connection)</span>
+        <span class="s1">ix = insp.get_indexes(</span><span class="s4">&quot;a_things_with_stuff&quot;</span><span class="s1">)</span>
+        <span class="s1">reflected_name = ix[</span><span class="s5">0</span><span class="s1">][</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+        <span class="s2">return </span><span class="s1">actual_name</span><span class="s3">, </span><span class="s1">reflected_name</span>
+
+    <span class="s2">def </span><span class="s1">uq(self</span><span class="s3">, </span><span class="s1">metadata</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">convention = {</span>
+            <span class="s4">&quot;uq&quot;</span><span class="s1">: </span><span class="s4">&quot;unique_constraint_%(table_name)s_&quot;</span>
+            <span class="s4">&quot;%(column_0_N_name)s&quot;</span>
+            <span class="s1">+ (</span>
+                <span class="s4">&quot;_&quot;</span><span class="s1">.join(</span>
+                    <span class="s4">&quot;&quot;</span><span class="s1">.join(random.choice(</span><span class="s4">&quot;abcdef&quot;</span><span class="s1">) </span><span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">30</span><span class="s1">))</span>
+                    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">10</span><span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">}</span>
+        <span class="s1">metadata.naming_convention = convention</span>
+
+        <span class="s1">cons = UniqueConstraint(</span><span class="s4">&quot;id_long_column_name&quot;</span><span class="s3">, </span><span class="s4">&quot;id_another_long_name&quot;</span><span class="s1">)</span>
+        <span class="s1">Table(</span>
+            <span class="s4">&quot;a_things_with_stuff&quot;</span><span class="s3">,</span>
+            <span class="s1">metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id_long_column_name&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id_another_long_name&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,</span>
+            <span class="s1">cons</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">actual_name = cons.name</span>
+
+        <span class="s1">metadata.create_all(connection)</span>
+        <span class="s1">insp = inspect(connection)</span>
+        <span class="s1">uq = insp.get_unique_constraints(</span><span class="s4">&quot;a_things_with_stuff&quot;</span><span class="s1">)</span>
+        <span class="s1">reflected_name = uq[</span><span class="s5">0</span><span class="s1">][</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+        <span class="s2">return </span><span class="s1">actual_name</span><span class="s3">, </span><span class="s1">reflected_name</span>
+
+    <span class="s2">def </span><span class="s1">ck(self</span><span class="s3">, </span><span class="s1">metadata</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">convention = {</span>
+            <span class="s4">&quot;ck&quot;</span><span class="s1">: </span><span class="s4">&quot;check_constraint_%(table_name)s&quot;</span>
+            <span class="s1">+ (</span>
+                <span class="s4">&quot;_&quot;</span><span class="s1">.join(</span>
+                    <span class="s4">&quot;&quot;</span><span class="s1">.join(random.choice(</span><span class="s4">&quot;abcdef&quot;</span><span class="s1">) </span><span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">30</span><span class="s1">))</span>
+                    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">10</span><span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">}</span>
+        <span class="s1">metadata.naming_convention = convention</span>
+
+        <span class="s1">cons = CheckConstraint(</span><span class="s4">&quot;some_long_column_name &gt; 5&quot;</span><span class="s1">)</span>
+        <span class="s1">Table(</span>
+            <span class="s4">&quot;a_things_with_stuff&quot;</span><span class="s3">,</span>
+            <span class="s1">metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id_long_column_name&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;some_long_column_name&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,</span>
+            <span class="s1">cons</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">actual_name = cons.name</span>
+
+        <span class="s1">metadata.create_all(connection)</span>
+        <span class="s1">insp = inspect(connection)</span>
+        <span class="s1">ck = insp.get_check_constraints(</span><span class="s4">&quot;a_things_with_stuff&quot;</span><span class="s1">)</span>
+        <span class="s1">reflected_name = ck[</span><span class="s5">0</span><span class="s1">][</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+        <span class="s2">return </span><span class="s1">actual_name</span><span class="s3">, </span><span class="s1">reflected_name</span>
+
+    <span class="s1">@testing.combinations(</span>
+        <span class="s1">(</span><span class="s4">&quot;fk&quot;</span><span class="s3">,</span><span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span><span class="s4">&quot;pk&quot;</span><span class="s3">,</span><span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span><span class="s4">&quot;ix&quot;</span><span class="s3">,</span><span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span><span class="s4">&quot;ck&quot;</span><span class="s3">, </span><span class="s1">testing.requires.check_constraint_reflection.as_skips())</span><span class="s3">,</span>
+        <span class="s1">(</span><span class="s4">&quot;uq&quot;</span><span class="s3">, </span><span class="s1">testing.requires.unique_constraint_reflection.as_skips())</span><span class="s3">,</span>
+        <span class="s1">argnames=</span><span class="s4">&quot;type_&quot;</span><span class="s3">,</span>
+    <span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">test_long_convention_name(self</span><span class="s3">, </span><span class="s1">type_</span><span class="s3">, </span><span class="s1">metadata</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">actual_name</span><span class="s3">, </span><span class="s1">reflected_name = getattr(self</span><span class="s3">, </span><span class="s1">type_)(</span>
+            <span class="s1">metadata</span><span class="s3">, </span><span class="s1">connection</span>
+        <span class="s1">)</span>
+
+        <span class="s2">assert </span><span class="s1">len(actual_name) &gt; </span><span class="s5">255</span>
+
+        <span class="s2">if </span><span class="s1">reflected_name </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">overlap = actual_name[</span><span class="s5">0 </span><span class="s1">: len(reflected_name)]</span>
+            <span class="s2">if </span><span class="s1">len(overlap) &lt; len(actual_name):</span>
+                <span class="s1">eq_(overlap[</span><span class="s5">0</span><span class="s1">:-</span><span class="s5">5</span><span class="s1">]</span><span class="s3">, </span><span class="s1">reflected_name[</span><span class="s5">0 </span><span class="s1">: len(overlap) - </span><span class="s5">5</span><span class="s1">])</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">eq_(overlap</span><span class="s3">, </span><span class="s1">reflected_name)</span>
+
+
+<span class="s1">__all__ = (</span><span class="s4">&quot;TableDDLTest&quot;</span><span class="s3">, </span><span class="s4">&quot;FutureTableDDLTest&quot;</span><span class="s3">, </span><span class="s4">&quot;LongNameBlowoutTest&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

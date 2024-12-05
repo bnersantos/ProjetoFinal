@@ -1,0 +1,33 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+    <h2>Lista de Produtos</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Nome</th>
+                <th>Preço</th>
+                <th>Quantidade</th>
+                <th>Validade</th>
+                <th>Fornecedor</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for produto in produtos %}
+                <tr>
+                    <td>{{ produto.nome }}</td>
+                    <td>{{ produto.preco }}</td>
+                    <td>{{ produto.quantidade }}</td>
+                    <td>{{ produto.validade }}</td>
+                    <td>{{ produto.fornecedor.nome_fornecedor }}</td>
+                    <td>
+                        <a href="{{ url_for('editar_produto', id=produto.id) }}" class="btn2 editar">Editar</a>
+                        <a href="{{ url_for('movimentacao_produto') }}" class="btn2 editar">Movimentar</a>
+                        <!-- Adicione outras ações, como excluir, se necessário -->
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

@@ -1,0 +1,532 @@
+<html>
+<head>
+<title>named_types.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #717ed3; font-style: italic;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+named_types.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/named_types.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Type</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">schema</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">coercions</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">elements</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">roles</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">sqltypes</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">type_api</span>
+<span class="s2">from </span><span class="s1">...sql.base </span><span class="s2">import </span><span class="s1">_NoArg</span>
+<span class="s2">from </span><span class="s1">...sql.ddl </span><span class="s2">import </span><span class="s1">InvokeCreateDDLBase</span>
+<span class="s2">from </span><span class="s1">...sql.ddl </span><span class="s2">import </span><span class="s1">InvokeDropDDLBase</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">...sql._typing </span><span class="s2">import </span><span class="s1">_TypeEngineArgument</span>
+
+
+<span class="s2">class </span><span class="s1">NamedType(sqltypes.TypeEngine):</span>
+    <span class="s3">&quot;&quot;&quot;Base for named types.&quot;&quot;&quot;</span>
+
+    <span class="s1">__abstract__ = </span><span class="s2">True</span>
+    <span class="s1">DDLGenerator: Type[NamedTypeGenerator]</span>
+    <span class="s1">DDLDropper: Type[NamedTypeDropper]</span>
+    <span class="s1">create_type: bool</span>
+
+    <span class="s2">def </span><span class="s1">create(self</span><span class="s4">, </span><span class="s1">bind</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s3">&quot;&quot;&quot;Emit ``CREATE`` DDL for this type. 
+ 
+        :param bind: a connectable :class:`_engine.Engine`, 
+         :class:`_engine.Connection`, or similar object to emit 
+         SQL. 
+        :param checkfirst: if ``True``, a query against 
+         the PG catalog will be first performed to see 
+         if the type does not exist already before 
+         creating. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">bind._run_ddl_visitor(self.DDLGenerator</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s1">checkfirst=checkfirst)</span>
+
+    <span class="s2">def </span><span class="s1">drop(self</span><span class="s4">, </span><span class="s1">bind</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s3">&quot;&quot;&quot;Emit ``DROP`` DDL for this type. 
+ 
+        :param bind: a connectable :class:`_engine.Engine`, 
+         :class:`_engine.Connection`, or similar object to emit 
+         SQL. 
+        :param checkfirst: if ``True``, a query against 
+         the PG catalog will be first performed to see 
+         if the type actually exists before dropping. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">bind._run_ddl_visitor(self.DDLDropper</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s1">checkfirst=checkfirst)</span>
+
+    <span class="s2">def </span><span class="s1">_check_for_name_in_memos(self</span><span class="s4">, </span><span class="s1">checkfirst</span><span class="s4">, </span><span class="s1">kw):</span>
+        <span class="s3">&quot;&quot;&quot;Look in the 'ddl runner' for 'memos', then 
+        note our name in that collection. 
+ 
+        This to ensure a particular named type is operated 
+        upon only once within any kind of create/drop 
+        sequence without relying upon &quot;checkfirst&quot;. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">self.create_type:</span>
+            <span class="s2">return True</span>
+        <span class="s2">if </span><span class="s5">&quot;_ddl_runner&quot; </span><span class="s2">in </span><span class="s1">kw:</span>
+            <span class="s1">ddl_runner = kw[</span><span class="s5">&quot;_ddl_runner&quot;</span><span class="s1">]</span>
+            <span class="s1">type_name = </span><span class="s5">f&quot;pg_</span><span class="s6">{</span><span class="s1">self.__visit_name__</span><span class="s6">}</span><span class="s5">&quot;</span>
+            <span class="s2">if </span><span class="s1">type_name </span><span class="s2">in </span><span class="s1">ddl_runner.memo:</span>
+                <span class="s1">existing = ddl_runner.memo[type_name]</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">existing = ddl_runner.memo[type_name] = set()</span>
+            <span class="s1">present = (self.schema</span><span class="s4">, </span><span class="s1">self.name) </span><span class="s2">in </span><span class="s1">existing</span>
+            <span class="s1">existing.add((self.schema</span><span class="s4">, </span><span class="s1">self.name))</span>
+            <span class="s2">return </span><span class="s1">present</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return False</span>
+
+    <span class="s2">def </span><span class="s1">_on_table_create(self</span><span class="s4">, </span><span class="s1">target</span><span class="s4">, </span><span class="s1">bind</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">checkfirst</span>
+            <span class="s2">or </span><span class="s1">(</span>
+                <span class="s2">not </span><span class="s1">self.metadata</span>
+                <span class="s2">and not </span><span class="s1">kw.get(</span><span class="s5">&quot;_is_metadata_operation&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">) </span><span class="s2">and not </span><span class="s1">self._check_for_name_in_memos(checkfirst</span><span class="s4">, </span><span class="s1">kw):</span>
+            <span class="s1">self.create(bind=bind</span><span class="s4">, </span><span class="s1">checkfirst=checkfirst)</span>
+
+    <span class="s2">def </span><span class="s1">_on_table_drop(self</span><span class="s4">, </span><span class="s1">target</span><span class="s4">, </span><span class="s1">bind</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s2">not </span><span class="s1">self.metadata</span>
+            <span class="s2">and not </span><span class="s1">kw.get(</span><span class="s5">&quot;_is_metadata_operation&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+            <span class="s2">and not </span><span class="s1">self._check_for_name_in_memos(checkfirst</span><span class="s4">, </span><span class="s1">kw)</span>
+        <span class="s1">):</span>
+            <span class="s1">self.drop(bind=bind</span><span class="s4">, </span><span class="s1">checkfirst=checkfirst)</span>
+
+    <span class="s2">def </span><span class="s1">_on_metadata_create(self</span><span class="s4">, </span><span class="s1">target</span><span class="s4">, </span><span class="s1">bind</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if not </span><span class="s1">self._check_for_name_in_memos(checkfirst</span><span class="s4">, </span><span class="s1">kw):</span>
+            <span class="s1">self.create(bind=bind</span><span class="s4">, </span><span class="s1">checkfirst=checkfirst)</span>
+
+    <span class="s2">def </span><span class="s1">_on_metadata_drop(self</span><span class="s4">, </span><span class="s1">target</span><span class="s4">, </span><span class="s1">bind</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if not </span><span class="s1">self._check_for_name_in_memos(checkfirst</span><span class="s4">, </span><span class="s1">kw):</span>
+            <span class="s1">self.drop(bind=bind</span><span class="s4">, </span><span class="s1">checkfirst=checkfirst)</span>
+
+
+<span class="s2">class </span><span class="s1">NamedTypeGenerator(InvokeCreateDDLBase):</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">super().__init__(connection</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">self.checkfirst = checkfirst</span>
+
+    <span class="s2">def </span><span class="s1">_can_create_type(self</span><span class="s4">, </span><span class="s1">type_):</span>
+        <span class="s2">if not </span><span class="s1">self.checkfirst:</span>
+            <span class="s2">return True</span>
+
+        <span class="s1">effective_schema = self.connection.schema_for_object(type_)</span>
+        <span class="s2">return not </span><span class="s1">self.connection.dialect.has_type(</span>
+            <span class="s1">self.connection</span><span class="s4">, </span><span class="s1">type_.name</span><span class="s4">, </span><span class="s1">schema=effective_schema</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">NamedTypeDropper(InvokeDropDDLBase):</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">super().__init__(connection</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">self.checkfirst = checkfirst</span>
+
+    <span class="s2">def </span><span class="s1">_can_drop_type(self</span><span class="s4">, </span><span class="s1">type_):</span>
+        <span class="s2">if not </span><span class="s1">self.checkfirst:</span>
+            <span class="s2">return True</span>
+
+        <span class="s1">effective_schema = self.connection.schema_for_object(type_)</span>
+        <span class="s2">return </span><span class="s1">self.connection.dialect.has_type(</span>
+            <span class="s1">self.connection</span><span class="s4">, </span><span class="s1">type_.name</span><span class="s4">, </span><span class="s1">schema=effective_schema</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">EnumGenerator(NamedTypeGenerator):</span>
+    <span class="s2">def </span><span class="s1">visit_enum(self</span><span class="s4">, </span><span class="s1">enum):</span>
+        <span class="s2">if not </span><span class="s1">self._can_create_type(enum):</span>
+            <span class="s2">return</span>
+
+        <span class="s2">with </span><span class="s1">self.with_ddl_events(enum):</span>
+            <span class="s1">self.connection.execute(CreateEnumType(enum))</span>
+
+
+<span class="s2">class </span><span class="s1">EnumDropper(NamedTypeDropper):</span>
+    <span class="s2">def </span><span class="s1">visit_enum(self</span><span class="s4">, </span><span class="s1">enum):</span>
+        <span class="s2">if not </span><span class="s1">self._can_drop_type(enum):</span>
+            <span class="s2">return</span>
+
+        <span class="s2">with </span><span class="s1">self.with_ddl_events(enum):</span>
+            <span class="s1">self.connection.execute(DropEnumType(enum))</span>
+
+
+<span class="s2">class </span><span class="s1">ENUM(NamedType</span><span class="s4">, </span><span class="s1">type_api.NativeForEmulated</span><span class="s4">, </span><span class="s1">sqltypes.Enum):</span>
+    <span class="s3">&quot;&quot;&quot;PostgreSQL ENUM type. 
+ 
+    This is a subclass of :class:`_types.Enum` which includes 
+    support for PG's ``CREATE TYPE`` and ``DROP TYPE``. 
+ 
+    When the builtin type :class:`_types.Enum` is used and the 
+    :paramref:`.Enum.native_enum` flag is left at its default of 
+    True, the PostgreSQL backend will use a :class:`_postgresql.ENUM` 
+    type as the implementation, so the special create/drop rules 
+    will be used. 
+ 
+    The create/drop behavior of ENUM is necessarily intricate, due to the 
+    awkward relationship the ENUM type has in relationship to the 
+    parent table, in that it may be &quot;owned&quot; by just a single table, or 
+    may be shared among many tables. 
+ 
+    When using :class:`_types.Enum` or :class:`_postgresql.ENUM` 
+    in an &quot;inline&quot; fashion, the ``CREATE TYPE`` and ``DROP TYPE`` is emitted 
+    corresponding to when the :meth:`_schema.Table.create` and 
+    :meth:`_schema.Table.drop` 
+    methods are called:: 
+ 
+        table = Table('sometable', metadata, 
+            Column('some_enum', ENUM('a', 'b', 'c', name='myenum')) 
+        ) 
+ 
+        table.create(engine)  # will emit CREATE ENUM and CREATE TABLE 
+        table.drop(engine)  # will emit DROP TABLE and DROP ENUM 
+ 
+    To use a common enumerated type between multiple tables, the best 
+    practice is to declare the :class:`_types.Enum` or 
+    :class:`_postgresql.ENUM` independently, and associate it with the 
+    :class:`_schema.MetaData` object itself:: 
+ 
+        my_enum = ENUM('a', 'b', 'c', name='myenum', metadata=metadata) 
+ 
+        t1 = Table('sometable_one', metadata, 
+            Column('some_enum', myenum) 
+        ) 
+ 
+        t2 = Table('sometable_two', metadata, 
+            Column('some_enum', myenum) 
+        ) 
+ 
+    When this pattern is used, care must still be taken at the level 
+    of individual table creates.  Emitting CREATE TABLE without also 
+    specifying ``checkfirst=True`` will still cause issues:: 
+ 
+        t1.create(engine) # will fail: no such type 'myenum' 
+ 
+    If we specify ``checkfirst=True``, the individual table-level create 
+    operation will check for the ``ENUM`` and create if not exists:: 
+ 
+        # will check if enum exists, and emit CREATE TYPE if not 
+        t1.create(engine, checkfirst=True) 
+ 
+    When using a metadata-level ENUM type, the type will always be created 
+    and dropped if either the metadata-wide create/drop is called:: 
+ 
+        metadata.create_all(engine)  # will emit CREATE TYPE 
+        metadata.drop_all(engine)  # will emit DROP TYPE 
+ 
+    The type can also be created and dropped directly:: 
+ 
+        my_enum.create(engine) 
+        my_enum.drop(engine) 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">native_enum = </span><span class="s2">True</span>
+    <span class="s1">DDLGenerator = EnumGenerator</span>
+    <span class="s1">DDLDropper = EnumDropper</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">*enums</span><span class="s4">,</span>
+        <span class="s1">name: Union[str</span><span class="s4">, </span><span class="s1">_NoArg</span><span class="s4">, </span><span class="s2">None</span><span class="s1">] = _NoArg.NO_ARG</span><span class="s4">,</span>
+        <span class="s1">create_type: bool = </span><span class="s2">True</span><span class="s4">,</span>
+        <span class="s1">**kw</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s3">&quot;&quot;&quot;Construct an :class:`_postgresql.ENUM`. 
+ 
+        Arguments are the same as that of 
+        :class:`_types.Enum`, but also including 
+        the following parameters. 
+ 
+        :param create_type: Defaults to True. 
+         Indicates that ``CREATE TYPE`` should be 
+         emitted, after optionally checking for the 
+         presence of the type, when the parent 
+         table is being created; and additionally 
+         that ``DROP TYPE`` is called when the table 
+         is dropped.    When ``False``, no check 
+         will be performed and no ``CREATE TYPE`` 
+         or ``DROP TYPE`` is emitted, unless 
+         :meth:`~.postgresql.ENUM.create` 
+         or :meth:`~.postgresql.ENUM.drop` 
+         are called directly. 
+         Setting to ``False`` is helpful 
+         when invoking a creation scheme to a SQL file 
+         without access to the actual database - 
+         the :meth:`~.postgresql.ENUM.create` and 
+         :meth:`~.postgresql.ENUM.drop` methods can 
+         be used to emit SQL to a target bind. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">native_enum = kw.pop(</span><span class="s5">&quot;native_enum&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">native_enum </span><span class="s2">is False</span><span class="s1">:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s5">&quot;the native_enum flag does not apply to the &quot;</span>
+                <span class="s5">&quot;sqlalchemy.dialects.postgresql.ENUM datatype; this type &quot;</span>
+                <span class="s5">&quot;always refers to ENUM.   Use sqlalchemy.types.Enum for &quot;</span>
+                <span class="s5">&quot;non-native enum.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">self.create_type = create_type</span>
+        <span class="s2">if </span><span class="s1">name </span><span class="s2">is not </span><span class="s1">_NoArg.NO_ARG:</span>
+            <span class="s1">kw[</span><span class="s5">&quot;name&quot;</span><span class="s1">] = name</span>
+        <span class="s1">super().__init__(*enums</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">coerce_compared_value(self</span><span class="s4">, </span><span class="s1">op</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">super_coerced_type = super().coerce_compared_value(op</span><span class="s4">, </span><span class="s1">value)</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">super_coerced_type._type_affinity</span>
+            <span class="s2">is </span><span class="s1">type_api.STRINGTYPE._type_affinity</span>
+        <span class="s1">):</span>
+            <span class="s2">return </span><span class="s1">self</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">super_coerced_type</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">__test_init__(cls):</span>
+        <span class="s2">return </span><span class="s1">cls(name=</span><span class="s5">&quot;name&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">adapt_emulated_to_native(cls</span><span class="s4">, </span><span class="s1">impl</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s3">&quot;&quot;&quot;Produce a PostgreSQL native :class:`_postgresql.ENUM` from plain 
+        :class:`.Enum`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;validate_strings&quot;</span><span class="s4">, </span><span class="s1">impl.validate_strings)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;name&quot;</span><span class="s4">, </span><span class="s1">impl.name)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;schema&quot;</span><span class="s4">, </span><span class="s1">impl.schema)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;inherit_schema&quot;</span><span class="s4">, </span><span class="s1">impl.inherit_schema)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;metadata&quot;</span><span class="s4">, </span><span class="s1">impl.metadata)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;_create_events&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;values_callable&quot;</span><span class="s4">, </span><span class="s1">impl.values_callable)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;omit_aliases&quot;</span><span class="s4">, </span><span class="s1">impl._omit_aliases)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;_adapted_from&quot;</span><span class="s4">, </span><span class="s1">impl)</span>
+        <span class="s2">if </span><span class="s1">type_api._is_native_for_emulated(impl.__class__):</span>
+            <span class="s1">kw.setdefault(</span><span class="s5">&quot;create_type&quot;</span><span class="s4">, </span><span class="s1">impl.create_type)</span>
+
+        <span class="s2">return </span><span class="s1">cls(**kw)</span>
+
+    <span class="s2">def </span><span class="s1">create(self</span><span class="s4">, </span><span class="s1">bind=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">True</span><span class="s1">):</span>
+        <span class="s3">&quot;&quot;&quot;Emit ``CREATE TYPE`` for this 
+        :class:`_postgresql.ENUM`. 
+ 
+        If the underlying dialect does not support 
+        PostgreSQL CREATE TYPE, no action is taken. 
+ 
+        :param bind: a connectable :class:`_engine.Engine`, 
+         :class:`_engine.Connection`, or similar object to emit 
+         SQL. 
+        :param checkfirst: if ``True``, a query against 
+         the PG catalog will be first performed to see 
+         if the type does not exist already before 
+         creating. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">bind.dialect.supports_native_enum:</span>
+            <span class="s2">return</span>
+
+        <span class="s1">super().create(bind</span><span class="s4">, </span><span class="s1">checkfirst=checkfirst)</span>
+
+    <span class="s2">def </span><span class="s1">drop(self</span><span class="s4">, </span><span class="s1">bind=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">checkfirst=</span><span class="s2">True</span><span class="s1">):</span>
+        <span class="s3">&quot;&quot;&quot;Emit ``DROP TYPE`` for this 
+        :class:`_postgresql.ENUM`. 
+ 
+        If the underlying dialect does not support 
+        PostgreSQL DROP TYPE, no action is taken. 
+ 
+        :param bind: a connectable :class:`_engine.Engine`, 
+         :class:`_engine.Connection`, or similar object to emit 
+         SQL. 
+        :param checkfirst: if ``True``, a query against 
+         the PG catalog will be first performed to see 
+         if the type actually exists before dropping. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">bind.dialect.supports_native_enum:</span>
+            <span class="s2">return</span>
+
+        <span class="s1">super().drop(bind</span><span class="s4">, </span><span class="s1">checkfirst=checkfirst)</span>
+
+    <span class="s2">def </span><span class="s1">get_dbapi_type(self</span><span class="s4">, </span><span class="s1">dbapi):</span>
+        <span class="s3">&quot;&quot;&quot;dont return dbapi.STRING for ENUM in PostgreSQL, since that's 
+        a different type&quot;&quot;&quot;</span>
+
+        <span class="s2">return None</span>
+
+
+<span class="s2">class </span><span class="s1">DomainGenerator(NamedTypeGenerator):</span>
+    <span class="s2">def </span><span class="s1">visit_DOMAIN(self</span><span class="s4">, </span><span class="s1">domain):</span>
+        <span class="s2">if not </span><span class="s1">self._can_create_type(domain):</span>
+            <span class="s2">return</span>
+        <span class="s2">with </span><span class="s1">self.with_ddl_events(domain):</span>
+            <span class="s1">self.connection.execute(CreateDomainType(domain))</span>
+
+
+<span class="s2">class </span><span class="s1">DomainDropper(NamedTypeDropper):</span>
+    <span class="s2">def </span><span class="s1">visit_DOMAIN(self</span><span class="s4">, </span><span class="s1">domain):</span>
+        <span class="s2">if not </span><span class="s1">self._can_drop_type(domain):</span>
+            <span class="s2">return</span>
+
+        <span class="s2">with </span><span class="s1">self.with_ddl_events(domain):</span>
+            <span class="s1">self.connection.execute(DropDomainType(domain))</span>
+
+
+<span class="s2">class </span><span class="s1">DOMAIN(NamedType</span><span class="s4">, </span><span class="s1">sqltypes.SchemaType):</span>
+    <span class="s3">r&quot;&quot;&quot;Represent the DOMAIN PostgreSQL type. 
+ 
+    A domain is essentially a data type with optional constraints 
+    that restrict the allowed set of values. E.g.:: 
+ 
+        PositiveInt = DOMAIN( 
+            &quot;pos_int&quot;, Integer, check=&quot;VALUE &gt; 0&quot;, not_null=True 
+        ) 
+ 
+        UsPostalCode = DOMAIN( 
+            &quot;us_postal_code&quot;, 
+            Text, 
+            check=&quot;VALUE ~ '^\d{5}$' OR VALUE ~ '^\d{5}-\d{4}$'&quot; 
+        ) 
+ 
+    See the `PostgreSQL documentation`__ for additional details 
+ 
+    __ https://www.postgresql.org/docs/current/sql-createdomain.html 
+ 
+    .. versionadded:: 2.0 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">DDLGenerator = DomainGenerator</span>
+    <span class="s1">DDLDropper = DomainDropper</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;DOMAIN&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">name: str</span><span class="s4">,</span>
+        <span class="s1">data_type: _TypeEngineArgument[Any]</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">collation: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">default: Union[elements.TextClause</span><span class="s4">, </span><span class="s1">str</span><span class="s4">, </span><span class="s2">None</span><span class="s1">] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">constraint_name: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">not_null: Optional[bool] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">check: Union[elements.TextClause</span><span class="s4">, </span><span class="s1">str</span><span class="s4">, </span><span class="s2">None</span><span class="s1">] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">create_type: bool = </span><span class="s2">True</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s3">&quot;&quot;&quot; 
+        Construct a DOMAIN. 
+ 
+        :param name: the name of the domain 
+        :param data_type: The underlying data type of the domain. 
+          This can include array specifiers. 
+        :param collation: An optional collation for the domain. 
+          If no collation is specified, the underlying data type's default 
+          collation is used. The underlying type must be collatable if 
+          ``collation`` is specified. 
+        :param default: The DEFAULT clause specifies a default value for 
+          columns of the domain data type. The default should be a string 
+          or a :func:`_expression.text` value. 
+          If no default value is specified, then the default value is 
+          the null value. 
+        :param constraint_name: An optional name for a constraint. 
+          If not specified, the backend generates a name. 
+        :param not_null: Values of this domain are prevented from being null. 
+          By default domain are allowed to be null. If not specified 
+          no nullability clause will be emitted. 
+        :param check: CHECK clause specify integrity constraint or test 
+          which values of the domain must satisfy. A constraint must be 
+          an expression producing a Boolean result that can use the key 
+          word VALUE to refer to the value being tested. 
+          Differently from PostgreSQL, only a single check clause is 
+          currently allowed in SQLAlchemy. 
+        :param schema: optional schema name 
+        :param metadata: optional :class:`_schema.MetaData` object which 
+         this :class:`_postgresql.DOMAIN` will be directly associated 
+        :param create_type: Defaults to True. 
+         Indicates that ``CREATE TYPE`` should be emitted, after optionally 
+         checking for the presence of the type, when the parent table is 
+         being created; and additionally that ``DROP TYPE`` is called 
+         when the table is dropped. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.data_type = type_api.to_instance(data_type)</span>
+        <span class="s1">self.default = default</span>
+        <span class="s1">self.collation = collation</span>
+        <span class="s1">self.constraint_name = constraint_name</span>
+        <span class="s1">self.not_null = bool(not_null)</span>
+        <span class="s2">if </span><span class="s1">check </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">check = coercions.expect(roles.DDLExpressionRole</span><span class="s4">, </span><span class="s1">check)</span>
+        <span class="s1">self.check = check</span>
+        <span class="s1">self.create_type = create_type</span>
+        <span class="s1">super().__init__(name=name</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">__test_init__(cls):</span>
+        <span class="s2">return </span><span class="s1">cls(</span><span class="s5">&quot;name&quot;</span><span class="s4">, </span><span class="s1">sqltypes.Integer)</span>
+
+    <span class="s2">def </span><span class="s1">adapt(self</span><span class="s4">, </span><span class="s1">impl</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">self.default:</span>
+            <span class="s1">kw[</span><span class="s5">&quot;default&quot;</span><span class="s1">] = self.default</span>
+        <span class="s2">if </span><span class="s1">self.constraint_name </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">kw[</span><span class="s5">&quot;constraint_name&quot;</span><span class="s1">] = self.constraint_name</span>
+        <span class="s2">if </span><span class="s1">self.not_null:</span>
+            <span class="s1">kw[</span><span class="s5">&quot;not_null&quot;</span><span class="s1">] = self.not_null</span>
+        <span class="s2">if </span><span class="s1">self.check </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">kw[</span><span class="s5">&quot;check&quot;</span><span class="s1">] = str(self.check)</span>
+        <span class="s2">if </span><span class="s1">self.create_type:</span>
+            <span class="s1">kw[</span><span class="s5">&quot;create_type&quot;</span><span class="s1">] = self.create_type</span>
+
+        <span class="s2">return </span><span class="s1">super().adapt(impl</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+
+<span class="s2">class </span><span class="s1">CreateEnumType(schema._CreateDropBase):</span>
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;create_enum_type&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">DropEnumType(schema._CreateDropBase):</span>
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;drop_enum_type&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">CreateDomainType(schema._CreateDropBase):</span>
+    <span class="s3">&quot;&quot;&quot;Represent a CREATE DOMAIN statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;create_domain_type&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">DropDomainType(schema._CreateDropBase):</span>
+    <span class="s3">&quot;&quot;&quot;Represent a DROP DOMAIN statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;drop_domain_type&quot;</span>
+</pre>
+</body>
+</html>

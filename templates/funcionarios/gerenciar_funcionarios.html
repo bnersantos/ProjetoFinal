@@ -1,0 +1,25 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+<h1>Gerenciar Funcionários</h1>
+
+<div class="card-container2">
+    <div class="card2">
+        <h3>Criar Funcionário</h3>
+        <p>Adicione um novo funcionário à plataforma.</p>
+        <a href="{{ url_for('criar_funcionario') }}" class="btn">Criar Funcionário</a>
+    </div>
+
+    <div class="card2">
+        <h3>Listar Funcionários</h3>
+        <p>Visualize todos os funcionários cadastrados.</p>
+        <a href="{{ url_for('listar_funcionarios') }}" class="btn">Listar Funcionários</a>
+    </div>
+
+
+    <!-- Lista de Funcionários -->
+</div>
+
+<a href="{{ url_for('gerenciamento') }}" class="btn voltar2">Voltar</a>
+
+{% endblock %}

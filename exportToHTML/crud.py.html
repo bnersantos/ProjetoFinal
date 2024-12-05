@@ -1,0 +1,1693 @@
+<html>
+<head>
+<title>crud.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+crud.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/crud.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">&quot;&quot;&quot;Functions used by compiler.py to determine the parameters rendered 
+within INSERT and UPDATE statements. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">functools</span>
+<span class="s3">import </span><span class="s1">operator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">MutableMapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NamedTuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">coercions</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">dml</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">elements</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">roles</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_DefaultDescriptionTuple</span>
+<span class="s3">from </span><span class="s1">.dml </span><span class="s3">import </span><span class="s1">isinsert </span><span class="s3">as </span><span class="s1">_compile_state_isinsert</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">ColumnClause</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">default_is_clause_element</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">default_is_sequence</span>
+<span class="s3">from </span><span class="s1">.selectable </span><span class="s3">import </span><span class="s1">Select</span>
+<span class="s3">from </span><span class="s1">.selectable </span><span class="s3">import </span><span class="s1">TableClause</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.compiler </span><span class="s3">import </span><span class="s1">_BindNameForColProtocol</span>
+    <span class="s3">from </span><span class="s1">.compiler </span><span class="s3">import </span><span class="s1">SQLCompiler</span>
+    <span class="s3">from </span><span class="s1">.dml </span><span class="s3">import </span><span class="s1">_DMLColumnElement</span>
+    <span class="s3">from </span><span class="s1">.dml </span><span class="s3">import </span><span class="s1">DMLState</span>
+    <span class="s3">from </span><span class="s1">.dml </span><span class="s3">import </span><span class="s1">ValuesBase</span>
+    <span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">ColumnElement</span>
+    <span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">KeyedColumnElement</span>
+    <span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">_SQLExprDefault</span>
+    <span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">Column</span>
+
+<span class="s1">REQUIRED = util.symbol(</span>
+    <span class="s4">&quot;REQUIRED&quot;</span><span class="s5">,</span>
+    <span class="s4">&quot;&quot;&quot; 
+Placeholder for the value within a :class:`.BindParameter` 
+which is required to be present when the statement is passed 
+to :meth:`_engine.Connection.execute`. 
+ 
+This symbol is typically used when a :func:`_expression.insert` 
+or :func:`_expression.update` statement is compiled without parameter 
+values present. 
+ 
+&quot;&quot;&quot;</span><span class="s5">,</span>
+<span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_as_dml_column(c: ColumnElement[Any]) -&gt; ColumnClause[Any]:</span>
+    <span class="s3">if not </span><span class="s1">isinstance(c</span><span class="s5">, </span><span class="s1">ColumnClause):</span>
+        <span class="s3">raise </span><span class="s1">exc.CompileError(</span>
+            <span class="s4">f&quot;Can't create DML statement against column expression </span><span class="s6">{</span><span class="s1">c</span><span class="s6">!r}</span><span class="s4">&quot;</span>
+        <span class="s1">)</span>
+    <span class="s3">return </span><span class="s1">c</span>
+
+
+<span class="s1">_CrudParamElement = Tuple[</span>
+    <span class="s4">&quot;ColumnElement[Any]&quot;</span><span class="s5">,</span>
+    <span class="s1">str</span><span class="s5">,  </span><span class="s0"># column name</span>
+    <span class="s1">Optional[</span>
+        <span class="s1">Union[str</span><span class="s5">, </span><span class="s4">&quot;_SQLExprDefault&quot;</span><span class="s1">]</span>
+    <span class="s1">]</span><span class="s5">,  </span><span class="s0"># bound parameter string or SQL expression to apply</span>
+    <span class="s1">Iterable[str]</span><span class="s5">,</span>
+<span class="s1">]</span>
+<span class="s1">_CrudParamElementStr = Tuple[</span>
+    <span class="s4">&quot;KeyedColumnElement[Any]&quot;</span><span class="s5">,</span>
+    <span class="s1">str</span><span class="s5">,  </span><span class="s0"># column name</span>
+    <span class="s1">str</span><span class="s5">,  </span><span class="s0"># bound parameter string</span>
+    <span class="s1">Iterable[str]</span><span class="s5">,</span>
+<span class="s1">]</span>
+<span class="s1">_CrudParamElementSQLExpr = Tuple[</span>
+    <span class="s4">&quot;ColumnClause[Any]&quot;</span><span class="s5">,</span>
+    <span class="s1">str</span><span class="s5">,</span>
+    <span class="s4">&quot;_SQLExprDefault&quot;</span><span class="s5">,  </span><span class="s0"># SQL expression to apply</span>
+    <span class="s1">Iterable[str]</span><span class="s5">,</span>
+<span class="s1">]</span>
+
+<span class="s1">_CrudParamSequence = List[_CrudParamElement]</span>
+
+
+<span class="s3">class </span><span class="s1">_CrudParams(NamedTuple):</span>
+    <span class="s1">single_params: _CrudParamSequence</span>
+    <span class="s1">all_multi_params: List[Sequence[_CrudParamElementStr]]</span>
+    <span class="s1">is_default_metavalue_only: bool = </span><span class="s3">False</span>
+    <span class="s1">use_insertmanyvalues: bool = </span><span class="s3">False</span>
+    <span class="s1">use_sentinel_columns: Optional[Sequence[Column[Any]]] = </span><span class="s3">None</span>
+
+
+<span class="s3">def </span><span class="s1">_get_crud_params(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">stmt: ValuesBase</span><span class="s5">,</span>
+    <span class="s1">compile_state: DMLState</span><span class="s5">,</span>
+    <span class="s1">toplevel: bool</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; _CrudParams:</span>
+    <span class="s2">&quot;&quot;&quot;create a set of tuples representing column/string pairs for use 
+    in an INSERT or UPDATE statement. 
+ 
+    Also generates the Compiled object's postfetch, prefetch, and 
+    returning column collections, used for default handling and ultimately 
+    populating the CursorResult's prefetch_cols() and postfetch_cols() 
+    collections. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># note: the _get_crud_params() system was written with the notion in mind</span>
+    <span class="s0"># that INSERT, UPDATE, DELETE are always the top level statement and</span>
+    <span class="s0"># that there is only one of them.  With the addition of CTEs that can</span>
+    <span class="s0"># make use of DML, this assumption is no longer accurate; the DML</span>
+    <span class="s0"># statement is not necessarily the top-level &quot;row returning&quot; thing</span>
+    <span class="s0"># and it is also theoretically possible (fortunately nobody has asked yet)</span>
+    <span class="s0"># to have a single statement with multiple DMLs inside of it via CTEs.</span>
+
+    <span class="s0"># the current _get_crud_params() design doesn't accommodate these cases</span>
+    <span class="s0"># right now.  It &quot;just works&quot; for a CTE that has a single DML inside of</span>
+    <span class="s0"># it, and for a CTE with multiple DML, it's not clear what would happen.</span>
+
+    <span class="s0"># overall, the &quot;compiler.XYZ&quot; collections here would need to be in a</span>
+    <span class="s0"># per-DML structure of some kind, and DefaultDialect would need to</span>
+    <span class="s0"># navigate these collections on a per-statement basis, with additional</span>
+    <span class="s0"># emphasis on the &quot;toplevel returning data&quot; statement.  However we</span>
+    <span class="s0"># still need to run through _get_crud_params() for all DML as we have</span>
+    <span class="s0"># Python / SQL generated column defaults that need to be rendered.</span>
+
+    <span class="s0"># if there is user need for this kind of thing, it's likely a post 2.0</span>
+    <span class="s0"># kind of change as it would require deep changes to DefaultDialect</span>
+    <span class="s0"># as well as here.</span>
+
+    <span class="s1">compiler.postfetch = []</span>
+    <span class="s1">compiler.insert_prefetch = []</span>
+    <span class="s1">compiler.update_prefetch = []</span>
+    <span class="s1">compiler.implicit_returning = []</span>
+
+    <span class="s1">visiting_cte = kw.get(</span><span class="s4">&quot;visiting_cte&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+    <span class="s3">if </span><span class="s1">visiting_cte </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s0"># for insert -&gt; CTE -&gt; insert, don't populate an incoming</span>
+        <span class="s0"># _crud_accumulate_bind_names collection; the INSERT we process here</span>
+        <span class="s0"># will not be inline within the VALUES of the enclosing INSERT as the</span>
+        <span class="s0"># CTE is placed on the outside.  See issue #9173</span>
+        <span class="s1">kw.pop(</span><span class="s4">&quot;accumulate_bind_names&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+    <span class="s3">assert </span><span class="s1">(</span>
+        <span class="s4">&quot;accumulate_bind_names&quot; </span><span class="s3">not in </span><span class="s1">kw</span>
+    <span class="s1">)</span><span class="s5">, </span><span class="s4">&quot;Don't know how to handle insert within insert without a CTE&quot;</span>
+
+    <span class="s0"># getters - these are normally just column.key,</span>
+    <span class="s0"># but in the case of mysql multi-table update, the rules for</span>
+    <span class="s0"># .key must conditionally take tablename into account</span>
+    <span class="s1">(</span>
+        <span class="s1">_column_as_key</span><span class="s5">,</span>
+        <span class="s1">_getattr_col_key</span><span class="s5">,</span>
+        <span class="s1">_col_bind_name</span><span class="s5">,</span>
+    <span class="s1">) = _key_getters_for_crud_column(compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">compile_state)</span>
+
+    <span class="s1">compiler._get_bind_name_for_col = _col_bind_name</span>
+
+    <span class="s3">if </span><span class="s1">stmt._returning </span><span class="s3">and </span><span class="s1">stmt._return_defaults:</span>
+        <span class="s3">raise </span><span class="s1">exc.CompileError(</span>
+            <span class="s4">&quot;Can't compile statement that includes returning() and &quot;</span>
+            <span class="s4">&quot;return_defaults() simultaneously&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">compile_state.isdelete:</span>
+        <span class="s1">_setup_delete_return_defaults(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">stmt</span><span class="s5">,</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">()</span><span class="s5">,</span>
+            <span class="s1">_getattr_col_key</span><span class="s5">,</span>
+            <span class="s1">_column_as_key</span><span class="s5">,</span>
+            <span class="s1">_col_bind_name</span><span class="s5">,</span>
+            <span class="s1">()</span><span class="s5">,</span>
+            <span class="s1">()</span><span class="s5">,</span>
+            <span class="s1">toplevel</span><span class="s5">,</span>
+            <span class="s1">kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">_CrudParams([]</span><span class="s5">, </span><span class="s1">[])</span>
+
+    <span class="s0"># no parameters in the statement, no parameters in the</span>
+    <span class="s0"># compiled params - return binds for all columns</span>
+    <span class="s3">if </span><span class="s1">compiler.column_keys </span><span class="s3">is None and </span><span class="s1">compile_state._no_parameters:</span>
+        <span class="s3">return </span><span class="s1">_CrudParams(</span>
+            <span class="s1">[</span>
+                <span class="s1">(</span>
+                    <span class="s1">c</span><span class="s5">,</span>
+                    <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                    <span class="s1">_create_bind_param(compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">required=</span><span class="s3">True</span><span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">(c.key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">stmt.table.columns</span>
+                <span class="s3">if not </span><span class="s1">c._omit_from_statements</span>
+            <span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">[]</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">stmt_parameter_tuples: Optional[</span>
+        <span class="s1">List[Tuple[Union[str</span><span class="s5">, </span><span class="s1">ColumnClause[Any]]</span><span class="s5">, </span><span class="s1">Any]]</span>
+    <span class="s1">]</span>
+    <span class="s1">spd: Optional[MutableMapping[_DMLColumnElement</span><span class="s5">, </span><span class="s1">Any]]</span>
+
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s1">_compile_state_isinsert(compile_state)</span>
+        <span class="s3">and </span><span class="s1">compile_state._has_multi_parameters</span>
+    <span class="s1">):</span>
+        <span class="s1">mp = compile_state._multi_parameters</span>
+        <span class="s3">assert </span><span class="s1">mp </span><span class="s3">is not None</span>
+        <span class="s1">spd = mp[</span><span class="s7">0</span><span class="s1">]</span>
+        <span class="s1">stmt_parameter_tuples = list(spd.items())</span>
+        <span class="s1">spd_str_key = {_column_as_key(key) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">spd}</span>
+    <span class="s3">elif </span><span class="s1">compile_state._ordered_values:</span>
+        <span class="s1">spd = compile_state._dict_parameters</span>
+        <span class="s1">stmt_parameter_tuples = compile_state._ordered_values</span>
+        <span class="s3">assert </span><span class="s1">spd </span><span class="s3">is not None</span>
+        <span class="s1">spd_str_key = {_column_as_key(key) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">spd}</span>
+    <span class="s3">elif </span><span class="s1">compile_state._dict_parameters:</span>
+        <span class="s1">spd = compile_state._dict_parameters</span>
+        <span class="s1">stmt_parameter_tuples = list(spd.items())</span>
+        <span class="s1">spd_str_key = {_column_as_key(key) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">spd}</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">stmt_parameter_tuples = spd = spd_str_key = </span><span class="s3">None</span>
+
+    <span class="s0"># if we have statement parameters - set defaults in the</span>
+    <span class="s0"># compiled params</span>
+    <span class="s3">if </span><span class="s1">compiler.column_keys </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">parameters = {}</span>
+    <span class="s3">elif </span><span class="s1">stmt_parameter_tuples:</span>
+        <span class="s3">assert </span><span class="s1">spd_str_key </span><span class="s3">is not None</span>
+        <span class="s1">parameters = {</span>
+            <span class="s1">_column_as_key(key): REQUIRED</span>
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compiler.column_keys</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">spd_str_key</span>
+        <span class="s1">}</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">parameters = {</span>
+            <span class="s1">_column_as_key(key): REQUIRED </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compiler.column_keys</span>
+        <span class="s1">}</span>
+
+    <span class="s0"># create a list of column assignment clauses as tuples</span>
+    <span class="s1">values: List[_CrudParamElement] = []</span>
+
+    <span class="s3">if </span><span class="s1">stmt_parameter_tuples </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">_get_stmt_parameter_tuples_params(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">parameters</span><span class="s5">,</span>
+            <span class="s1">stmt_parameter_tuples</span><span class="s5">,</span>
+            <span class="s1">_column_as_key</span><span class="s5">,</span>
+            <span class="s1">values</span><span class="s5">,</span>
+            <span class="s1">kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">check_columns: Dict[str</span><span class="s5">, </span><span class="s1">ColumnClause[Any]] = {}</span>
+
+    <span class="s0"># special logic that only occurs for multi-table UPDATE</span>
+    <span class="s0"># statements</span>
+    <span class="s3">if </span><span class="s1">dml.isupdate(compile_state) </span><span class="s3">and </span><span class="s1">compile_state.is_multitable:</span>
+        <span class="s1">_get_update_multitable_params(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">stmt</span><span class="s5">,</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">stmt_parameter_tuples</span><span class="s5">,</span>
+            <span class="s1">check_columns</span><span class="s5">,</span>
+            <span class="s1">_col_bind_name</span><span class="s5">,</span>
+            <span class="s1">_getattr_col_key</span><span class="s5">,</span>
+            <span class="s1">values</span><span class="s5">,</span>
+            <span class="s1">kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">_compile_state_isinsert(compile_state) </span><span class="s3">and </span><span class="s1">stmt._select_names:</span>
+        <span class="s0"># is an insert from select, is not a multiparams</span>
+
+        <span class="s3">assert not </span><span class="s1">compile_state._has_multi_parameters</span>
+
+        <span class="s1">_scan_insert_from_select_cols(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">stmt</span><span class="s5">,</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">parameters</span><span class="s5">,</span>
+            <span class="s1">_getattr_col_key</span><span class="s5">,</span>
+            <span class="s1">_column_as_key</span><span class="s5">,</span>
+            <span class="s1">_col_bind_name</span><span class="s5">,</span>
+            <span class="s1">check_columns</span><span class="s5">,</span>
+            <span class="s1">values</span><span class="s5">,</span>
+            <span class="s1">toplevel</span><span class="s5">,</span>
+            <span class="s1">kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">use_insertmanyvalues = </span><span class="s3">False</span>
+        <span class="s1">use_sentinel_columns = </span><span class="s3">None</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">use_insertmanyvalues</span><span class="s5">, </span><span class="s1">use_sentinel_columns = _scan_cols(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">stmt</span><span class="s5">,</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">parameters</span><span class="s5">,</span>
+            <span class="s1">_getattr_col_key</span><span class="s5">,</span>
+            <span class="s1">_column_as_key</span><span class="s5">,</span>
+            <span class="s1">_col_bind_name</span><span class="s5">,</span>
+            <span class="s1">check_columns</span><span class="s5">,</span>
+            <span class="s1">values</span><span class="s5">,</span>
+            <span class="s1">toplevel</span><span class="s5">,</span>
+            <span class="s1">kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">parameters </span><span class="s3">and </span><span class="s1">stmt_parameter_tuples:</span>
+        <span class="s1">check = (</span>
+            <span class="s1">set(parameters)</span>
+            <span class="s1">.intersection(_column_as_key(k) </span><span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">stmt_parameter_tuples)</span>
+            <span class="s1">.difference(check_columns)</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">check:</span>
+            <span class="s3">raise </span><span class="s1">exc.CompileError(</span>
+                <span class="s4">&quot;Unconsumed column names: %s&quot;</span>
+                <span class="s1">% (</span><span class="s4">&quot;, &quot;</span><span class="s1">.join(</span><span class="s4">&quot;%s&quot; </span><span class="s1">% (c</span><span class="s5">,</span><span class="s1">) </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">check))</span>
+            <span class="s1">)</span>
+
+    <span class="s1">is_default_metavalue_only = </span><span class="s3">False</span>
+
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s1">_compile_state_isinsert(compile_state)</span>
+        <span class="s3">and </span><span class="s1">compile_state._has_multi_parameters</span>
+    <span class="s1">):</span>
+        <span class="s0"># is a multiparams, is not an insert from a select</span>
+        <span class="s3">assert not </span><span class="s1">stmt._select_names</span>
+        <span class="s1">multi_extended_values = _extend_values_for_multiparams(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">stmt</span><span class="s5">,</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">cast(</span>
+                <span class="s4">&quot;Sequence[_CrudParamElementStr]&quot;</span><span class="s5">,</span>
+                <span class="s1">values</span><span class="s5">,</span>
+            <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">cast(</span><span class="s4">&quot;Callable[..., str]&quot;</span><span class="s5">, </span><span class="s1">_column_as_key)</span><span class="s5">,</span>
+            <span class="s1">kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">_CrudParams(values</span><span class="s5">, </span><span class="s1">multi_extended_values)</span>
+    <span class="s3">elif </span><span class="s1">(</span>
+        <span class="s3">not </span><span class="s1">values</span>
+        <span class="s3">and </span><span class="s1">compiler.for_executemany</span>
+        <span class="s3">and </span><span class="s1">compiler.dialect.supports_default_metavalue</span>
+    <span class="s1">):</span>
+        <span class="s0"># convert an &quot;INSERT DEFAULT VALUES&quot;</span>
+        <span class="s0"># into INSERT (firstcol) VALUES (DEFAULT) which can be turned</span>
+        <span class="s0"># into an in-place multi values.  This supports</span>
+        <span class="s0"># insert_executemany_returning mode :)</span>
+        <span class="s1">values = [</span>
+            <span class="s1">(</span>
+                <span class="s1">_as_dml_column(stmt.table.columns[</span><span class="s7">0</span><span class="s1">])</span><span class="s5">,</span>
+                <span class="s1">compiler.preparer.format_column(stmt.table.columns[</span><span class="s7">0</span><span class="s1">])</span><span class="s5">,</span>
+                <span class="s1">compiler.dialect.default_metavalue_token</span><span class="s5">,</span>
+                <span class="s1">()</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">]</span>
+        <span class="s1">is_default_metavalue_only = </span><span class="s3">True</span>
+
+    <span class="s3">return </span><span class="s1">_CrudParams(</span>
+        <span class="s1">values</span><span class="s5">,</span>
+        <span class="s1">[]</span><span class="s5">,</span>
+        <span class="s1">is_default_metavalue_only=is_default_metavalue_only</span><span class="s5">,</span>
+        <span class="s1">use_insertmanyvalues=use_insertmanyvalues</span><span class="s5">,</span>
+        <span class="s1">use_sentinel_columns=use_sentinel_columns</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_create_bind_param(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">col: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">value: Any</span><span class="s5">,</span>
+    <span class="s1">process: Literal[</span><span class="s3">True</span><span class="s1">] = ...</span><span class="s5">,</span>
+    <span class="s1">required: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">name: Optional[str] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; str: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_create_bind_param(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">col: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">value: Any</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; str: ...</span>
+
+
+<span class="s3">def </span><span class="s1">_create_bind_param(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">col: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">value: Any</span><span class="s5">,</span>
+    <span class="s1">process: bool = </span><span class="s3">True</span><span class="s5">,</span>
+    <span class="s1">required: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">name: Optional[str] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; Union[str</span><span class="s5">, </span><span class="s1">elements.BindParameter[Any]]:</span>
+    <span class="s3">if </span><span class="s1">name </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">name = col.key</span>
+    <span class="s1">bindparam = elements.BindParameter(</span>
+        <span class="s1">name</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">type_=col.type</span><span class="s5">, </span><span class="s1">required=required</span>
+    <span class="s1">)</span>
+    <span class="s1">bindparam._is_crud = </span><span class="s3">True</span>
+    <span class="s3">if </span><span class="s1">process:</span>
+        <span class="s3">return </span><span class="s1">bindparam._compiler_dispatch(compiler</span><span class="s5">, </span><span class="s1">**kw)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">bindparam</span>
+
+
+<span class="s3">def </span><span class="s1">_handle_values_anonymous_param(compiler</span><span class="s5">, </span><span class="s1">col</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">**kw):</span>
+    <span class="s0"># the insert() and update() constructs as of 1.4 will now produce anonymous</span>
+    <span class="s0"># bindparam() objects in the values() collections up front when given plain</span>
+    <span class="s0"># literal values.  This is so that cache key behaviors, which need to</span>
+    <span class="s0"># produce bound parameters in deterministic order without invoking any</span>
+    <span class="s0"># compilation here, can be applied to these constructs when they include</span>
+    <span class="s0"># values() (but not yet multi-values, which are not included in caching</span>
+    <span class="s0"># right now).</span>
+    <span class="s0">#</span>
+    <span class="s0"># in order to produce the desired &quot;crud&quot; style name for these parameters,</span>
+    <span class="s0"># which will also be targetable in engine/default.py through the usual</span>
+    <span class="s0"># conventions, apply our desired name to these unique parameters by</span>
+    <span class="s0"># populating the compiler truncated names cache with the desired name,</span>
+    <span class="s0"># rather than having</span>
+    <span class="s0"># compiler.visit_bindparam()-&gt;compiler._truncated_identifier make up a</span>
+    <span class="s0"># name.  Saves on call counts also.</span>
+
+    <span class="s0"># for INSERT/UPDATE that's a CTE, we don't need names to match to</span>
+    <span class="s0"># external parameters and these would also conflict in the case where</span>
+    <span class="s0"># multiple insert/update are combined together using CTEs</span>
+    <span class="s1">is_cte = </span><span class="s4">&quot;visiting_cte&quot; </span><span class="s3">in </span><span class="s1">kw</span>
+
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s3">not </span><span class="s1">is_cte</span>
+        <span class="s3">and </span><span class="s1">value.unique</span>
+        <span class="s3">and </span><span class="s1">isinstance(value.key</span><span class="s5">, </span><span class="s1">elements._truncated_label)</span>
+    <span class="s1">):</span>
+        <span class="s1">compiler.truncated_names[(</span><span class="s4">&quot;bindparam&quot;</span><span class="s5">, </span><span class="s1">value.key)] = name</span>
+
+    <span class="s3">if </span><span class="s1">value.type._isnull:</span>
+        <span class="s0"># either unique parameter, or other bound parameters that were</span>
+        <span class="s0"># passed in directly</span>
+        <span class="s0"># set type to that of the column unconditionally</span>
+        <span class="s1">value = value._with_binary_element_type(col.type)</span>
+
+    <span class="s3">return </span><span class="s1">value._compiler_dispatch(compiler</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+
+<span class="s3">def </span><span class="s1">_key_getters_for_crud_column(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">, </span><span class="s1">stmt: ValuesBase</span><span class="s5">, </span><span class="s1">compile_state: DMLState</span>
+<span class="s1">) -&gt; Tuple[</span>
+    <span class="s1">Callable[[Union[str</span><span class="s5">, </span><span class="s1">ColumnClause[Any]]]</span><span class="s5">, </span><span class="s1">Union[str</span><span class="s5">, </span><span class="s1">Tuple[str</span><span class="s5">, </span><span class="s1">str]]]</span><span class="s5">,</span>
+    <span class="s1">Callable[[ColumnClause[Any]]</span><span class="s5">, </span><span class="s1">Union[str</span><span class="s5">, </span><span class="s1">Tuple[str</span><span class="s5">, </span><span class="s1">str]]]</span><span class="s5">,</span>
+    <span class="s1">_BindNameForColProtocol</span><span class="s5">,</span>
+<span class="s1">]:</span>
+    <span class="s3">if </span><span class="s1">dml.isupdate(compile_state) </span><span class="s3">and </span><span class="s1">compile_state._extra_froms:</span>
+        <span class="s0"># when extra tables are present, refer to the columns</span>
+        <span class="s0"># in those extra tables as table-qualified, including in</span>
+        <span class="s0"># dictionaries and when rendering bind param names.</span>
+        <span class="s0"># the &quot;main&quot; table of the statement remains unqualified,</span>
+        <span class="s0"># allowing the most compatibility with a non-multi-table</span>
+        <span class="s0"># statement.</span>
+        <span class="s1">_et = set(compile_state._extra_froms)</span>
+
+        <span class="s1">c_key_role = functools.partial(</span>
+            <span class="s1">coercions.expect_as_key</span><span class="s5">, </span><span class="s1">roles.DMLColumnRole</span>
+        <span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">_column_as_key(</span>
+            <span class="s1">key: Union[ColumnClause[Any]</span><span class="s5">, </span><span class="s1">str]</span>
+        <span class="s1">) -&gt; Union[str</span><span class="s5">, </span><span class="s1">Tuple[str</span><span class="s5">, </span><span class="s1">str]]:</span>
+            <span class="s1">str_key = c_key_role(key)</span>
+            <span class="s3">if </span><span class="s1">hasattr(key</span><span class="s5">, </span><span class="s4">&quot;table&quot;</span><span class="s1">) </span><span class="s3">and </span><span class="s1">key.table </span><span class="s3">in </span><span class="s1">_et:</span>
+                <span class="s3">return </span><span class="s1">(key.table.name</span><span class="s5">, </span><span class="s1">str_key)  </span><span class="s0"># type: ignore</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">str_key</span>
+
+        <span class="s3">def </span><span class="s1">_getattr_col_key(</span>
+            <span class="s1">col: ColumnClause[Any]</span><span class="s5">,</span>
+        <span class="s1">) -&gt; Union[str</span><span class="s5">, </span><span class="s1">Tuple[str</span><span class="s5">, </span><span class="s1">str]]:</span>
+            <span class="s3">if </span><span class="s1">col.table </span><span class="s3">in </span><span class="s1">_et:</span>
+                <span class="s3">return </span><span class="s1">(col.table.name</span><span class="s5">, </span><span class="s1">col.key)  </span><span class="s0"># type: ignore</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">col.key</span>
+
+        <span class="s3">def </span><span class="s1">_col_bind_name(col: ColumnClause[Any]) -&gt; str:</span>
+            <span class="s3">if </span><span class="s1">col.table </span><span class="s3">in </span><span class="s1">_et:</span>
+                <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+                    <span class="s3">assert </span><span class="s1">isinstance(col.table</span><span class="s5">, </span><span class="s1">TableClause)</span>
+                <span class="s3">return </span><span class="s4">&quot;%s_%s&quot; </span><span class="s1">% (col.table.name</span><span class="s5">, </span><span class="s1">col.key)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">col.key</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">_column_as_key = functools.partial(</span>
+            <span class="s1">coercions.expect_as_key</span><span class="s5">, </span><span class="s1">roles.DMLColumnRole</span>
+        <span class="s1">)</span>
+        <span class="s1">_getattr_col_key = _col_bind_name = operator.attrgetter(</span><span class="s4">&quot;key&quot;</span><span class="s1">)  </span><span class="s0"># type: ignore  # noqa: E501</span>
+
+    <span class="s3">return </span><span class="s1">_column_as_key</span><span class="s5">, </span><span class="s1">_getattr_col_key</span><span class="s5">, </span><span class="s1">_col_bind_name</span>
+
+
+<span class="s3">def </span><span class="s1">_scan_insert_from_select_cols(</span>
+    <span class="s1">compiler</span><span class="s5">,</span>
+    <span class="s1">stmt</span><span class="s5">,</span>
+    <span class="s1">compile_state</span><span class="s5">,</span>
+    <span class="s1">parameters</span><span class="s5">,</span>
+    <span class="s1">_getattr_col_key</span><span class="s5">,</span>
+    <span class="s1">_column_as_key</span><span class="s5">,</span>
+    <span class="s1">_col_bind_name</span><span class="s5">,</span>
+    <span class="s1">check_columns</span><span class="s5">,</span>
+    <span class="s1">values</span><span class="s5">,</span>
+    <span class="s1">toplevel</span><span class="s5">,</span>
+    <span class="s1">kw</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s1">cols = [stmt.table.c[_column_as_key(name)] </span><span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">stmt._select_names]</span>
+
+    <span class="s3">assert </span><span class="s1">compiler.stack[-</span><span class="s7">1</span><span class="s1">][</span><span class="s4">&quot;selectable&quot;</span><span class="s1">] </span><span class="s3">is </span><span class="s1">stmt</span>
+
+    <span class="s1">compiler.stack[-</span><span class="s7">1</span><span class="s1">][</span><span class="s4">&quot;insert_from_select&quot;</span><span class="s1">] = stmt.select</span>
+
+    <span class="s1">add_select_cols: List[_CrudParamElementSQLExpr] = []</span>
+    <span class="s3">if </span><span class="s1">stmt.include_insert_from_select_defaults:</span>
+        <span class="s1">col_set = set(cols)</span>
+        <span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">stmt.table.columns:</span>
+            <span class="s0"># omit columns that were not in the SELECT statement.</span>
+            <span class="s0"># this will omit columns marked as omit_from_statements naturally,</span>
+            <span class="s0"># as long as that col was not explicit in the SELECT.</span>
+            <span class="s0"># if an omit_from_statements col has a &quot;default&quot; on it, then</span>
+            <span class="s0"># we need to include it, as these defaults should still fire off.</span>
+            <span class="s0"># but, if it has that default and it's the &quot;sentinel&quot; default,</span>
+            <span class="s0"># we don't do sentinel default operations for insert_from_select</span>
+            <span class="s0"># here so we again omit it.</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">col </span><span class="s3">not in </span><span class="s1">col_set</span>
+                <span class="s3">and </span><span class="s1">col.default</span>
+                <span class="s3">and not </span><span class="s1">col.default.is_sentinel</span>
+            <span class="s1">):</span>
+                <span class="s1">cols.append(col)</span>
+
+    <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">cols:</span>
+        <span class="s1">col_key = _getattr_col_key(c)</span>
+        <span class="s3">if </span><span class="s1">col_key </span><span class="s3">in </span><span class="s1">parameters </span><span class="s3">and </span><span class="s1">col_key </span><span class="s3">not in </span><span class="s1">check_columns:</span>
+            <span class="s1">parameters.pop(col_key)</span>
+            <span class="s1">values.append((c</span><span class="s5">, </span><span class="s1">compiler.preparer.format_column(c)</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">()))</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">_append_param_insert_select_hasdefault(</span>
+                <span class="s1">compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">add_select_cols</span><span class="s5">, </span><span class="s1">kw</span>
+            <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">add_select_cols:</span>
+        <span class="s1">values.extend(add_select_cols)</span>
+        <span class="s1">ins_from_select = compiler.stack[-</span><span class="s7">1</span><span class="s1">][</span><span class="s4">&quot;insert_from_select&quot;</span><span class="s1">]</span>
+        <span class="s3">if not </span><span class="s1">isinstance(ins_from_select</span><span class="s5">, </span><span class="s1">Select):</span>
+            <span class="s3">raise </span><span class="s1">exc.CompileError(</span>
+                <span class="s4">f&quot;Can't extend statement for INSERT..FROM SELECT to include &quot;</span>
+                <span class="s4">f&quot;additional default-holding column(s) &quot;</span>
+                <span class="s4">f&quot;&quot;&quot;</span><span class="s6">{</span>
+                    <span class="s4">', '</span><span class="s1">.join(repr(key) </span><span class="s3">for </span><span class="s1">_</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">_</span><span class="s5">, </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">add_select_cols)</span>
+                <span class="s6">}</span><span class="s4">.  Convert the selectable to a subquery() first, or pass &quot;&quot;&quot;</span>
+                <span class="s4">&quot;include_defaults=False to Insert.from_select() to skip these &quot;</span>
+                <span class="s4">&quot;columns.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">ins_from_select = ins_from_select._generate()</span>
+        <span class="s0"># copy raw_columns</span>
+        <span class="s1">ins_from_select._raw_columns = list(ins_from_select._raw_columns) + [</span>
+            <span class="s1">expr </span><span class="s3">for </span><span class="s1">_</span><span class="s5">, </span><span class="s1">_</span><span class="s5">, </span><span class="s1">expr</span><span class="s5">, </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">add_select_cols</span>
+        <span class="s1">]</span>
+        <span class="s1">compiler.stack[-</span><span class="s7">1</span><span class="s1">][</span><span class="s4">&quot;insert_from_select&quot;</span><span class="s1">] = ins_from_select</span>
+
+
+<span class="s3">def </span><span class="s1">_scan_cols(</span>
+    <span class="s1">compiler</span><span class="s5">,</span>
+    <span class="s1">stmt</span><span class="s5">,</span>
+    <span class="s1">compile_state</span><span class="s5">,</span>
+    <span class="s1">parameters</span><span class="s5">,</span>
+    <span class="s1">_getattr_col_key</span><span class="s5">,</span>
+    <span class="s1">_column_as_key</span><span class="s5">,</span>
+    <span class="s1">_col_bind_name</span><span class="s5">,</span>
+    <span class="s1">check_columns</span><span class="s5">,</span>
+    <span class="s1">values</span><span class="s5">,</span>
+    <span class="s1">toplevel</span><span class="s5">,</span>
+    <span class="s1">kw</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s1">(</span>
+        <span class="s1">need_pks</span><span class="s5">,</span>
+        <span class="s1">implicit_returning</span><span class="s5">,</span>
+        <span class="s1">implicit_return_defaults</span><span class="s5">,</span>
+        <span class="s1">postfetch_lastrowid</span><span class="s5">,</span>
+        <span class="s1">use_insertmanyvalues</span><span class="s5">,</span>
+        <span class="s1">use_sentinel_columns</span><span class="s5">,</span>
+    <span class="s1">) = _get_returning_modifiers(compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">compile_state</span><span class="s5">, </span><span class="s1">toplevel)</span>
+
+    <span class="s3">assert </span><span class="s1">compile_state.isupdate </span><span class="s3">or </span><span class="s1">compile_state.isinsert</span>
+
+    <span class="s3">if </span><span class="s1">compile_state._parameter_ordering:</span>
+        <span class="s1">parameter_ordering = [</span>
+            <span class="s1">_column_as_key(key) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compile_state._parameter_ordering</span>
+        <span class="s1">]</span>
+        <span class="s1">ordered_keys = set(parameter_ordering)</span>
+        <span class="s1">cols = [</span>
+            <span class="s1">stmt.table.c[key]</span>
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">parameter_ordering</span>
+            <span class="s3">if </span><span class="s1">isinstance(key</span><span class="s5">, </span><span class="s1">str) </span><span class="s3">and </span><span class="s1">key </span><span class="s3">in </span><span class="s1">stmt.table.c</span>
+        <span class="s1">] + [c </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">stmt.table.c </span><span class="s3">if </span><span class="s1">c.key </span><span class="s3">not in </span><span class="s1">ordered_keys]</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">cols = stmt.table.columns</span>
+
+    <span class="s1">isinsert = _compile_state_isinsert(compile_state)</span>
+    <span class="s3">if </span><span class="s1">isinsert </span><span class="s3">and not </span><span class="s1">compile_state._has_multi_parameters:</span>
+        <span class="s0"># new rules for #7998.  fetch lastrowid or implicit returning</span>
+        <span class="s0"># for autoincrement column even if parameter is NULL, for DBs that</span>
+        <span class="s0"># override NULL param for primary key (sqlite, mysql/mariadb)</span>
+        <span class="s1">autoincrement_col = stmt.table._autoincrement_column</span>
+        <span class="s1">insert_null_pk_still_autoincrements = (</span>
+            <span class="s1">compiler.dialect.insert_null_pk_still_autoincrements</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">autoincrement_col = insert_null_pk_still_autoincrements = </span><span class="s3">None</span>
+
+    <span class="s3">if </span><span class="s1">stmt._supplemental_returning:</span>
+        <span class="s1">supplemental_returning = set(stmt._supplemental_returning)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">supplemental_returning = set()</span>
+
+    <span class="s1">compiler_implicit_returning = compiler.implicit_returning</span>
+
+    <span class="s0"># TODO - see TODO(return_defaults_columns) below</span>
+    <span class="s0"># cols_in_params = set()</span>
+
+    <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">cols:</span>
+        <span class="s0"># scan through every column in the target table</span>
+
+        <span class="s1">col_key = _getattr_col_key(c)</span>
+
+        <span class="s3">if </span><span class="s1">col_key </span><span class="s3">in </span><span class="s1">parameters </span><span class="s3">and </span><span class="s1">col_key </span><span class="s3">not in </span><span class="s1">check_columns:</span>
+            <span class="s0"># parameter is present for the column.  use that.</span>
+
+            <span class="s1">_append_param_parameter(</span>
+                <span class="s1">compiler</span><span class="s5">,</span>
+                <span class="s1">stmt</span><span class="s5">,</span>
+                <span class="s1">compile_state</span><span class="s5">,</span>
+                <span class="s1">c</span><span class="s5">,</span>
+                <span class="s1">col_key</span><span class="s5">,</span>
+                <span class="s1">parameters</span><span class="s5">,</span>
+                <span class="s1">_col_bind_name</span><span class="s5">,</span>
+                <span class="s1">implicit_returning</span><span class="s5">,</span>
+                <span class="s1">implicit_return_defaults</span><span class="s5">,</span>
+                <span class="s1">postfetch_lastrowid</span><span class="s5">,</span>
+                <span class="s1">values</span><span class="s5">,</span>
+                <span class="s1">autoincrement_col</span><span class="s5">,</span>
+                <span class="s1">insert_null_pk_still_autoincrements</span><span class="s5">,</span>
+                <span class="s1">kw</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s0"># TODO - see TODO(return_defaults_columns) below</span>
+            <span class="s0"># cols_in_params.add(c)</span>
+
+        <span class="s3">elif </span><span class="s1">isinsert:</span>
+            <span class="s0"># no parameter is present and it's an insert.</span>
+
+            <span class="s3">if </span><span class="s1">c.primary_key </span><span class="s3">and </span><span class="s1">need_pks:</span>
+                <span class="s0"># it's a primary key column, it will need to be generated by a</span>
+                <span class="s0"># default generator of some kind, and the statement expects</span>
+                <span class="s0"># inserted_primary_key to be available.</span>
+
+                <span class="s3">if </span><span class="s1">implicit_returning:</span>
+                    <span class="s0"># we can use RETURNING, find out how to invoke this</span>
+                    <span class="s0"># column and get the value where RETURNING is an option.</span>
+                    <span class="s0"># we can inline server-side functions in this case.</span>
+
+                    <span class="s1">_append_param_insert_pk_returning(</span>
+                        <span class="s1">compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">values</span><span class="s5">, </span><span class="s1">kw</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s0"># otherwise, find out how to invoke this column</span>
+                    <span class="s0"># and get its value where RETURNING is not an option.</span>
+                    <span class="s0"># if we have to invoke a server-side function, we need</span>
+                    <span class="s0"># to pre-execute it.   or if this is a straight</span>
+                    <span class="s0"># autoincrement column and the dialect supports it</span>
+                    <span class="s0"># we can use cursor.lastrowid.</span>
+
+                    <span class="s1">_append_param_insert_pk_no_returning(</span>
+                        <span class="s1">compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">values</span><span class="s5">, </span><span class="s1">kw</span>
+                    <span class="s1">)</span>
+
+            <span class="s3">elif </span><span class="s1">c.default </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s0"># column has a default, but it's not a pk column, or it is but</span>
+                <span class="s0"># we don't need to get the pk back.</span>
+                <span class="s3">if not </span><span class="s1">c.default.is_sentinel </span><span class="s3">or </span><span class="s1">(</span>
+                    <span class="s1">use_sentinel_columns </span><span class="s3">is not None</span>
+                <span class="s1">):</span>
+                    <span class="s1">_append_param_insert_hasdefault(</span>
+                        <span class="s1">compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">implicit_return_defaults</span><span class="s5">, </span><span class="s1">values</span><span class="s5">, </span><span class="s1">kw</span>
+                    <span class="s1">)</span>
+
+            <span class="s3">elif </span><span class="s1">c.server_default </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s0"># column has a DDL-level default, and is either not a pk</span>
+                <span class="s0"># column or we don't need the pk.</span>
+                <span class="s3">if </span><span class="s1">implicit_return_defaults </span><span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">implicit_return_defaults:</span>
+                    <span class="s1">compiler_implicit_returning.append(c)</span>
+                <span class="s3">elif not </span><span class="s1">c.primary_key:</span>
+                    <span class="s1">compiler.postfetch.append(c)</span>
+
+            <span class="s3">elif </span><span class="s1">implicit_return_defaults </span><span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">implicit_return_defaults:</span>
+                <span class="s1">compiler_implicit_returning.append(c)</span>
+
+            <span class="s3">elif </span><span class="s1">(</span>
+                <span class="s1">c.primary_key</span>
+                <span class="s3">and </span><span class="s1">c </span><span class="s3">is not </span><span class="s1">stmt.table._autoincrement_column</span>
+                <span class="s3">and not </span><span class="s1">c.nullable</span>
+            <span class="s1">):</span>
+                <span class="s1">_warn_pk_with_no_anticipated_value(c)</span>
+
+        <span class="s3">elif </span><span class="s1">compile_state.isupdate:</span>
+            <span class="s0"># no parameter is present and it's an insert.</span>
+
+            <span class="s1">_append_param_update(</span>
+                <span class="s1">compiler</span><span class="s5">,</span>
+                <span class="s1">compile_state</span><span class="s5">,</span>
+                <span class="s1">stmt</span><span class="s5">,</span>
+                <span class="s1">c</span><span class="s5">,</span>
+                <span class="s1">implicit_return_defaults</span><span class="s5">,</span>
+                <span class="s1">values</span><span class="s5">,</span>
+                <span class="s1">kw</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+        <span class="s0"># adding supplemental cols to implicit_returning in table</span>
+        <span class="s0"># order so that order is maintained between multiple INSERT</span>
+        <span class="s0"># statements which may have different parameters included, but all</span>
+        <span class="s0"># have the same RETURNING clause</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">c </span><span class="s3">in </span><span class="s1">supplemental_returning</span>
+            <span class="s3">and </span><span class="s1">c </span><span class="s3">not in </span><span class="s1">compiler_implicit_returning</span>
+        <span class="s1">):</span>
+            <span class="s1">compiler_implicit_returning.append(c)</span>
+
+    <span class="s3">if </span><span class="s1">supplemental_returning:</span>
+        <span class="s0"># we should have gotten every col into implicit_returning,</span>
+        <span class="s0"># however supplemental returning can also have SQL functions etc.</span>
+        <span class="s0"># in it</span>
+        <span class="s1">remaining_supplemental = supplemental_returning.difference(</span>
+            <span class="s1">compiler_implicit_returning</span>
+        <span class="s1">)</span>
+        <span class="s1">compiler_implicit_returning.extend(</span>
+            <span class="s1">c</span>
+            <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">stmt._supplemental_returning</span>
+            <span class="s3">if </span><span class="s1">c </span><span class="s3">in </span><span class="s1">remaining_supplemental</span>
+        <span class="s1">)</span>
+
+    <span class="s0"># TODO(return_defaults_columns): there can still be more columns in</span>
+    <span class="s0"># _return_defaults_columns in the case that they are from something like an</span>
+    <span class="s0"># aliased of the table. we can add them here, however this breaks other ORM</span>
+    <span class="s0"># things. so this is for another day. see</span>
+    <span class="s0"># test/orm/dml/test_update_delete_where.py -&gt; test_update_from_alias</span>
+
+    <span class="s0"># if stmt._return_defaults_columns:</span>
+    <span class="s0">#     compiler_implicit_returning.extend(</span>
+    <span class="s0">#         set(stmt._return_defaults_columns)</span>
+    <span class="s0">#         .difference(compiler_implicit_returning)</span>
+    <span class="s0">#         .difference(cols_in_params)</span>
+    <span class="s0">#     )</span>
+
+    <span class="s3">return </span><span class="s1">(use_insertmanyvalues</span><span class="s5">, </span><span class="s1">use_sentinel_columns)</span>
+
+
+<span class="s3">def </span><span class="s1">_setup_delete_return_defaults(</span>
+    <span class="s1">compiler</span><span class="s5">,</span>
+    <span class="s1">stmt</span><span class="s5">,</span>
+    <span class="s1">compile_state</span><span class="s5">,</span>
+    <span class="s1">parameters</span><span class="s5">,</span>
+    <span class="s1">_getattr_col_key</span><span class="s5">,</span>
+    <span class="s1">_column_as_key</span><span class="s5">,</span>
+    <span class="s1">_col_bind_name</span><span class="s5">,</span>
+    <span class="s1">check_columns</span><span class="s5">,</span>
+    <span class="s1">values</span><span class="s5">,</span>
+    <span class="s1">toplevel</span><span class="s5">,</span>
+    <span class="s1">kw</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s1">(_</span><span class="s5">, </span><span class="s1">_</span><span class="s5">, </span><span class="s1">implicit_return_defaults</span><span class="s5">, </span><span class="s1">*_) = _get_returning_modifiers(</span>
+        <span class="s1">compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">compile_state</span><span class="s5">, </span><span class="s1">toplevel</span>
+    <span class="s1">)</span>
+
+    <span class="s3">if not </span><span class="s1">implicit_return_defaults:</span>
+        <span class="s3">return</span>
+
+    <span class="s3">if </span><span class="s1">stmt._return_defaults_columns:</span>
+        <span class="s1">compiler.implicit_returning.extend(implicit_return_defaults)</span>
+
+    <span class="s3">if </span><span class="s1">stmt._supplemental_returning:</span>
+        <span class="s1">ir_set = set(compiler.implicit_returning)</span>
+        <span class="s1">compiler.implicit_returning.extend(</span>
+            <span class="s1">c </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">stmt._supplemental_returning </span><span class="s3">if </span><span class="s1">c </span><span class="s3">not in </span><span class="s1">ir_set</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_append_param_parameter(</span>
+    <span class="s1">compiler</span><span class="s5">,</span>
+    <span class="s1">stmt</span><span class="s5">,</span>
+    <span class="s1">compile_state</span><span class="s5">,</span>
+    <span class="s1">c</span><span class="s5">,</span>
+    <span class="s1">col_key</span><span class="s5">,</span>
+    <span class="s1">parameters</span><span class="s5">,</span>
+    <span class="s1">_col_bind_name</span><span class="s5">,</span>
+    <span class="s1">implicit_returning</span><span class="s5">,</span>
+    <span class="s1">implicit_return_defaults</span><span class="s5">,</span>
+    <span class="s1">postfetch_lastrowid</span><span class="s5">,</span>
+    <span class="s1">values</span><span class="s5">,</span>
+    <span class="s1">autoincrement_col</span><span class="s5">,</span>
+    <span class="s1">insert_null_pk_still_autoincrements</span><span class="s5">,</span>
+    <span class="s1">kw</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s1">value = parameters.pop(col_key)</span>
+
+    <span class="s1">col_value = compiler.preparer.format_column(</span>
+        <span class="s1">c</span><span class="s5">, </span><span class="s1">use_table=compile_state.include_table_with_column_exprs</span>
+    <span class="s1">)</span>
+
+    <span class="s1">accumulated_bind_names: Set[str] = set()</span>
+
+    <span class="s3">if </span><span class="s1">coercions._is_literal(value):</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">insert_null_pk_still_autoincrements</span>
+            <span class="s3">and </span><span class="s1">c.primary_key</span>
+            <span class="s3">and </span><span class="s1">c </span><span class="s3">is </span><span class="s1">autoincrement_col</span>
+        <span class="s1">):</span>
+            <span class="s0"># support use case for #7998, fetch autoincrement cols</span>
+            <span class="s0"># even if value was given.</span>
+
+            <span class="s3">if </span><span class="s1">postfetch_lastrowid:</span>
+                <span class="s1">compiler.postfetch_lastrowid = </span><span class="s3">True</span>
+            <span class="s3">elif </span><span class="s1">implicit_returning:</span>
+                <span class="s1">compiler.implicit_returning.append(c)</span>
+
+        <span class="s1">value = _create_bind_param(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">c</span><span class="s5">,</span>
+            <span class="s1">value</span><span class="s5">,</span>
+            <span class="s1">required=value </span><span class="s3">is </span><span class="s1">REQUIRED</span><span class="s5">,</span>
+            <span class="s1">name=(</span>
+                <span class="s1">_col_bind_name(c)</span>
+                <span class="s3">if not </span><span class="s1">_compile_state_isinsert(compile_state)</span>
+                <span class="s3">or not </span><span class="s1">compile_state._has_multi_parameters</span>
+                <span class="s3">else </span><span class="s4">&quot;%s_m0&quot; </span><span class="s1">% _col_bind_name(c)</span>
+            <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">accumulate_bind_names=accumulated_bind_names</span><span class="s5">,</span>
+            <span class="s1">**kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+    <span class="s3">elif </span><span class="s1">value._is_bind_parameter:</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">insert_null_pk_still_autoincrements</span>
+            <span class="s3">and </span><span class="s1">value.value </span><span class="s3">is None</span>
+            <span class="s3">and </span><span class="s1">c.primary_key</span>
+            <span class="s3">and </span><span class="s1">c </span><span class="s3">is </span><span class="s1">autoincrement_col</span>
+        <span class="s1">):</span>
+            <span class="s0"># support use case for #7998, fetch autoincrement cols</span>
+            <span class="s0"># even if value was given</span>
+            <span class="s3">if </span><span class="s1">implicit_returning:</span>
+                <span class="s1">compiler.implicit_returning.append(c)</span>
+            <span class="s3">elif </span><span class="s1">compiler.dialect.postfetch_lastrowid:</span>
+                <span class="s1">compiler.postfetch_lastrowid = </span><span class="s3">True</span>
+
+        <span class="s1">value = _handle_values_anonymous_param(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">c</span><span class="s5">,</span>
+            <span class="s1">value</span><span class="s5">,</span>
+            <span class="s1">name=(</span>
+                <span class="s1">_col_bind_name(c)</span>
+                <span class="s3">if not </span><span class="s1">_compile_state_isinsert(compile_state)</span>
+                <span class="s3">or not </span><span class="s1">compile_state._has_multi_parameters</span>
+                <span class="s3">else </span><span class="s4">&quot;%s_m0&quot; </span><span class="s1">% _col_bind_name(c)</span>
+            <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">accumulate_bind_names=accumulated_bind_names</span><span class="s5">,</span>
+            <span class="s1">**kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s0"># value is a SQL expression</span>
+        <span class="s1">value = compiler.process(</span>
+            <span class="s1">value.self_group()</span><span class="s5">,</span>
+            <span class="s1">accumulate_bind_names=accumulated_bind_names</span><span class="s5">,</span>
+            <span class="s1">**kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">compile_state.isupdate:</span>
+            <span class="s3">if </span><span class="s1">implicit_return_defaults </span><span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">implicit_return_defaults:</span>
+                <span class="s1">compiler.implicit_returning.append(c)</span>
+
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">compiler.postfetch.append(c)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">c.primary_key:</span>
+                <span class="s3">if </span><span class="s1">implicit_returning:</span>
+                    <span class="s1">compiler.implicit_returning.append(c)</span>
+                <span class="s3">elif </span><span class="s1">compiler.dialect.postfetch_lastrowid:</span>
+                    <span class="s1">compiler.postfetch_lastrowid = </span><span class="s3">True</span>
+
+            <span class="s3">elif </span><span class="s1">implicit_return_defaults </span><span class="s3">and </span><span class="s1">(c </span><span class="s3">in </span><span class="s1">implicit_return_defaults):</span>
+                <span class="s1">compiler.implicit_returning.append(c)</span>
+
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s0"># postfetch specifically means, &quot;we can SELECT the row we just</span>
+                <span class="s0"># inserted by primary key to get back the server generated</span>
+                <span class="s0"># defaults&quot;. so by definition this can't be used to get the</span>
+                <span class="s0"># primary key value back, because we need to have it ahead of</span>
+                <span class="s0"># time.</span>
+
+                <span class="s1">compiler.postfetch.append(c)</span>
+
+    <span class="s1">values.append((c</span><span class="s5">, </span><span class="s1">col_value</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">accumulated_bind_names))</span>
+
+
+<span class="s3">def </span><span class="s1">_append_param_insert_pk_returning(compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">values</span><span class="s5">, </span><span class="s1">kw):</span>
+    <span class="s2">&quot;&quot;&quot;Create a primary key expression in the INSERT statement where 
+    we want to populate result.inserted_primary_key and RETURNING 
+    is available. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">c.default </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">c.default.is_sequence:</span>
+            <span class="s3">if </span><span class="s1">compiler.dialect.supports_sequences </span><span class="s3">and </span><span class="s1">(</span>
+                <span class="s3">not </span><span class="s1">c.default.optional</span>
+                <span class="s3">or not </span><span class="s1">compiler.dialect.sequences_optional</span>
+            <span class="s1">):</span>
+                <span class="s1">accumulated_bind_names: Set[str] = set()</span>
+                <span class="s1">values.append(</span>
+                    <span class="s1">(</span>
+                        <span class="s1">c</span><span class="s5">,</span>
+                        <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                        <span class="s1">compiler.process(</span>
+                            <span class="s1">c.default</span><span class="s5">,</span>
+                            <span class="s1">accumulate_bind_names=accumulated_bind_names</span><span class="s5">,</span>
+                            <span class="s1">**kw</span><span class="s5">,</span>
+                        <span class="s1">)</span><span class="s5">,</span>
+                        <span class="s1">accumulated_bind_names</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">compiler.implicit_returning.append(c)</span>
+        <span class="s3">elif </span><span class="s1">c.default.is_clause_element:</span>
+            <span class="s1">accumulated_bind_names = set()</span>
+            <span class="s1">values.append(</span>
+                <span class="s1">(</span>
+                    <span class="s1">c</span><span class="s5">,</span>
+                    <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                    <span class="s1">compiler.process(</span>
+                        <span class="s1">c.default.arg.self_group()</span><span class="s5">,</span>
+                        <span class="s1">accumulate_bind_names=accumulated_bind_names</span><span class="s5">,</span>
+                        <span class="s1">**kw</span><span class="s5">,</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">accumulated_bind_names</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">compiler.implicit_returning.append(c)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># client side default.  OK we can't use RETURNING, need to</span>
+            <span class="s0"># do a &quot;prefetch&quot;, which in fact fetches the default value</span>
+            <span class="s0"># on the Python side</span>
+            <span class="s1">values.append(</span>
+                <span class="s1">(</span>
+                    <span class="s1">c</span><span class="s5">,</span>
+                    <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                    <span class="s1">_create_insert_prefetch_bind_param(compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">**kw)</span><span class="s5">,</span>
+                    <span class="s1">(c.key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+    <span class="s3">elif </span><span class="s1">c </span><span class="s3">is </span><span class="s1">stmt.table._autoincrement_column </span><span class="s3">or </span><span class="s1">c.server_default </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">compiler.implicit_returning.append(c)</span>
+    <span class="s3">elif not </span><span class="s1">c.nullable:</span>
+        <span class="s0"># no .default, no .server_default, not autoincrement, we have</span>
+        <span class="s0"># no indication this primary key column will have any value</span>
+        <span class="s1">_warn_pk_with_no_anticipated_value(c)</span>
+
+
+<span class="s3">def </span><span class="s1">_append_param_insert_pk_no_returning(compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">values</span><span class="s5">, </span><span class="s1">kw):</span>
+    <span class="s2">&quot;&quot;&quot;Create a primary key expression in the INSERT statement where 
+    we want to populate result.inserted_primary_key and we cannot use 
+    RETURNING. 
+ 
+    Depending on the kind of default here we may create a bound parameter 
+    in the INSERT statement and pre-execute a default generation function, 
+    or we may use cursor.lastrowid if supported by the dialect. 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s0"># column has a Python-side default</span>
+        <span class="s1">c.default </span><span class="s3">is not None</span>
+        <span class="s3">and </span><span class="s1">(</span>
+            <span class="s0"># and it either is not a sequence, or it is and we support</span>
+            <span class="s0"># sequences and want to invoke it</span>
+            <span class="s3">not </span><span class="s1">c.default.is_sequence</span>
+            <span class="s3">or </span><span class="s1">(</span>
+                <span class="s1">compiler.dialect.supports_sequences</span>
+                <span class="s3">and </span><span class="s1">(</span>
+                    <span class="s3">not </span><span class="s1">c.default.optional</span>
+                    <span class="s3">or not </span><span class="s1">compiler.dialect.sequences_optional</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+    <span class="s1">) </span><span class="s3">or </span><span class="s1">(</span>
+        <span class="s0"># column is the &quot;autoincrement column&quot;</span>
+        <span class="s1">c </span><span class="s3">is </span><span class="s1">stmt.table._autoincrement_column</span>
+        <span class="s3">and </span><span class="s1">(</span>
+            <span class="s0"># dialect can't use cursor.lastrowid</span>
+            <span class="s3">not </span><span class="s1">compiler.dialect.postfetch_lastrowid</span>
+            <span class="s3">and </span><span class="s1">(</span>
+                <span class="s0"># column has a Sequence and we support those</span>
+                <span class="s1">(</span>
+                    <span class="s1">c.default </span><span class="s3">is not None</span>
+                    <span class="s3">and </span><span class="s1">c.default.is_sequence</span>
+                    <span class="s3">and </span><span class="s1">compiler.dialect.supports_sequences</span>
+                <span class="s1">)</span>
+                <span class="s3">or</span>
+                <span class="s0"># column has no default on it, but dialect can run the</span>
+                <span class="s0"># &quot;autoincrement&quot; mechanism explicitly, e.g. PostgreSQL</span>
+                <span class="s0"># SERIAL we know the sequence name</span>
+                <span class="s1">(</span>
+                    <span class="s1">c.default </span><span class="s3">is None</span>
+                    <span class="s3">and </span><span class="s1">compiler.dialect.preexecute_autoincrement_sequences</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+    <span class="s1">):</span>
+        <span class="s0"># do a pre-execute of the default</span>
+        <span class="s1">values.append(</span>
+            <span class="s1">(</span>
+                <span class="s1">c</span><span class="s5">,</span>
+                <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                <span class="s1">_create_insert_prefetch_bind_param(compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">**kw)</span><span class="s5">,</span>
+                <span class="s1">(c.key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+    <span class="s3">elif </span><span class="s1">(</span>
+        <span class="s1">c.default </span><span class="s3">is None</span>
+        <span class="s3">and </span><span class="s1">c.server_default </span><span class="s3">is None</span>
+        <span class="s3">and not </span><span class="s1">c.nullable</span>
+        <span class="s3">and </span><span class="s1">c </span><span class="s3">is not </span><span class="s1">stmt.table._autoincrement_column</span>
+    <span class="s1">):</span>
+        <span class="s0"># no .default, no .server_default, not autoincrement, we have</span>
+        <span class="s0"># no indication this primary key column will have any value</span>
+        <span class="s1">_warn_pk_with_no_anticipated_value(c)</span>
+    <span class="s3">elif </span><span class="s1">compiler.dialect.postfetch_lastrowid:</span>
+        <span class="s0"># finally, where it seems like there will be a generated primary key</span>
+        <span class="s0"># value and we haven't set up any other way to fetch it, and the</span>
+        <span class="s0"># dialect supports cursor.lastrowid, switch on the lastrowid flag so</span>
+        <span class="s0"># that the DefaultExecutionContext calls upon cursor.lastrowid</span>
+        <span class="s1">compiler.postfetch_lastrowid = </span><span class="s3">True</span>
+
+
+<span class="s3">def </span><span class="s1">_append_param_insert_hasdefault(</span>
+    <span class="s1">compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">implicit_return_defaults</span><span class="s5">, </span><span class="s1">values</span><span class="s5">, </span><span class="s1">kw</span>
+<span class="s1">):</span>
+    <span class="s3">if </span><span class="s1">c.default.is_sequence:</span>
+        <span class="s3">if </span><span class="s1">compiler.dialect.supports_sequences </span><span class="s3">and </span><span class="s1">(</span>
+            <span class="s3">not </span><span class="s1">c.default.optional </span><span class="s3">or not </span><span class="s1">compiler.dialect.sequences_optional</span>
+        <span class="s1">):</span>
+            <span class="s1">accumulated_bind_names: Set[str] = set()</span>
+            <span class="s1">values.append(</span>
+                <span class="s1">(</span>
+                    <span class="s1">c</span><span class="s5">,</span>
+                    <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                    <span class="s1">compiler.process(</span>
+                        <span class="s1">c.default</span><span class="s5">,</span>
+                        <span class="s1">accumulate_bind_names=accumulated_bind_names</span><span class="s5">,</span>
+                        <span class="s1">**kw</span><span class="s5">,</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">accumulated_bind_names</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">implicit_return_defaults </span><span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">implicit_return_defaults:</span>
+                <span class="s1">compiler.implicit_returning.append(c)</span>
+            <span class="s3">elif not </span><span class="s1">c.primary_key:</span>
+                <span class="s1">compiler.postfetch.append(c)</span>
+    <span class="s3">elif </span><span class="s1">c.default.is_clause_element:</span>
+        <span class="s1">accumulated_bind_names = set()</span>
+        <span class="s1">values.append(</span>
+            <span class="s1">(</span>
+                <span class="s1">c</span><span class="s5">,</span>
+                <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                <span class="s1">compiler.process(</span>
+                    <span class="s1">c.default.arg.self_group()</span><span class="s5">,</span>
+                    <span class="s1">accumulate_bind_names=accumulated_bind_names</span><span class="s5">,</span>
+                    <span class="s1">**kw</span><span class="s5">,</span>
+                <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">accumulated_bind_names</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">implicit_return_defaults </span><span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">implicit_return_defaults:</span>
+            <span class="s1">compiler.implicit_returning.append(c)</span>
+        <span class="s3">elif not </span><span class="s1">c.primary_key:</span>
+            <span class="s0"># don't add primary key column to postfetch</span>
+            <span class="s1">compiler.postfetch.append(c)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">values.append(</span>
+            <span class="s1">(</span>
+                <span class="s1">c</span><span class="s5">,</span>
+                <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                <span class="s1">_create_insert_prefetch_bind_param(compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">**kw)</span><span class="s5">,</span>
+                <span class="s1">(c.key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_append_param_insert_select_hasdefault(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">stmt: ValuesBase</span><span class="s5">,</span>
+    <span class="s1">c: ColumnClause[Any]</span><span class="s5">,</span>
+    <span class="s1">values: List[_CrudParamElementSQLExpr]</span><span class="s5">,</span>
+    <span class="s1">kw: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s3">if </span><span class="s1">default_is_sequence(c.default):</span>
+        <span class="s3">if </span><span class="s1">compiler.dialect.supports_sequences </span><span class="s3">and </span><span class="s1">(</span>
+            <span class="s3">not </span><span class="s1">c.default.optional </span><span class="s3">or not </span><span class="s1">compiler.dialect.sequences_optional</span>
+        <span class="s1">):</span>
+            <span class="s1">values.append(</span>
+                <span class="s1">(</span>
+                    <span class="s1">c</span><span class="s5">,</span>
+                    <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                    <span class="s1">c.default.next_value()</span><span class="s5">,</span>
+                    <span class="s1">()</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+    <span class="s3">elif </span><span class="s1">default_is_clause_element(c.default):</span>
+        <span class="s1">values.append(</span>
+            <span class="s1">(</span>
+                <span class="s1">c</span><span class="s5">,</span>
+                <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                <span class="s1">c.default.arg.self_group()</span><span class="s5">,</span>
+                <span class="s1">()</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">values.append(</span>
+            <span class="s1">(</span>
+                <span class="s1">c</span><span class="s5">,</span>
+                <span class="s1">compiler.preparer.format_column(c)</span><span class="s5">,</span>
+                <span class="s1">_create_insert_prefetch_bind_param(</span>
+                    <span class="s1">compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">process=</span><span class="s3">False</span><span class="s5">, </span><span class="s1">**kw</span>
+                <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">(c.key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_append_param_update(</span>
+    <span class="s1">compiler</span><span class="s5">, </span><span class="s1">compile_state</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">implicit_return_defaults</span><span class="s5">, </span><span class="s1">values</span><span class="s5">, </span><span class="s1">kw</span>
+<span class="s1">):</span>
+    <span class="s1">include_table = compile_state.include_table_with_column_exprs</span>
+    <span class="s3">if </span><span class="s1">c.onupdate </span><span class="s3">is not None and not </span><span class="s1">c.onupdate.is_sequence:</span>
+        <span class="s3">if </span><span class="s1">c.onupdate.is_clause_element:</span>
+            <span class="s1">values.append(</span>
+                <span class="s1">(</span>
+                    <span class="s1">c</span><span class="s5">,</span>
+                    <span class="s1">compiler.preparer.format_column(</span>
+                        <span class="s1">c</span><span class="s5">,</span>
+                        <span class="s1">use_table=include_table</span><span class="s5">,</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">compiler.process(c.onupdate.arg.self_group()</span><span class="s5">, </span><span class="s1">**kw)</span><span class="s5">,</span>
+                    <span class="s1">()</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">implicit_return_defaults </span><span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">implicit_return_defaults:</span>
+                <span class="s1">compiler.implicit_returning.append(c)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">compiler.postfetch.append(c)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">values.append(</span>
+                <span class="s1">(</span>
+                    <span class="s1">c</span><span class="s5">,</span>
+                    <span class="s1">compiler.preparer.format_column(</span>
+                        <span class="s1">c</span><span class="s5">,</span>
+                        <span class="s1">use_table=include_table</span><span class="s5">,</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">_create_update_prefetch_bind_param(compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">**kw)</span><span class="s5">,</span>
+                    <span class="s1">(c.key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+    <span class="s3">elif </span><span class="s1">c.server_onupdate </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">implicit_return_defaults </span><span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">implicit_return_defaults:</span>
+            <span class="s1">compiler.implicit_returning.append(c)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">compiler.postfetch.append(c)</span>
+    <span class="s3">elif </span><span class="s1">(</span>
+        <span class="s1">implicit_return_defaults</span>
+        <span class="s3">and </span><span class="s1">(stmt._return_defaults_columns </span><span class="s3">or not </span><span class="s1">stmt._return_defaults)</span>
+        <span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">implicit_return_defaults</span>
+    <span class="s1">):</span>
+        <span class="s1">compiler.implicit_returning.append(c)</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_create_insert_prefetch_bind_param(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">c: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">process: Literal[</span><span class="s3">True</span><span class="s1">] = ...</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; str: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_create_insert_prefetch_bind_param(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">c: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">process: Literal[</span><span class="s3">False</span><span class="s1">]</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; elements.BindParameter[Any]: ...</span>
+
+
+<span class="s3">def </span><span class="s1">_create_insert_prefetch_bind_param(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">c: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">process: bool = </span><span class="s3">True</span><span class="s5">,</span>
+    <span class="s1">name: Optional[str] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; Union[elements.BindParameter[Any]</span><span class="s5">, </span><span class="s1">str]:</span>
+    <span class="s1">param = _create_bind_param(</span>
+        <span class="s1">compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">process=process</span><span class="s5">, </span><span class="s1">name=name</span><span class="s5">, </span><span class="s1">**kw</span>
+    <span class="s1">)</span>
+    <span class="s1">compiler.insert_prefetch.append(c)  </span><span class="s0"># type: ignore</span>
+    <span class="s3">return </span><span class="s1">param</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_create_update_prefetch_bind_param(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">c: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">process: Literal[</span><span class="s3">True</span><span class="s1">] = ...</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; str: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_create_update_prefetch_bind_param(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">c: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">process: Literal[</span><span class="s3">False</span><span class="s1">]</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; elements.BindParameter[Any]: ...</span>
+
+
+<span class="s3">def </span><span class="s1">_create_update_prefetch_bind_param(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">c: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">process: bool = </span><span class="s3">True</span><span class="s5">,</span>
+    <span class="s1">name: Optional[str] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; Union[elements.BindParameter[Any]</span><span class="s5">, </span><span class="s1">str]:</span>
+    <span class="s1">param = _create_bind_param(</span>
+        <span class="s1">compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">process=process</span><span class="s5">, </span><span class="s1">name=name</span><span class="s5">, </span><span class="s1">**kw</span>
+    <span class="s1">)</span>
+    <span class="s1">compiler.update_prefetch.append(c)  </span><span class="s0"># type: ignore</span>
+    <span class="s3">return </span><span class="s1">param</span>
+
+
+<span class="s3">class </span><span class="s1">_multiparam_column(elements.ColumnElement[Any]):</span>
+    <span class="s1">_is_multiparam_column = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">original</span><span class="s5">, </span><span class="s1">index):</span>
+        <span class="s1">self.index = index</span>
+        <span class="s1">self.key = </span><span class="s4">&quot;%s_m%d&quot; </span><span class="s1">% (original.key</span><span class="s5">, </span><span class="s1">index + </span><span class="s7">1</span><span class="s1">)</span>
+        <span class="s1">self.original = original</span>
+        <span class="s1">self.default = original.default</span>
+        <span class="s1">self.type = original.type</span>
+
+    <span class="s3">def </span><span class="s1">compare(self</span><span class="s5">, </span><span class="s1">other</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">_copy_internals(self</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other):</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">isinstance(other</span><span class="s5">, </span><span class="s1">_multiparam_column)</span>
+            <span class="s3">and </span><span class="s1">other.key == self.key</span>
+            <span class="s3">and </span><span class="s1">other.original == self.original</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_default_description_tuple(self) -&gt; _DefaultDescriptionTuple:</span>
+        <span class="s2">&quot;&quot;&quot;used by default.py -&gt; _process_execute_defaults()&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">_DefaultDescriptionTuple._from_column_default(self.default)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_onupdate_description_tuple(self) -&gt; _DefaultDescriptionTuple:</span>
+        <span class="s2">&quot;&quot;&quot;used by default.py -&gt; _process_execute_defaults()&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">_DefaultDescriptionTuple._from_column_default(self.onupdate)</span>
+
+
+<span class="s3">def </span><span class="s1">_process_multiparam_default_bind(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">stmt: ValuesBase</span><span class="s5">,</span>
+    <span class="s1">c: KeyedColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">index: int</span><span class="s5">,</span>
+    <span class="s1">kw: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">,</span>
+<span class="s1">) -&gt; str:</span>
+    <span class="s3">if not </span><span class="s1">c.default:</span>
+        <span class="s3">raise </span><span class="s1">exc.CompileError(</span>
+            <span class="s4">&quot;INSERT value for column %s is explicitly rendered as a bound&quot;</span>
+            <span class="s4">&quot;parameter in the VALUES clause; &quot;</span>
+            <span class="s4">&quot;a Python-side value or SQL expression is required&quot; </span><span class="s1">% c</span>
+        <span class="s1">)</span>
+    <span class="s3">elif </span><span class="s1">default_is_clause_element(c.default):</span>
+        <span class="s3">return </span><span class="s1">compiler.process(c.default.arg.self_group()</span><span class="s5">, </span><span class="s1">**kw)</span>
+    <span class="s3">elif </span><span class="s1">c.default.is_sequence:</span>
+        <span class="s0"># these conditions would have been established</span>
+        <span class="s0"># by append_param_insert_(?:hasdefault|pk_returning|pk_no_returning)</span>
+        <span class="s0"># in order for us to be here, so these don't need to be</span>
+        <span class="s0"># checked</span>
+        <span class="s0"># assert compiler.dialect.supports_sequences and (</span>
+        <span class="s0">#    not c.default.optional</span>
+        <span class="s0">#    or not compiler.dialect.sequences_optional</span>
+        <span class="s0"># )</span>
+        <span class="s3">return </span><span class="s1">compiler.process(c.default</span><span class="s5">, </span><span class="s1">**kw)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">col = _multiparam_column(c</span><span class="s5">, </span><span class="s1">index)</span>
+        <span class="s3">assert </span><span class="s1">isinstance(stmt</span><span class="s5">, </span><span class="s1">dml.Insert)</span>
+        <span class="s3">return </span><span class="s1">_create_insert_prefetch_bind_param(</span>
+            <span class="s1">compiler</span><span class="s5">, </span><span class="s1">col</span><span class="s5">, </span><span class="s1">process=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_get_update_multitable_params(</span>
+    <span class="s1">compiler</span><span class="s5">,</span>
+    <span class="s1">stmt</span><span class="s5">,</span>
+    <span class="s1">compile_state</span><span class="s5">,</span>
+    <span class="s1">stmt_parameter_tuples</span><span class="s5">,</span>
+    <span class="s1">check_columns</span><span class="s5">,</span>
+    <span class="s1">_col_bind_name</span><span class="s5">,</span>
+    <span class="s1">_getattr_col_key</span><span class="s5">,</span>
+    <span class="s1">values</span><span class="s5">,</span>
+    <span class="s1">kw</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s1">normalized_params = {</span>
+        <span class="s1">coercions.expect(roles.DMLColumnRole</span><span class="s5">, </span><span class="s1">c): param</span>
+        <span class="s3">for </span><span class="s1">c</span><span class="s5">, </span><span class="s1">param </span><span class="s3">in </span><span class="s1">stmt_parameter_tuples </span><span class="s3">or </span><span class="s1">()</span>
+    <span class="s1">}</span>
+
+    <span class="s1">include_table = compile_state.include_table_with_column_exprs</span>
+
+    <span class="s1">affected_tables = set()</span>
+    <span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">compile_state._extra_froms:</span>
+        <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">t.c:</span>
+            <span class="s3">if </span><span class="s1">c </span><span class="s3">in </span><span class="s1">normalized_params:</span>
+                <span class="s1">affected_tables.add(t)</span>
+                <span class="s1">check_columns[_getattr_col_key(c)] = c</span>
+                <span class="s1">value = normalized_params[c]</span>
+
+                <span class="s1">col_value = compiler.process(c</span><span class="s5">, </span><span class="s1">include_table=include_table)</span>
+                <span class="s3">if </span><span class="s1">coercions._is_literal(value):</span>
+                    <span class="s1">value = _create_bind_param(</span>
+                        <span class="s1">compiler</span><span class="s5">,</span>
+                        <span class="s1">c</span><span class="s5">,</span>
+                        <span class="s1">value</span><span class="s5">,</span>
+                        <span class="s1">required=value </span><span class="s3">is </span><span class="s1">REQUIRED</span><span class="s5">,</span>
+                        <span class="s1">name=_col_bind_name(c)</span><span class="s5">,</span>
+                        <span class="s1">**kw</span><span class="s5">,  </span><span class="s0"># TODO: no test coverage for literal binds here</span>
+                    <span class="s1">)</span>
+                    <span class="s1">accumulated_bind_names: Iterable[str] = (c.key</span><span class="s5">,</span><span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">value._is_bind_parameter:</span>
+                    <span class="s1">cbn = _col_bind_name(c)</span>
+                    <span class="s1">value = _handle_values_anonymous_param(</span>
+                        <span class="s1">compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">name=cbn</span><span class="s5">, </span><span class="s1">**kw</span>
+                    <span class="s1">)</span>
+                    <span class="s1">accumulated_bind_names = (cbn</span><span class="s5">,</span><span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">compiler.postfetch.append(c)</span>
+                    <span class="s1">value = compiler.process(value.self_group()</span><span class="s5">, </span><span class="s1">**kw)</span>
+                    <span class="s1">accumulated_bind_names = ()</span>
+                <span class="s1">values.append((c</span><span class="s5">, </span><span class="s1">col_value</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">accumulated_bind_names))</span>
+    <span class="s0"># determine tables which are actually to be updated - process onupdate</span>
+    <span class="s0"># and server_onupdate for these</span>
+    <span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">affected_tables:</span>
+        <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">t.c:</span>
+            <span class="s3">if </span><span class="s1">c </span><span class="s3">in </span><span class="s1">normalized_params:</span>
+                <span class="s3">continue</span>
+            <span class="s3">elif </span><span class="s1">c.onupdate </span><span class="s3">is not None and not </span><span class="s1">c.onupdate.is_sequence:</span>
+                <span class="s3">if </span><span class="s1">c.onupdate.is_clause_element:</span>
+                    <span class="s1">values.append(</span>
+                        <span class="s1">(</span>
+                            <span class="s1">c</span><span class="s5">,</span>
+                            <span class="s1">compiler.process(c</span><span class="s5">, </span><span class="s1">include_table=include_table)</span><span class="s5">,</span>
+                            <span class="s1">compiler.process(</span>
+                                <span class="s1">c.onupdate.arg.self_group()</span><span class="s5">, </span><span class="s1">**kw</span>
+                            <span class="s1">)</span><span class="s5">,</span>
+                            <span class="s1">()</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+                    <span class="s1">)</span>
+                    <span class="s1">compiler.postfetch.append(c)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">values.append(</span>
+                        <span class="s1">(</span>
+                            <span class="s1">c</span><span class="s5">,</span>
+                            <span class="s1">compiler.process(c</span><span class="s5">, </span><span class="s1">include_table=include_table)</span><span class="s5">,</span>
+                            <span class="s1">_create_update_prefetch_bind_param(</span>
+                                <span class="s1">compiler</span><span class="s5">, </span><span class="s1">c</span><span class="s5">, </span><span class="s1">name=_col_bind_name(c)</span><span class="s5">, </span><span class="s1">**kw</span>
+                            <span class="s1">)</span><span class="s5">,</span>
+                            <span class="s1">(c.key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+                    <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">c.server_onupdate </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">compiler.postfetch.append(c)</span>
+
+
+<span class="s3">def </span><span class="s1">_extend_values_for_multiparams(</span>
+    <span class="s1">compiler: SQLCompiler</span><span class="s5">,</span>
+    <span class="s1">stmt: ValuesBase</span><span class="s5">,</span>
+    <span class="s1">compile_state: DMLState</span><span class="s5">,</span>
+    <span class="s1">initial_values: Sequence[_CrudParamElementStr]</span><span class="s5">,</span>
+    <span class="s1">_column_as_key: Callable[...</span><span class="s5">, </span><span class="s1">str]</span><span class="s5">,</span>
+    <span class="s1">kw: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">,</span>
+<span class="s1">) -&gt; List[Sequence[_CrudParamElementStr]]:</span>
+    <span class="s1">values_0 = initial_values</span>
+    <span class="s1">values = [initial_values]</span>
+
+    <span class="s1">mp = compile_state._multi_parameters</span>
+    <span class="s3">assert </span><span class="s1">mp </span><span class="s3">is not None</span>
+    <span class="s3">for </span><span class="s1">i</span><span class="s5">, </span><span class="s1">row </span><span class="s3">in </span><span class="s1">enumerate(mp[</span><span class="s7">1</span><span class="s1">:]):</span>
+        <span class="s1">extension: List[_CrudParamElementStr] = []</span>
+
+        <span class="s1">row = {_column_as_key(key): v </span><span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">row.items()}</span>
+
+        <span class="s3">for </span><span class="s1">col</span><span class="s5">, </span><span class="s1">col_expr</span><span class="s5">, </span><span class="s1">param</span><span class="s5">, </span><span class="s1">accumulated_names </span><span class="s3">in </span><span class="s1">values_0:</span>
+            <span class="s3">if </span><span class="s1">col.key </span><span class="s3">in </span><span class="s1">row:</span>
+                <span class="s1">key = col.key</span>
+
+                <span class="s3">if </span><span class="s1">coercions._is_literal(row[key]):</span>
+                    <span class="s1">new_param = _create_bind_param(</span>
+                        <span class="s1">compiler</span><span class="s5">,</span>
+                        <span class="s1">col</span><span class="s5">,</span>
+                        <span class="s1">row[key]</span><span class="s5">,</span>
+                        <span class="s1">name=</span><span class="s4">&quot;%s_m%d&quot; </span><span class="s1">% (col.key</span><span class="s5">, </span><span class="s1">i + </span><span class="s7">1</span><span class="s1">)</span><span class="s5">,</span>
+                        <span class="s1">**kw</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">new_param = compiler.process(row[key].self_group()</span><span class="s5">, </span><span class="s1">**kw)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">new_param = _process_multiparam_default_bind(</span>
+                    <span class="s1">compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">col</span><span class="s5">, </span><span class="s1">i</span><span class="s5">, </span><span class="s1">kw</span>
+                <span class="s1">)</span>
+
+            <span class="s1">extension.append((col</span><span class="s5">, </span><span class="s1">col_expr</span><span class="s5">, </span><span class="s1">new_param</span><span class="s5">, </span><span class="s1">accumulated_names))</span>
+
+        <span class="s1">values.append(extension)</span>
+
+    <span class="s3">return </span><span class="s1">values</span>
+
+
+<span class="s3">def </span><span class="s1">_get_stmt_parameter_tuples_params(</span>
+    <span class="s1">compiler</span><span class="s5">,</span>
+    <span class="s1">compile_state</span><span class="s5">,</span>
+    <span class="s1">parameters</span><span class="s5">,</span>
+    <span class="s1">stmt_parameter_tuples</span><span class="s5">,</span>
+    <span class="s1">_column_as_key</span><span class="s5">,</span>
+    <span class="s1">values</span><span class="s5">,</span>
+    <span class="s1">kw</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">stmt_parameter_tuples:</span>
+        <span class="s1">colkey = _column_as_key(k)</span>
+        <span class="s3">if </span><span class="s1">colkey </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">parameters.setdefault(colkey</span><span class="s5">, </span><span class="s1">v)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># a non-Column expression on the left side;</span>
+            <span class="s0"># add it to values() in an &quot;as-is&quot; state,</span>
+            <span class="s0"># coercing right side to bound param</span>
+
+            <span class="s0"># note one of the main use cases for this is array slice</span>
+            <span class="s0"># updates on PostgreSQL, as the left side is also an expression.</span>
+
+            <span class="s1">col_expr = compiler.process(</span>
+                <span class="s1">k</span><span class="s5">, </span><span class="s1">include_table=compile_state.include_table_with_column_exprs</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">coercions._is_literal(v):</span>
+                <span class="s1">v = compiler.process(</span>
+                    <span class="s1">elements.BindParameter(</span><span class="s3">None</span><span class="s5">, </span><span class="s1">v</span><span class="s5">, </span><span class="s1">type_=k.type)</span><span class="s5">, </span><span class="s1">**kw</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">v._is_bind_parameter </span><span class="s3">and </span><span class="s1">v.type._isnull:</span>
+                    <span class="s0"># either unique parameter, or other bound parameters that</span>
+                    <span class="s0"># were passed in directly</span>
+                    <span class="s0"># set type to that of the column unconditionally</span>
+                    <span class="s1">v = v._with_binary_element_type(k.type)</span>
+
+                <span class="s1">v = compiler.process(v.self_group()</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+            <span class="s0"># TODO: not sure if accumulated_bind_names applies here</span>
+            <span class="s1">values.append((k</span><span class="s5">, </span><span class="s1">col_expr</span><span class="s5">, </span><span class="s1">v</span><span class="s5">, </span><span class="s1">()))</span>
+
+
+<span class="s3">def </span><span class="s1">_get_returning_modifiers(compiler</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">compile_state</span><span class="s5">, </span><span class="s1">toplevel):</span>
+    <span class="s2">&quot;&quot;&quot;determines RETURNING strategy, if any, for the statement. 
+ 
+    This is where it's determined what we need to fetch from the 
+    INSERT or UPDATE statement after it's invoked. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dialect = compiler.dialect</span>
+
+    <span class="s1">need_pks = (</span>
+        <span class="s1">toplevel</span>
+        <span class="s3">and </span><span class="s1">_compile_state_isinsert(compile_state)</span>
+        <span class="s3">and not </span><span class="s1">stmt._inline</span>
+        <span class="s3">and </span><span class="s1">(</span>
+            <span class="s3">not </span><span class="s1">compiler.for_executemany</span>
+            <span class="s3">or </span><span class="s1">(dialect.insert_executemany_returning </span><span class="s3">and </span><span class="s1">stmt._return_defaults)</span>
+        <span class="s1">)</span>
+        <span class="s3">and not </span><span class="s1">stmt._returning</span>
+        <span class="s0"># and (not stmt._returning or stmt._return_defaults)</span>
+        <span class="s3">and not </span><span class="s1">compile_state._has_multi_parameters</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># check if we have access to simple cursor.lastrowid.  we can use that</span>
+    <span class="s0"># after the INSERT if that's all we need.</span>
+    <span class="s1">postfetch_lastrowid = (</span>
+        <span class="s1">need_pks</span>
+        <span class="s3">and </span><span class="s1">dialect.postfetch_lastrowid</span>
+        <span class="s3">and </span><span class="s1">stmt.table._autoincrement_column </span><span class="s3">is not None</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># see if we want to add RETURNING to an INSERT in order to get</span>
+    <span class="s0"># primary key columns back.  This would be instead of postfetch_lastrowid</span>
+    <span class="s0"># if that's set.</span>
+    <span class="s1">implicit_returning = (</span>
+        <span class="s0"># statement itself can veto it</span>
+        <span class="s1">need_pks</span>
+        <span class="s0"># the dialect can veto it if it just doesnt support RETURNING</span>
+        <span class="s0"># with INSERT</span>
+        <span class="s3">and </span><span class="s1">dialect.insert_returning</span>
+        <span class="s0"># user-defined implicit_returning on Table can veto it</span>
+        <span class="s3">and </span><span class="s1">compile_state._primary_table.implicit_returning</span>
+        <span class="s0"># the compile_state can veto it (SQlite uses this to disable</span>
+        <span class="s0"># RETURNING for an ON CONFLICT insert, as SQLite does not return</span>
+        <span class="s0"># for rows that were updated, which is wrong)</span>
+        <span class="s3">and </span><span class="s1">compile_state._supports_implicit_returning</span>
+        <span class="s3">and </span><span class="s1">(</span>
+            <span class="s0"># since we support MariaDB and SQLite which also support lastrowid,</span>
+            <span class="s0"># decide if we should use lastrowid or RETURNING.  for insert</span>
+            <span class="s0"># that didnt call return_defaults() and has just one set of</span>
+            <span class="s0"># parameters, we can use lastrowid.   this is more &quot;traditional&quot;</span>
+            <span class="s0"># and a lot of weird use cases are supported by it.</span>
+            <span class="s0"># SQLite lastrowid times 3x faster than returning,</span>
+            <span class="s0"># Mariadb lastrowid 2x faster than returning</span>
+            <span class="s1">(</span><span class="s3">not </span><span class="s1">postfetch_lastrowid </span><span class="s3">or </span><span class="s1">dialect.favor_returning_over_lastrowid)</span>
+            <span class="s3">or </span><span class="s1">compile_state._has_multi_parameters</span>
+            <span class="s3">or </span><span class="s1">stmt._return_defaults</span>
+        <span class="s1">)</span>
+    <span class="s1">)</span>
+    <span class="s3">if </span><span class="s1">implicit_returning:</span>
+        <span class="s1">postfetch_lastrowid = </span><span class="s3">False</span>
+
+    <span class="s3">if </span><span class="s1">_compile_state_isinsert(compile_state):</span>
+        <span class="s1">should_implicit_return_defaults = (</span>
+            <span class="s1">implicit_returning </span><span class="s3">and </span><span class="s1">stmt._return_defaults</span>
+        <span class="s1">)</span>
+        <span class="s1">explicit_returning = (</span>
+            <span class="s1">should_implicit_return_defaults</span>
+            <span class="s3">or </span><span class="s1">stmt._returning</span>
+            <span class="s3">or </span><span class="s1">stmt._supplemental_returning</span>
+        <span class="s1">)</span>
+        <span class="s1">use_insertmanyvalues = (</span>
+            <span class="s1">toplevel</span>
+            <span class="s3">and </span><span class="s1">compiler.for_executemany</span>
+            <span class="s3">and </span><span class="s1">dialect.use_insertmanyvalues</span>
+            <span class="s3">and </span><span class="s1">(</span>
+                <span class="s1">explicit_returning </span><span class="s3">or </span><span class="s1">dialect.use_insertmanyvalues_wo_returning</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">use_sentinel_columns = </span><span class="s3">None</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">use_insertmanyvalues</span>
+            <span class="s3">and </span><span class="s1">explicit_returning</span>
+            <span class="s3">and </span><span class="s1">stmt._sort_by_parameter_order</span>
+        <span class="s1">):</span>
+            <span class="s1">use_sentinel_columns = compiler._get_sentinel_column_for_table(</span>
+                <span class="s1">stmt.table</span>
+            <span class="s1">)</span>
+
+    <span class="s3">elif </span><span class="s1">compile_state.isupdate:</span>
+        <span class="s1">should_implicit_return_defaults = (</span>
+            <span class="s1">stmt._return_defaults</span>
+            <span class="s3">and </span><span class="s1">compile_state._primary_table.implicit_returning</span>
+            <span class="s3">and </span><span class="s1">compile_state._supports_implicit_returning</span>
+            <span class="s3">and </span><span class="s1">dialect.update_returning</span>
+        <span class="s1">)</span>
+        <span class="s1">use_insertmanyvalues = </span><span class="s3">False</span>
+        <span class="s1">use_sentinel_columns = </span><span class="s3">None</span>
+    <span class="s3">elif </span><span class="s1">compile_state.isdelete:</span>
+        <span class="s1">should_implicit_return_defaults = (</span>
+            <span class="s1">stmt._return_defaults</span>
+            <span class="s3">and </span><span class="s1">compile_state._primary_table.implicit_returning</span>
+            <span class="s3">and </span><span class="s1">compile_state._supports_implicit_returning</span>
+            <span class="s3">and </span><span class="s1">dialect.delete_returning</span>
+        <span class="s1">)</span>
+        <span class="s1">use_insertmanyvalues = </span><span class="s3">False</span>
+        <span class="s1">use_sentinel_columns = </span><span class="s3">None</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">should_implicit_return_defaults = </span><span class="s3">False  </span><span class="s0"># pragma: no cover</span>
+        <span class="s1">use_insertmanyvalues = </span><span class="s3">False</span>
+        <span class="s1">use_sentinel_columns = </span><span class="s3">None</span>
+
+    <span class="s3">if </span><span class="s1">should_implicit_return_defaults:</span>
+        <span class="s3">if not </span><span class="s1">stmt._return_defaults_columns:</span>
+            <span class="s0"># TODO: this is weird.  See #9685 where we have to</span>
+            <span class="s0"># take an extra step to prevent this from happening.  why</span>
+            <span class="s0"># would this ever be *all* columns?  but if we set to blank, then</span>
+            <span class="s0"># that seems to break things also in the ORM.  So we should</span>
+            <span class="s0"># try to clean this up and figure out what return_defaults</span>
+            <span class="s0"># needs to do w/ the ORM etc. here</span>
+            <span class="s1">implicit_return_defaults = set(stmt.table.c)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">implicit_return_defaults = set(stmt._return_defaults_columns)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">implicit_return_defaults = </span><span class="s3">None</span>
+
+    <span class="s3">return </span><span class="s1">(</span>
+        <span class="s1">need_pks</span><span class="s5">,</span>
+        <span class="s1">implicit_returning </span><span class="s3">or </span><span class="s1">should_implicit_return_defaults</span><span class="s5">,</span>
+        <span class="s1">implicit_return_defaults</span><span class="s5">,</span>
+        <span class="s1">postfetch_lastrowid</span><span class="s5">,</span>
+        <span class="s1">use_insertmanyvalues</span><span class="s5">,</span>
+        <span class="s1">use_sentinel_columns</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_warn_pk_with_no_anticipated_value(c):</span>
+    <span class="s1">msg = (</span>
+        <span class="s4">&quot;Column '%s.%s' is marked as a member of the &quot;</span>
+        <span class="s4">&quot;primary key for table '%s', &quot;</span>
+        <span class="s4">&quot;but has no Python-side or server-side default generator indicated, &quot;</span>
+        <span class="s4">&quot;nor does it indicate 'autoincrement=True' or 'nullable=True', &quot;</span>
+        <span class="s4">&quot;and no explicit value is passed.  &quot;</span>
+        <span class="s4">&quot;Primary key columns typically may not store NULL.&quot;</span>
+        <span class="s1">% (c.table.fullname</span><span class="s5">, </span><span class="s1">c.name</span><span class="s5">, </span><span class="s1">c.table.fullname)</span>
+    <span class="s1">)</span>
+    <span class="s3">if </span><span class="s1">len(c.table.primary_key) &gt; </span><span class="s7">1</span><span class="s1">:</span>
+        <span class="s1">msg += (</span>
+            <span class="s4">&quot; Note that as of SQLAlchemy 1.1, 'autoincrement=True' must be &quot;</span>
+            <span class="s4">&quot;indicated explicitly for composite (e.g. multicolumn) primary &quot;</span>
+            <span class="s4">&quot;keys if AUTO_INCREMENT/SERIAL/IDENTITY &quot;</span>
+            <span class="s4">&quot;behavior is expected for one of the columns in the primary key. &quot;</span>
+            <span class="s4">&quot;CREATE TABLE statements are impacted by this change as well on &quot;</span>
+            <span class="s4">&quot;most backends.&quot;</span>
+        <span class="s1">)</span>
+    <span class="s1">util.warn(msg)</span>
+</pre>
+</body>
+</html>

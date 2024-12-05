@@ -1,0 +1,71 @@
+<html>
+<head>
+<title>cadastro.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+.s1 { color: #e8bf6a;}
+.s2 { color: #5d69bb;}
+.s3 { color: #bababa;}
+.s4 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+cadastro.html</font>
+</center></td></tr></table>
+<pre><span class="s0">{% extends 'modelo_base2.html' %}</span>
+
+<span class="s0">{% block conteudo %}</span>
+    <span class="s1">&lt;div&gt;</span>
+        <span class="s2">&lt;!-- Exibe as mensagens flash --&gt;</span>
+        <span class="s0">{% with messages = get_flashed_messages(with_categories=true) %}</span>
+            <span class="s0">{% if messages %}</span>
+                <span class="s1">&lt;ul&gt;</span>
+                    <span class="s0">{% for category, message in messages %}</span>
+                        <span class="s1">&lt;li </span><span class="s3">class</span><span class="s4">=&quot;{{ category }}&quot;</span><span class="s1">&gt;</span><span class="s0">{{ message }}</span><span class="s1">&lt;/li&gt;</span>
+                    <span class="s0">{% endfor %}</span>
+                <span class="s1">&lt;/ul&gt;</span>
+            <span class="s0">{% endif %}</span>
+        <span class="s0">{% endwith %}</span>
+    <span class="s1">&lt;/div&gt;</span>
+
+    <span class="s2">&lt;!-- Formulário de login ou cadastro --&gt;</span>
+    <span class="s1">&lt;form </span><span class="s3">action</span><span class="s4">=&quot;{{ url_for('login') if 'login' in request.url else url_for('cadastro') }}&quot; </span><span class="s3">method</span><span class="s4">=&quot;POST&quot;</span><span class="s1">&gt;</span>
+        <span class="s0">{% if 'login' in request.url %}</span>
+            <span class="s1">&lt;h2&gt;</span><span class="s0">Login</span><span class="s1">&lt;/h2&gt;</span>
+            <span class="s1">&lt;label </span><span class="s3">for</span><span class="s4">=&quot;username&quot;</span><span class="s1">&gt;</span><span class="s0">Nome de Usuário:</span><span class="s1">&lt;/label&gt;</span>
+            <span class="s1">&lt;input </span><span class="s3">type</span><span class="s4">=&quot;text&quot; </span><span class="s3">id</span><span class="s4">=&quot;username&quot; </span><span class="s3">name</span><span class="s4">=&quot;username&quot; </span><span class="s3">required</span><span class="s1">&gt;&lt;br&gt;&lt;br&gt;</span>
+
+            <span class="s1">&lt;label </span><span class="s3">for</span><span class="s4">=&quot;password&quot;</span><span class="s1">&gt;</span><span class="s0">Senha:</span><span class="s1">&lt;/label&gt;</span>
+            <span class="s1">&lt;input </span><span class="s3">type</span><span class="s4">=&quot;password&quot; </span><span class="s3">id</span><span class="s4">=&quot;password&quot; </span><span class="s3">name</span><span class="s4">=&quot;password&quot; </span><span class="s3">required</span><span class="s1">&gt;&lt;br&gt;&lt;br&gt;</span>
+
+            <span class="s1">&lt;button </span><span class="s3">type</span><span class="s4">=&quot;submit&quot;</span><span class="s1">&gt;</span><span class="s0">Entrar</span><span class="s1">&lt;/button&gt;</span>
+        <span class="s0">{% elif 'cadastro' in request.url %}</span>
+            <span class="s1">&lt;h2&gt;</span><span class="s0">Cadastro</span><span class="s1">&lt;/h2&gt;</span>
+            <span class="s1">&lt;label </span><span class="s3">for</span><span class="s4">=&quot;username&quot;</span><span class="s1">&gt;</span><span class="s0">Nome de Usuário:</span><span class="s1">&lt;/label&gt;</span>
+            <span class="s1">&lt;input </span><span class="s3">type</span><span class="s4">=&quot;text&quot; </span><span class="s3">id</span><span class="s4">=&quot;username&quot; </span><span class="s3">name</span><span class="s4">=&quot;username&quot; </span><span class="s3">required</span><span class="s1">&gt;&lt;br&gt;&lt;br&gt;</span>
+
+            <span class="s1">&lt;label </span><span class="s3">for</span><span class="s4">=&quot;password&quot;</span><span class="s1">&gt;</span><span class="s0">Senha:</span><span class="s1">&lt;/label&gt;</span>
+            <span class="s1">&lt;input </span><span class="s3">type</span><span class="s4">=&quot;password&quot; </span><span class="s3">id</span><span class="s4">=&quot;password&quot; </span><span class="s3">name</span><span class="s4">=&quot;password&quot; </span><span class="s3">required</span><span class="s1">&gt;&lt;br&gt;&lt;br&gt;</span>
+
+            <span class="s1">&lt;label </span><span class="s3">for</span><span class="s4">=&quot;confirm_password&quot;</span><span class="s1">&gt;</span><span class="s0">Confirmar Senha:</span><span class="s1">&lt;/label&gt;</span>
+            <span class="s1">&lt;input </span><span class="s3">type</span><span class="s4">=&quot;password&quot; </span><span class="s3">id</span><span class="s4">=&quot;confirm_password&quot; </span><span class="s3">name</span><span class="s4">=&quot;confirm_password&quot; </span><span class="s3">required</span><span class="s1">&gt;&lt;br&gt;&lt;br&gt;</span>
+
+            <span class="s1">&lt;button </span><span class="s3">type</span><span class="s4">=&quot;submit&quot;</span><span class="s1">&gt;</span><span class="s0">Cadastrar</span><span class="s1">&lt;/button&gt;</span>
+        <span class="s0">{% endif %}</span>
+    <span class="s1">&lt;/form&gt;</span>
+
+    <span class="s0">{% if 'login' in request.url %}</span>
+        <span class="s1">&lt;p&gt;</span><span class="s0">Ainda não tem uma conta? </span><span class="s1">&lt;a </span><span class="s3">href</span><span class="s4">=&quot;{{ url_for('cadastro') }}&quot;</span><span class="s1">&gt;</span><span class="s0">Cadastre-se!</span><span class="s1">&lt;/a&gt;&lt;/p&gt;</span>
+    <span class="s0">{% elif 'cadastro' in request.url %}</span>
+        <span class="s1">&lt;p&gt;</span><span class="s0">Já tem uma conta? </span><span class="s1">&lt;a </span><span class="s3">href</span><span class="s4">=&quot;{{ url_for('login') }}&quot;</span><span class="s1">&gt;</span><span class="s0">Faça login!</span><span class="s1">&lt;/a&gt;&lt;/p&gt;</span>
+    <span class="s0">{% endif %}</span>
+
+
+<span class="s0">{% endblock %}</span>
+</pre>
+</body>
+</html>

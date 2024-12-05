@@ -1,0 +1,151 @@
+<html>
+<head>
+<title>_py_row.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #bbb55b;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_py_row.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># engine/_py_row.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">operator</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterator</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">List</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Mapping</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Tuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Type</span>
+
+<span class="s2">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">.result </span><span class="s2">import </span><span class="s1">_KeyType</span>
+    <span class="s2">from </span><span class="s1">.result </span><span class="s2">import </span><span class="s1">_ProcessorsType</span>
+    <span class="s2">from </span><span class="s1">.result </span><span class="s2">import </span><span class="s1">_RawRowType</span>
+    <span class="s2">from </span><span class="s1">.result </span><span class="s2">import </span><span class="s1">_TupleGetterType</span>
+    <span class="s2">from </span><span class="s1">.result </span><span class="s2">import </span><span class="s1">ResultMetaData</span>
+
+<span class="s1">MD_INDEX = </span><span class="s3">0  </span><span class="s0"># integer index in cursor.description</span>
+
+
+<span class="s2">class </span><span class="s1">BaseRow:</span>
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;_parent&quot;</span><span class="s5">, </span><span class="s4">&quot;_data&quot;</span><span class="s5">, </span><span class="s4">&quot;_key_to_index&quot;</span><span class="s1">)</span>
+
+    <span class="s1">_parent: ResultMetaData</span>
+    <span class="s1">_key_to_index: Mapping[_KeyType</span><span class="s5">, </span><span class="s1">int]</span>
+    <span class="s1">_data: _RawRowType</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent: ResultMetaData</span><span class="s5">,</span>
+        <span class="s1">processors: Optional[_ProcessorsType]</span><span class="s5">,</span>
+        <span class="s1">key_to_index: Mapping[_KeyType</span><span class="s5">, </span><span class="s1">int]</span><span class="s5">,</span>
+        <span class="s1">data: _RawRowType</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s6">&quot;&quot;&quot;Row objects are constructed by CursorResult objects.&quot;&quot;&quot;</span>
+        <span class="s1">object.__setattr__(self</span><span class="s5">, </span><span class="s4">&quot;_parent&quot;</span><span class="s5">, </span><span class="s1">parent)</span>
+
+        <span class="s1">object.__setattr__(self</span><span class="s5">, </span><span class="s4">&quot;_key_to_index&quot;</span><span class="s5">, </span><span class="s1">key_to_index)</span>
+
+        <span class="s2">if </span><span class="s1">processors:</span>
+            <span class="s1">object.__setattr__(</span>
+                <span class="s1">self</span><span class="s5">,</span>
+                <span class="s4">&quot;_data&quot;</span><span class="s5">,</span>
+                <span class="s1">tuple(</span>
+                    <span class="s1">[</span>
+                        <span class="s1">proc(value) </span><span class="s2">if </span><span class="s1">proc </span><span class="s2">else </span><span class="s1">value</span>
+                        <span class="s2">for </span><span class="s1">proc</span><span class="s5">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">zip(processors</span><span class="s5">, </span><span class="s1">data)</span>
+                    <span class="s1">]</span>
+                <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">object.__setattr__(self</span><span class="s5">, </span><span class="s4">&quot;_data&quot;</span><span class="s5">, </span><span class="s1">tuple(data))</span>
+
+    <span class="s2">def </span><span class="s1">__reduce__(self) -&gt; Tuple[Callable[...</span><span class="s5">, </span><span class="s1">BaseRow]</span><span class="s5">, </span><span class="s1">Tuple[Any</span><span class="s5">, </span><span class="s1">...]]:</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">rowproxy_reconstructor</span><span class="s5">,</span>
+            <span class="s1">(self.__class__</span><span class="s5">, </span><span class="s1">self.__getstate__())</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__getstate__(self) -&gt; Dict[str</span><span class="s5">, </span><span class="s1">Any]:</span>
+        <span class="s2">return </span><span class="s1">{</span><span class="s4">&quot;_parent&quot;</span><span class="s1">: self._parent</span><span class="s5">, </span><span class="s4">&quot;_data&quot;</span><span class="s1">: self._data}</span>
+
+    <span class="s2">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state: Dict[str</span><span class="s5">, </span><span class="s1">Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">parent = state[</span><span class="s4">&quot;_parent&quot;</span><span class="s1">]</span>
+        <span class="s1">object.__setattr__(self</span><span class="s5">, </span><span class="s4">&quot;_parent&quot;</span><span class="s5">, </span><span class="s1">parent)</span>
+        <span class="s1">object.__setattr__(self</span><span class="s5">, </span><span class="s4">&quot;_data&quot;</span><span class="s5">, </span><span class="s1">state[</span><span class="s4">&quot;_data&quot;</span><span class="s1">])</span>
+        <span class="s1">object.__setattr__(self</span><span class="s5">, </span><span class="s4">&quot;_key_to_index&quot;</span><span class="s5">, </span><span class="s1">parent._key_to_index)</span>
+
+    <span class="s2">def </span><span class="s1">_values_impl(self) -&gt; List[Any]:</span>
+        <span class="s2">return </span><span class="s1">list(self)</span>
+
+    <span class="s2">def </span><span class="s1">__iter__(self) -&gt; Iterator[Any]:</span>
+        <span class="s2">return </span><span class="s1">iter(self._data)</span>
+
+    <span class="s2">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s2">return </span><span class="s1">len(self._data)</span>
+
+    <span class="s2">def </span><span class="s1">__hash__(self) -&gt; int:</span>
+        <span class="s2">return </span><span class="s1">hash(self._data)</span>
+
+    <span class="s2">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">key: Any) -&gt; Any:</span>
+        <span class="s2">return </span><span class="s1">self._data[key]</span>
+
+    <span class="s2">def </span><span class="s1">_get_by_key_impl_mapping(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; Any:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self._data[self._key_to_index[key]]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">pass</span>
+        <span class="s1">self._parent._key_not_found(key</span><span class="s5">, </span><span class="s2">False</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__(self</span><span class="s5">, </span><span class="s1">name: str) -&gt; Any:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self._data[self._key_to_index[name]]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">pass</span>
+        <span class="s1">self._parent._key_not_found(name</span><span class="s5">, </span><span class="s2">True</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_to_tuple_instance(self) -&gt; Tuple[Any</span><span class="s5">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">self._data</span>
+
+
+<span class="s0"># This reconstructor is necessary so that pickles with the Cy extension or</span>
+<span class="s0"># without use the same Binary format.</span>
+<span class="s2">def </span><span class="s1">rowproxy_reconstructor(</span>
+    <span class="s1">cls: Type[BaseRow]</span><span class="s5">, </span><span class="s1">state: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span>
+<span class="s1">) -&gt; BaseRow:</span>
+    <span class="s1">obj = cls.__new__(cls)</span>
+    <span class="s1">obj.__setstate__(state)</span>
+    <span class="s2">return </span><span class="s1">obj</span>
+
+
+<span class="s2">def </span><span class="s1">tuplegetter(*indexes: int) -&gt; _TupleGetterType:</span>
+    <span class="s2">if </span><span class="s1">len(indexes) != </span><span class="s3">1</span><span class="s1">:</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">1</span><span class="s5">, </span><span class="s1">len(indexes)):</span>
+            <span class="s2">if </span><span class="s1">indexes[i - </span><span class="s3">1</span><span class="s1">] != indexes[i] - </span><span class="s3">1</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">operator.itemgetter(*indexes)</span>
+    <span class="s0"># slice form is faster but returns a list if input is list</span>
+    <span class="s2">return </span><span class="s1">operator.itemgetter(slice(indexes[</span><span class="s3">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">indexes[-</span><span class="s3">1</span><span class="s1">] + </span><span class="s3">1</span><span class="s1">))</span>
+</pre>
+</body>
+</html>

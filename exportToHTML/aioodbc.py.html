@@ -1,0 +1,196 @@
+<html>
+<head>
+<title>aioodbc.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+aioodbc.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># connectors/aioodbc.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+
+<span class="s2">from </span><span class="s1">.asyncio </span><span class="s2">import </span><span class="s1">AsyncAdapt_dbapi_connection</span>
+<span class="s2">from </span><span class="s1">.asyncio </span><span class="s2">import </span><span class="s1">AsyncAdapt_dbapi_cursor</span>
+<span class="s2">from </span><span class="s1">.asyncio </span><span class="s2">import </span><span class="s1">AsyncAdapt_dbapi_ss_cursor</span>
+<span class="s2">from </span><span class="s1">.asyncio </span><span class="s2">import </span><span class="s1">AsyncAdaptFallback_dbapi_connection</span>
+<span class="s2">from </span><span class="s1">.pyodbc </span><span class="s2">import </span><span class="s1">PyODBCConnector</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">pool</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">..util.concurrency </span><span class="s2">import </span><span class="s1">await_fallback</span>
+<span class="s2">from </span><span class="s1">..util.concurrency </span><span class="s2">import </span><span class="s1">await_only</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">..engine.interfaces </span><span class="s2">import </span><span class="s1">ConnectArgsType</span>
+    <span class="s2">from </span><span class="s1">..engine.url </span><span class="s2">import </span><span class="s1">URL</span>
+
+
+<span class="s2">class </span><span class="s1">AsyncAdapt_aioodbc_cursor(AsyncAdapt_dbapi_cursor):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">setinputsizes(self</span><span class="s3">, </span><span class="s1">*inputsizes):</span>
+        <span class="s0"># see https://github.com/aio-libs/aioodbc/issues/451</span>
+        <span class="s2">return </span><span class="s1">self._cursor._impl.setinputsizes(*inputsizes)</span>
+
+        <span class="s0"># how it's supposed to work</span>
+        <span class="s0"># return self.await_(self._cursor.setinputsizes(*inputsizes))</span>
+
+
+<span class="s2">class </span><span class="s1">AsyncAdapt_aioodbc_ss_cursor(</span>
+    <span class="s1">AsyncAdapt_aioodbc_cursor</span><span class="s3">, </span><span class="s1">AsyncAdapt_dbapi_ss_cursor</span>
+<span class="s1">):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">AsyncAdapt_aioodbc_connection(AsyncAdapt_dbapi_connection):</span>
+    <span class="s1">_cursor_cls = AsyncAdapt_aioodbc_cursor</span>
+    <span class="s1">_ss_cursor_cls = AsyncAdapt_aioodbc_ss_cursor</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">autocommit(self):</span>
+        <span class="s2">return </span><span class="s1">self._connection.autocommit</span>
+
+    <span class="s1">@autocommit.setter</span>
+    <span class="s2">def </span><span class="s1">autocommit(self</span><span class="s3">, </span><span class="s1">value):</span>
+        <span class="s0"># https://github.com/aio-libs/aioodbc/issues/448</span>
+        <span class="s0"># self._connection.autocommit = value</span>
+
+        <span class="s1">self._connection._conn.autocommit = value</span>
+
+    <span class="s2">def </span><span class="s1">cursor(self</span><span class="s3">, </span><span class="s1">server_side=</span><span class="s2">False</span><span class="s1">):</span>
+        <span class="s0"># aioodbc sets connection=None when closed and just fails with</span>
+        <span class="s0"># AttributeError here.  Here we use the same ProgrammingError +</span>
+        <span class="s0"># message that pyodbc uses, so it triggers is_disconnect() as well.</span>
+        <span class="s2">if </span><span class="s1">self._connection.closed:</span>
+            <span class="s2">raise </span><span class="s1">self.dbapi.ProgrammingError(</span>
+                <span class="s4">&quot;Attempt to use a closed connection.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">super().cursor(server_side=server_side)</span>
+
+    <span class="s2">def </span><span class="s1">rollback(self):</span>
+        <span class="s0"># aioodbc sets connection=None when closed and just fails with</span>
+        <span class="s0"># AttributeError here.  should be a no-op</span>
+        <span class="s2">if not </span><span class="s1">self._connection.closed:</span>
+            <span class="s1">super().rollback()</span>
+
+    <span class="s2">def </span><span class="s1">commit(self):</span>
+        <span class="s0"># aioodbc sets connection=None when closed and just fails with</span>
+        <span class="s0"># AttributeError here.  should be a no-op</span>
+        <span class="s2">if not </span><span class="s1">self._connection.closed:</span>
+            <span class="s1">super().commit()</span>
+
+    <span class="s2">def </span><span class="s1">close(self):</span>
+        <span class="s0"># aioodbc sets connection=None when closed and just fails with</span>
+        <span class="s0"># AttributeError here.  should be a no-op</span>
+        <span class="s2">if not </span><span class="s1">self._connection.closed:</span>
+            <span class="s1">super().close()</span>
+
+
+<span class="s2">class </span><span class="s1">AsyncAdaptFallback_aioodbc_connection(</span>
+    <span class="s1">AsyncAdaptFallback_dbapi_connection</span><span class="s3">, </span><span class="s1">AsyncAdapt_aioodbc_connection</span>
+<span class="s1">):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">AsyncAdapt_aioodbc_dbapi:</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">aioodbc</span><span class="s3">, </span><span class="s1">pyodbc):</span>
+        <span class="s1">self.aioodbc = aioodbc</span>
+        <span class="s1">self.pyodbc = pyodbc</span>
+        <span class="s1">self.paramstyle = pyodbc.paramstyle</span>
+        <span class="s1">self._init_dbapi_attributes()</span>
+        <span class="s1">self.Cursor = AsyncAdapt_dbapi_cursor</span>
+        <span class="s1">self.version = pyodbc.version</span>
+
+    <span class="s2">def </span><span class="s1">_init_dbapi_attributes(self):</span>
+        <span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">(</span>
+            <span class="s4">&quot;Warning&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;Error&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;InterfaceError&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;DataError&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;DatabaseError&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;OperationalError&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;InterfaceError&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;IntegrityError&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;ProgrammingError&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;InternalError&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;NotSupportedError&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;NUMBER&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;STRING&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;DATETIME&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;BINARY&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;Binary&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;BinaryNull&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;SQL_VARCHAR&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;SQL_WVARCHAR&quot;</span><span class="s3">,</span>
+        <span class="s1">):</span>
+            <span class="s1">setattr(self</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">getattr(self.pyodbc</span><span class="s3">, </span><span class="s1">name))</span>
+
+    <span class="s2">def </span><span class="s1">connect(self</span><span class="s3">, </span><span class="s1">*arg</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s1">async_fallback = kw.pop(</span><span class="s4">&quot;async_fallback&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">creator_fn = kw.pop(</span><span class="s4">&quot;async_creator_fn&quot;</span><span class="s3">, </span><span class="s1">self.aioodbc.connect)</span>
+
+        <span class="s2">if </span><span class="s1">util.asbool(async_fallback):</span>
+            <span class="s2">return </span><span class="s1">AsyncAdaptFallback_aioodbc_connection(</span>
+                <span class="s1">self</span><span class="s3">,</span>
+                <span class="s1">await_fallback(creator_fn(*arg</span><span class="s3">, </span><span class="s1">**kw))</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">AsyncAdapt_aioodbc_connection(</span>
+                <span class="s1">self</span><span class="s3">,</span>
+                <span class="s1">await_only(creator_fn(*arg</span><span class="s3">, </span><span class="s1">**kw))</span><span class="s3">,</span>
+            <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">aiodbcConnector(PyODBCConnector):</span>
+    <span class="s1">is_async = </span><span class="s2">True</span>
+    <span class="s1">supports_statement_cache = </span><span class="s2">True</span>
+
+    <span class="s1">supports_server_side_cursors = </span><span class="s2">True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s2">return </span><span class="s1">AsyncAdapt_aioodbc_dbapi(</span>
+            <span class="s1">__import__(</span><span class="s4">&quot;aioodbc&quot;</span><span class="s1">)</span><span class="s3">, </span><span class="s1">__import__(</span><span class="s4">&quot;pyodbc&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">create_connect_args(self</span><span class="s3">, </span><span class="s1">url: URL) -&gt; ConnectArgsType:</span>
+        <span class="s1">arg</span><span class="s3">, </span><span class="s1">kw = super().create_connect_args(url)</span>
+        <span class="s2">if </span><span class="s1">arg </span><span class="s2">and </span><span class="s1">arg[</span><span class="s5">0</span><span class="s1">]:</span>
+            <span class="s1">kw[</span><span class="s4">&quot;dsn&quot;</span><span class="s1">] = arg[</span><span class="s5">0</span><span class="s1">]</span>
+
+        <span class="s2">return </span><span class="s1">()</span><span class="s3">, </span><span class="s1">kw</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">get_pool_class(cls</span><span class="s3">, </span><span class="s1">url):</span>
+        <span class="s1">async_fallback = url.query.get(</span><span class="s4">&quot;async_fallback&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">util.asbool(async_fallback):</span>
+            <span class="s2">return </span><span class="s1">pool.FallbackAsyncAdaptedQueuePool</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">pool.AsyncAdaptedQueuePool</span>
+
+    <span class="s2">def </span><span class="s1">get_driver_connection(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s2">return </span><span class="s1">connection._connection</span>
+</pre>
+</body>
+</html>

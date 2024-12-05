@@ -1,0 +1,86 @@
+<html>
+<head>
+<title>_utilities.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #717ed3; font-style: italic;}
+.s4 { color: #cc7832;}
+.s5 { color: #5d69bb;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_utilities.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">collections.abc </span><span class="s0">as </span><span class="s1">c</span>
+<span class="s0">import </span><span class="s1">inspect</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">weakref </span><span class="s0">import </span><span class="s1">ref</span>
+<span class="s0">from </span><span class="s1">weakref </span><span class="s0">import </span><span class="s1">WeakMethod</span>
+
+<span class="s1">T = t.TypeVar(</span><span class="s2">&quot;T&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">class </span><span class="s1">Symbol:</span>
+    <span class="s3">&quot;&quot;&quot;A constant symbol, nicer than ``object()``. Repeated calls return the 
+    same instance. 
+ 
+    &gt;&gt;&gt; Symbol('foo') is Symbol('foo') 
+    True 
+    &gt;&gt;&gt; Symbol('foo') 
+    foo 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">symbols: t.ClassVar[dict[str</span><span class="s4">, </span><span class="s1">Symbol]] = {}</span>
+
+    <span class="s0">def </span><span class="s1">__new__(cls</span><span class="s4">, </span><span class="s1">name: str) -&gt; Symbol:</span>
+        <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">cls.symbols:</span>
+            <span class="s0">return </span><span class="s1">cls.symbols[name]</span>
+
+        <span class="s1">obj = super().__new__(cls)</span>
+        <span class="s1">cls.symbols[name] = obj</span>
+        <span class="s0">return </span><span class="s1">obj</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">name: str) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self.name = name</span>
+
+    <span class="s0">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s1">self.name</span>
+
+    <span class="s0">def </span><span class="s1">__getnewargs__(self) -&gt; tuple[t.Any</span><span class="s4">, </span><span class="s1">...]:</span>
+        <span class="s0">return </span><span class="s1">(self.name</span><span class="s4">,</span><span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">make_id(obj: object) -&gt; c.Hashable:</span>
+    <span class="s3">&quot;&quot;&quot;Get a stable identifier for a receiver or sender, to be used as a dict 
+    key or in a set. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">inspect.ismethod(obj):</span>
+        <span class="s5"># The id of a bound method is not stable, but the id of the unbound</span>
+        <span class="s5"># function and instance are.</span>
+        <span class="s0">return </span><span class="s1">id(obj.__func__)</span><span class="s4">, </span><span class="s1">id(obj.__self__)</span>
+
+    <span class="s0">if </span><span class="s1">isinstance(obj</span><span class="s4">, </span><span class="s1">(str</span><span class="s4">, </span><span class="s1">int)):</span>
+        <span class="s5"># Instances with the same value always compare equal and have the same</span>
+        <span class="s5"># hash, even if the id may change.</span>
+        <span class="s0">return </span><span class="s1">obj</span>
+
+    <span class="s5"># Assume other types are not hashable but will always be the same instance.</span>
+    <span class="s0">return </span><span class="s1">id(obj)</span>
+
+
+<span class="s0">def </span><span class="s1">make_ref(obj: T</span><span class="s4">, </span><span class="s1">callback: c.Callable[[ref[T]]</span><span class="s4">, </span><span class="s0">None</span><span class="s1">] | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s1">) -&gt; ref[T]:</span>
+    <span class="s0">if </span><span class="s1">inspect.ismethod(obj):</span>
+        <span class="s0">return </span><span class="s1">WeakMethod(obj</span><span class="s4">, </span><span class="s1">callback)  </span><span class="s5"># type: ignore[arg-type, return-value]</span>
+
+    <span class="s0">return </span><span class="s1">ref(obj</span><span class="s4">, </span><span class="s1">callback)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,199 @@
+<html>
+<head>
+<title>provision.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+.s6 { color: #717ed3; font-style: italic;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+provision.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/provision.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">import </span><span class="s1">time</span>
+
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">exc</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">inspect</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">text</span>
+<span class="s2">from </span><span class="s1">...testing </span><span class="s2">import </span><span class="s1">warn_test_suite</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">create_db</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">drop_all_schema_objects_post_tables</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">drop_all_schema_objects_pre_tables</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">drop_db</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">log</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">post_configure_engine</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">prepare_for_drop_tables</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">set_default_schema_on_connection</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">temp_table_keyword_args</span>
+<span class="s2">from </span><span class="s1">...testing.provision </span><span class="s2">import </span><span class="s1">upsert</span>
+
+
+<span class="s1">@create_db.for_db(</span><span class="s3">&quot;postgresql&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">_pg_create_db(cfg</span><span class="s4">, </span><span class="s1">eng</span><span class="s4">, </span><span class="s1">ident):</span>
+    <span class="s1">template_db = cfg.options.postgresql_templatedb</span>
+
+    <span class="s2">with </span><span class="s1">eng.execution_options(isolation_level=</span><span class="s3">&quot;AUTOCOMMIT&quot;</span><span class="s1">).begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+        <span class="s2">if not </span><span class="s1">template_db:</span>
+            <span class="s1">template_db = conn.exec_driver_sql(</span>
+                <span class="s3">&quot;select current_database()&quot;</span>
+            <span class="s1">).scalar()</span>
+
+        <span class="s1">attempt = </span><span class="s5">0</span>
+        <span class="s2">while True</span><span class="s1">:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">conn.exec_driver_sql(</span>
+                    <span class="s3">&quot;CREATE DATABASE %s TEMPLATE %s&quot; </span><span class="s1">% (ident</span><span class="s4">, </span><span class="s1">template_db)</span>
+                <span class="s1">)</span>
+            <span class="s2">except </span><span class="s1">exc.OperationalError </span><span class="s2">as </span><span class="s1">err:</span>
+                <span class="s1">attempt += </span><span class="s5">1</span>
+                <span class="s2">if </span><span class="s1">attempt &gt;= </span><span class="s5">3</span><span class="s1">:</span>
+                    <span class="s2">raise</span>
+                <span class="s2">if </span><span class="s3">&quot;accessed by other users&quot; </span><span class="s2">in </span><span class="s1">str(err):</span>
+                    <span class="s1">log.info(</span>
+                        <span class="s3">&quot;Waiting to create %s, URI %r, &quot;</span>
+                        <span class="s3">&quot;template DB %s is in use sleeping for .5&quot;</span><span class="s4">,</span>
+                        <span class="s1">ident</span><span class="s4">,</span>
+                        <span class="s1">eng.url</span><span class="s4">,</span>
+                        <span class="s1">template_db</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                    <span class="s1">time.sleep(</span><span class="s5">0.5</span><span class="s1">)</span>
+            <span class="s2">except</span><span class="s1">:</span>
+                <span class="s2">raise</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">break</span>
+
+
+<span class="s1">@drop_db.for_db(</span><span class="s3">&quot;postgresql&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">_pg_drop_db(cfg</span><span class="s4">, </span><span class="s1">eng</span><span class="s4">, </span><span class="s1">ident):</span>
+    <span class="s2">with </span><span class="s1">eng.connect().execution_options(isolation_level=</span><span class="s3">&quot;AUTOCOMMIT&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">conn:</span>
+        <span class="s2">with </span><span class="s1">conn.begin():</span>
+            <span class="s1">conn.execute(</span>
+                <span class="s1">text(</span>
+                    <span class="s3">&quot;select pg_terminate_backend(pid) from pg_stat_activity &quot;</span>
+                    <span class="s3">&quot;where usename=current_user and pid != pg_backend_pid() &quot;</span>
+                    <span class="s3">&quot;and datname=:dname&quot;</span>
+                <span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">dict(dname=ident)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s1">conn.exec_driver_sql(</span><span class="s3">&quot;DROP DATABASE %s&quot; </span><span class="s1">% ident)</span>
+
+
+<span class="s1">@temp_table_keyword_args.for_db(</span><span class="s3">&quot;postgresql&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">_postgresql_temp_table_keyword_args(cfg</span><span class="s4">, </span><span class="s1">eng):</span>
+    <span class="s2">return </span><span class="s1">{</span><span class="s3">&quot;prefixes&quot;</span><span class="s1">: [</span><span class="s3">&quot;TEMPORARY&quot;</span><span class="s1">]}</span>
+
+
+<span class="s1">@set_default_schema_on_connection.for_db(</span><span class="s3">&quot;postgresql&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">_postgresql_set_default_schema_on_connection(</span>
+    <span class="s1">cfg</span><span class="s4">, </span><span class="s1">dbapi_connection</span><span class="s4">, </span><span class="s1">schema_name</span>
+<span class="s1">):</span>
+    <span class="s1">existing_autocommit = dbapi_connection.autocommit</span>
+    <span class="s1">dbapi_connection.autocommit = </span><span class="s2">True</span>
+    <span class="s1">cursor = dbapi_connection.cursor()</span>
+    <span class="s1">cursor.execute(</span><span class="s3">&quot;SET SESSION search_path='%s'&quot; </span><span class="s1">% schema_name)</span>
+    <span class="s1">cursor.close()</span>
+    <span class="s1">dbapi_connection.autocommit = existing_autocommit</span>
+
+
+<span class="s1">@drop_all_schema_objects_pre_tables.for_db(</span><span class="s3">&quot;postgresql&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">drop_all_schema_objects_pre_tables(cfg</span><span class="s4">, </span><span class="s1">eng):</span>
+    <span class="s2">with </span><span class="s1">eng.connect().execution_options(isolation_level=</span><span class="s3">&quot;AUTOCOMMIT&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">conn:</span>
+        <span class="s2">for </span><span class="s1">xid </span><span class="s2">in </span><span class="s1">conn.exec_driver_sql(</span>
+            <span class="s3">&quot;select gid from pg_prepared_xacts&quot;</span>
+        <span class="s1">).scalars():</span>
+            <span class="s1">conn.exec_driver_sql(</span><span class="s3">&quot;ROLLBACK PREPARED '%s'&quot; </span><span class="s1">% xid)</span>
+
+
+<span class="s1">@drop_all_schema_objects_post_tables.for_db(</span><span class="s3">&quot;postgresql&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">drop_all_schema_objects_post_tables(cfg</span><span class="s4">, </span><span class="s1">eng):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.dialects </span><span class="s2">import </span><span class="s1">postgresql</span>
+
+    <span class="s1">inspector = inspect(eng)</span>
+    <span class="s2">with </span><span class="s1">eng.begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+        <span class="s2">for </span><span class="s1">enum </span><span class="s2">in </span><span class="s1">inspector.get_enums(</span><span class="s3">&quot;*&quot;</span><span class="s1">):</span>
+            <span class="s1">conn.execute(</span>
+                <span class="s1">postgresql.DropEnumType(</span>
+                    <span class="s1">postgresql.ENUM(name=enum[</span><span class="s3">&quot;name&quot;</span><span class="s1">]</span><span class="s4">, </span><span class="s1">schema=enum[</span><span class="s3">&quot;schema&quot;</span><span class="s1">])</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+
+<span class="s1">@prepare_for_drop_tables.for_db(</span><span class="s3">&quot;postgresql&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">prepare_for_drop_tables(config</span><span class="s4">, </span><span class="s1">connection):</span>
+    <span class="s6">&quot;&quot;&quot;Ensure there are no locks on the current username/database.&quot;&quot;&quot;</span>
+
+    <span class="s1">result = connection.exec_driver_sql(</span>
+        <span class="s3">&quot;select pid, state, wait_event_type, query &quot;</span>
+        <span class="s0"># &quot;select pg_terminate_backend(pid), state, wait_event_type &quot;</span>
+        <span class="s3">&quot;from pg_stat_activity where &quot;</span>
+        <span class="s3">&quot;usename=current_user &quot;</span>
+        <span class="s3">&quot;and datname=current_database() and state='idle in transaction' &quot;</span>
+        <span class="s3">&quot;and pid != pg_backend_pid()&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">rows = result.all()  </span><span class="s0"># noqa</span>
+    <span class="s2">if </span><span class="s1">rows:</span>
+        <span class="s1">warn_test_suite(</span>
+            <span class="s3">&quot;PostgreSQL may not be able to DROP tables due to &quot;</span>
+            <span class="s3">&quot;idle in transaction: %s&quot;</span>
+            <span class="s1">% (</span><span class="s3">&quot;; &quot;</span><span class="s1">.join(row._mapping[</span><span class="s3">&quot;query&quot;</span><span class="s1">] </span><span class="s2">for </span><span class="s1">row </span><span class="s2">in </span><span class="s1">rows))</span>
+        <span class="s1">)</span>
+
+
+<span class="s1">@upsert.for_db(</span><span class="s3">&quot;postgresql&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">_upsert(</span>
+    <span class="s1">cfg</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">returning</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">set_lambda=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">sort_by_parameter_order=</span><span class="s2">False</span>
+<span class="s1">):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.dialects.postgresql </span><span class="s2">import </span><span class="s1">insert</span>
+
+    <span class="s1">stmt = insert(table)</span>
+
+    <span class="s1">table_pk = inspect(table).selectable</span>
+
+    <span class="s2">if </span><span class="s1">set_lambda:</span>
+        <span class="s1">stmt = stmt.on_conflict_do_update(</span>
+            <span class="s1">index_elements=table_pk.primary_key</span><span class="s4">, </span><span class="s1">set_=set_lambda(stmt.excluded)</span>
+        <span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">stmt = stmt.on_conflict_do_nothing()</span>
+
+    <span class="s1">stmt = stmt.returning(</span>
+        <span class="s1">*returning</span><span class="s4">, </span><span class="s1">sort_by_parameter_order=sort_by_parameter_order</span>
+    <span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">stmt</span>
+
+
+<span class="s1">_extensions = [</span>
+    <span class="s1">(</span><span class="s3">&quot;citext&quot;</span><span class="s4">, </span><span class="s1">(</span><span class="s5">13</span><span class="s4">,</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">(</span><span class="s3">&quot;hstore&quot;</span><span class="s4">, </span><span class="s1">(</span><span class="s5">13</span><span class="s4">,</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">]</span>
+
+
+<span class="s1">@post_configure_engine.for_db(</span><span class="s3">&quot;postgresql&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">_create_citext_extension(url</span><span class="s4">, </span><span class="s1">engine</span><span class="s4">, </span><span class="s1">follower_ident):</span>
+    <span class="s2">with </span><span class="s1">engine.connect() </span><span class="s2">as </span><span class="s1">conn:</span>
+        <span class="s2">for </span><span class="s1">extension</span><span class="s4">, </span><span class="s1">min_version </span><span class="s2">in </span><span class="s1">_extensions:</span>
+            <span class="s2">if </span><span class="s1">conn.dialect.server_version_info &gt;= min_version:</span>
+                <span class="s1">conn.execute(</span>
+                    <span class="s1">text(</span><span class="s3">f&quot;CREATE EXTENSION IF NOT EXISTS </span><span class="s7">{</span><span class="s1">extension</span><span class="s7">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+                <span class="s1">)</span>
+                <span class="s1">conn.commit()</span>
+</pre>
+</body>
+</html>

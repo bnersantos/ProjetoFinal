@@ -1,0 +1,109 @@
+<html>
+<head>
+<title>track_modifications.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #5d69bb;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+track_modifications.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+
+<span class="s0">import </span><span class="s1">sqlalchemy </span><span class="s0">as </span><span class="s1">sa</span>
+<span class="s0">import </span><span class="s1">sqlalchemy.event </span><span class="s0">as </span><span class="s1">sa_event</span>
+<span class="s0">import </span><span class="s1">sqlalchemy.orm </span><span class="s0">as </span><span class="s1">sa_orm</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">current_app</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">has_app_context</span>
+<span class="s0">from </span><span class="s1">flask.signals </span><span class="s0">import </span><span class="s1">Namespace  </span><span class="s2"># type: ignore[attr-defined]</span>
+
+<span class="s0">if </span><span class="s1">t.TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">.session </span><span class="s0">import </span><span class="s1">Session</span>
+
+<span class="s1">_signals = Namespace()</span>
+
+<span class="s1">models_committed = _signals.signal(</span><span class="s3">&quot;models-committed&quot;</span><span class="s1">)</span>
+<span class="s3">&quot;&quot;&quot;This Blinker signal is sent after the session is committed if there were changed 
+models in the session. 
+ 
+The sender is the application that emitted the changes. The receiver is passed the 
+``changes`` argument with a list of tuples in the form ``(instance, operation)``. 
+The operations are ``&quot;insert&quot;``, ``&quot;update&quot;``, and ``&quot;delete&quot;``. 
+&quot;&quot;&quot;</span>
+
+<span class="s1">before_models_committed = _signals.signal(</span><span class="s3">&quot;before-models-committed&quot;</span><span class="s1">)</span>
+<span class="s3">&quot;&quot;&quot;This signal works exactly like :data:`models_committed` but is emitted before the 
+commit takes place. 
+&quot;&quot;&quot;</span>
+
+
+<span class="s0">def </span><span class="s1">_listen(session: sa_orm.scoped_session[Session]) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+    <span class="s1">sa_event.listen(session</span><span class="s4">, </span><span class="s3">&quot;before_flush&quot;</span><span class="s4">, </span><span class="s1">_record_ops</span><span class="s4">, </span><span class="s1">named=</span><span class="s0">True</span><span class="s1">)</span>
+    <span class="s1">sa_event.listen(session</span><span class="s4">, </span><span class="s3">&quot;before_commit&quot;</span><span class="s4">, </span><span class="s1">_record_ops</span><span class="s4">, </span><span class="s1">named=</span><span class="s0">True</span><span class="s1">)</span>
+    <span class="s1">sa_event.listen(session</span><span class="s4">, </span><span class="s3">&quot;before_commit&quot;</span><span class="s4">, </span><span class="s1">_before_commit)</span>
+    <span class="s1">sa_event.listen(session</span><span class="s4">, </span><span class="s3">&quot;after_commit&quot;</span><span class="s4">, </span><span class="s1">_after_commit)</span>
+    <span class="s1">sa_event.listen(session</span><span class="s4">, </span><span class="s3">&quot;after_rollback&quot;</span><span class="s4">, </span><span class="s1">_after_rollback)</span>
+
+
+<span class="s0">def </span><span class="s1">_record_ops(session: Session</span><span class="s4">, </span><span class="s1">**kwargs: t.Any) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+    <span class="s0">if not </span><span class="s1">has_app_context():</span>
+        <span class="s0">return</span>
+
+    <span class="s0">if not </span><span class="s1">current_app.config[</span><span class="s3">&quot;SQLALCHEMY_TRACK_MODIFICATIONS&quot;</span><span class="s1">]:</span>
+        <span class="s0">return</span>
+
+    <span class="s0">for </span><span class="s1">targets</span><span class="s4">, </span><span class="s1">operation </span><span class="s0">in </span><span class="s1">(</span>
+        <span class="s1">(session.new</span><span class="s4">, </span><span class="s3">&quot;insert&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(session.dirty</span><span class="s4">, </span><span class="s3">&quot;update&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(session.deleted</span><span class="s4">, </span><span class="s3">&quot;delete&quot;</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s0">for </span><span class="s1">target </span><span class="s0">in </span><span class="s1">targets:</span>
+            <span class="s1">state = sa.inspect(target)</span>
+            <span class="s1">key = state.identity_key </span><span class="s0">if </span><span class="s1">state.has_identity </span><span class="s0">else </span><span class="s1">id(target)</span>
+            <span class="s1">session._model_changes[key] = (target</span><span class="s4">, </span><span class="s1">operation)</span>
+
+
+<span class="s0">def </span><span class="s1">_before_commit(session: Session) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+    <span class="s0">if not </span><span class="s1">has_app_context():</span>
+        <span class="s0">return</span>
+
+    <span class="s1">app = current_app._get_current_object()  </span><span class="s2"># type: ignore[attr-defined]</span>
+
+    <span class="s0">if not </span><span class="s1">app.config[</span><span class="s3">&quot;SQLALCHEMY_TRACK_MODIFICATIONS&quot;</span><span class="s1">]:</span>
+        <span class="s0">return</span>
+
+    <span class="s0">if </span><span class="s1">session._model_changes:</span>
+        <span class="s1">changes = list(session._model_changes.values())</span>
+        <span class="s1">before_models_committed.send(app</span><span class="s4">, </span><span class="s1">changes=changes)</span>
+
+
+<span class="s0">def </span><span class="s1">_after_commit(session: Session) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+    <span class="s0">if not </span><span class="s1">has_app_context():</span>
+        <span class="s0">return</span>
+
+    <span class="s1">app = current_app._get_current_object()  </span><span class="s2"># type: ignore[attr-defined]</span>
+
+    <span class="s0">if not </span><span class="s1">app.config[</span><span class="s3">&quot;SQLALCHEMY_TRACK_MODIFICATIONS&quot;</span><span class="s1">]:</span>
+        <span class="s0">return</span>
+
+    <span class="s0">if </span><span class="s1">session._model_changes:</span>
+        <span class="s1">changes = list(session._model_changes.values())</span>
+        <span class="s1">models_committed.send(app</span><span class="s4">, </span><span class="s1">changes=changes)</span>
+        <span class="s1">session._model_changes.clear()</span>
+
+
+<span class="s0">def </span><span class="s1">_after_rollback(session: Session) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+    <span class="s1">session._model_changes.clear()</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,496 @@
+<html>
+<head>
+<title>engines.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+engines.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/engines.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">collections</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">import </span><span class="s1">warnings</span>
+<span class="s2">import </span><span class="s1">weakref</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">config</span>
+<span class="s2">from </span><span class="s1">.util </span><span class="s2">import </span><span class="s1">decorator</span>
+<span class="s2">from </span><span class="s1">.util </span><span class="s2">import </span><span class="s1">gc_collect</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">event</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">pool</span>
+<span class="s2">from </span><span class="s1">..util </span><span class="s2">import </span><span class="s1">await_only</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Literal</span>
+
+
+<span class="s2">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">..engine </span><span class="s2">import </span><span class="s1">Engine</span>
+    <span class="s2">from </span><span class="s1">..engine.url </span><span class="s2">import </span><span class="s1">URL</span>
+    <span class="s2">from </span><span class="s1">..ext.asyncio </span><span class="s2">import </span><span class="s1">AsyncEngine</span>
+
+
+<span class="s2">class </span><span class="s1">ConnectionKiller:</span>
+    <span class="s2">def </span><span class="s1">__init__(self):</span>
+        <span class="s1">self.proxy_refs = weakref.WeakKeyDictionary()</span>
+        <span class="s1">self.testing_engines = collections.defaultdict(set)</span>
+        <span class="s1">self.dbapi_connections = set()</span>
+
+    <span class="s2">def </span><span class="s1">add_pool(self</span><span class="s3">, </span><span class="s1">pool):</span>
+        <span class="s1">event.listen(pool</span><span class="s3">, </span><span class="s4">&quot;checkout&quot;</span><span class="s3">, </span><span class="s1">self._add_conn)</span>
+        <span class="s1">event.listen(pool</span><span class="s3">, </span><span class="s4">&quot;checkin&quot;</span><span class="s3">, </span><span class="s1">self._remove_conn)</span>
+        <span class="s1">event.listen(pool</span><span class="s3">, </span><span class="s4">&quot;close&quot;</span><span class="s3">, </span><span class="s1">self._remove_conn)</span>
+        <span class="s1">event.listen(pool</span><span class="s3">, </span><span class="s4">&quot;close_detached&quot;</span><span class="s3">, </span><span class="s1">self._remove_conn)</span>
+        <span class="s0"># note we are keeping &quot;invalidated&quot; here, as those are still</span>
+        <span class="s0"># opened connections we would like to roll back</span>
+
+    <span class="s2">def </span><span class="s1">_add_conn(self</span><span class="s3">, </span><span class="s1">dbapi_con</span><span class="s3">, </span><span class="s1">con_record</span><span class="s3">, </span><span class="s1">con_proxy):</span>
+        <span class="s1">self.dbapi_connections.add(dbapi_con)</span>
+        <span class="s1">self.proxy_refs[con_proxy] = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_remove_conn(self</span><span class="s3">, </span><span class="s1">dbapi_conn</span><span class="s3">, </span><span class="s1">*arg):</span>
+        <span class="s1">self.dbapi_connections.discard(dbapi_conn)</span>
+
+    <span class="s2">def </span><span class="s1">add_engine(self</span><span class="s3">, </span><span class="s1">engine</span><span class="s3">, </span><span class="s1">scope):</span>
+        <span class="s1">self.add_pool(engine.pool)</span>
+
+        <span class="s2">assert </span><span class="s1">scope </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;class&quot;</span><span class="s3">, </span><span class="s4">&quot;global&quot;</span><span class="s3">, </span><span class="s4">&quot;function&quot;</span><span class="s3">, </span><span class="s4">&quot;fixture&quot;</span><span class="s1">)</span>
+        <span class="s1">self.testing_engines[scope].add(engine)</span>
+
+    <span class="s2">def </span><span class="s1">_safe(self</span><span class="s3">, </span><span class="s1">fn):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">fn()</span>
+        <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s1">warnings.warn(</span>
+                <span class="s4">&quot;testing_reaper couldn't rollback/close connection: %s&quot; </span><span class="s1">% e</span>
+            <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">rollback_all(self):</span>
+        <span class="s2">for </span><span class="s1">rec </span><span class="s2">in </span><span class="s1">list(self.proxy_refs):</span>
+            <span class="s2">if </span><span class="s1">rec </span><span class="s2">is not None and </span><span class="s1">rec.is_valid:</span>
+                <span class="s1">self._safe(rec.rollback)</span>
+
+    <span class="s2">def </span><span class="s1">checkin_all(self):</span>
+        <span class="s0"># run pool.checkin() for all ConnectionFairy instances we have</span>
+        <span class="s0"># tracked.</span>
+
+        <span class="s2">for </span><span class="s1">rec </span><span class="s2">in </span><span class="s1">list(self.proxy_refs):</span>
+            <span class="s2">if </span><span class="s1">rec </span><span class="s2">is not None and </span><span class="s1">rec.is_valid:</span>
+                <span class="s1">self.dbapi_connections.discard(rec.dbapi_connection)</span>
+                <span class="s1">self._safe(rec._checkin)</span>
+
+        <span class="s0"># for fairy refs that were GCed and could not close the connection,</span>
+        <span class="s0"># such as asyncio, roll back those remaining connections</span>
+        <span class="s2">for </span><span class="s1">con </span><span class="s2">in </span><span class="s1">self.dbapi_connections:</span>
+            <span class="s1">self._safe(con.rollback)</span>
+        <span class="s1">self.dbapi_connections.clear()</span>
+
+    <span class="s2">def </span><span class="s1">close_all(self):</span>
+        <span class="s1">self.checkin_all()</span>
+
+    <span class="s2">def </span><span class="s1">prepare_for_drop_tables(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s0"># don't do aggressive checks for third party test suites</span>
+        <span class="s2">if not </span><span class="s1">config.bootstrapped_as_sqlalchemy:</span>
+            <span class="s2">return</span>
+
+        <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">provision</span>
+
+        <span class="s1">provision.prepare_for_drop_tables(connection.engine.url</span><span class="s3">, </span><span class="s1">connection)</span>
+
+    <span class="s2">def </span><span class="s1">_drop_testing_engines(self</span><span class="s3">, </span><span class="s1">scope):</span>
+        <span class="s1">eng = self.testing_engines[scope]</span>
+        <span class="s2">for </span><span class="s1">rec </span><span class="s2">in </span><span class="s1">list(eng):</span>
+            <span class="s2">for </span><span class="s1">proxy_ref </span><span class="s2">in </span><span class="s1">list(self.proxy_refs):</span>
+                <span class="s2">if </span><span class="s1">proxy_ref </span><span class="s2">is not None and </span><span class="s1">proxy_ref.is_valid:</span>
+                    <span class="s2">if </span><span class="s1">(</span>
+                        <span class="s1">proxy_ref._pool </span><span class="s2">is not None</span>
+                        <span class="s2">and </span><span class="s1">proxy_ref._pool </span><span class="s2">is </span><span class="s1">rec.pool</span>
+                    <span class="s1">):</span>
+                        <span class="s1">self._safe(proxy_ref._checkin)</span>
+
+            <span class="s2">if </span><span class="s1">hasattr(rec</span><span class="s3">, </span><span class="s4">&quot;sync_engine&quot;</span><span class="s1">):</span>
+                <span class="s1">await_only(rec.dispose())</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">rec.dispose()</span>
+        <span class="s1">eng.clear()</span>
+
+    <span class="s2">def </span><span class="s1">after_test(self):</span>
+        <span class="s1">self._drop_testing_engines(</span><span class="s4">&quot;function&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">after_test_outside_fixtures(self</span><span class="s3">, </span><span class="s1">test):</span>
+        <span class="s0"># don't do aggressive checks for third party test suites</span>
+        <span class="s2">if not </span><span class="s1">config.bootstrapped_as_sqlalchemy:</span>
+            <span class="s2">return</span>
+
+        <span class="s2">if </span><span class="s1">test.__class__.__leave_connections_for_teardown__:</span>
+            <span class="s2">return</span>
+
+        <span class="s1">self.checkin_all()</span>
+
+        <span class="s0"># on PostgreSQL, this will test for any &quot;idle in transaction&quot;</span>
+        <span class="s0"># connections.   useful to identify tests with unusual patterns</span>
+        <span class="s0"># that can't be cleaned up correctly.</span>
+        <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">provision</span>
+
+        <span class="s2">with </span><span class="s1">config.db.connect() </span><span class="s2">as </span><span class="s1">conn:</span>
+            <span class="s1">provision.prepare_for_drop_tables(conn.engine.url</span><span class="s3">, </span><span class="s1">conn)</span>
+
+    <span class="s2">def </span><span class="s1">stop_test_class_inside_fixtures(self):</span>
+        <span class="s1">self.checkin_all()</span>
+        <span class="s1">self._drop_testing_engines(</span><span class="s4">&quot;function&quot;</span><span class="s1">)</span>
+        <span class="s1">self._drop_testing_engines(</span><span class="s4">&quot;class&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">stop_test_class_outside_fixtures(self):</span>
+        <span class="s0"># ensure no refs to checked out connections at all.</span>
+
+        <span class="s2">if </span><span class="s1">pool.base._strong_ref_connection_records:</span>
+            <span class="s1">gc_collect()</span>
+
+            <span class="s2">if </span><span class="s1">pool.base._strong_ref_connection_records:</span>
+                <span class="s1">ln = len(pool.base._strong_ref_connection_records)</span>
+                <span class="s1">pool.base._strong_ref_connection_records.clear()</span>
+                <span class="s2">assert </span><span class="s1">(</span>
+                    <span class="s2">False</span>
+                <span class="s1">)</span><span class="s3">, </span><span class="s4">&quot;%d connection recs not cleared after test suite&quot; </span><span class="s1">% (ln)</span>
+
+    <span class="s2">def </span><span class="s1">final_cleanup(self):</span>
+        <span class="s1">self.checkin_all()</span>
+        <span class="s2">for </span><span class="s1">scope </span><span class="s2">in </span><span class="s1">self.testing_engines:</span>
+            <span class="s1">self._drop_testing_engines(scope)</span>
+
+    <span class="s2">def </span><span class="s1">assert_all_closed(self):</span>
+        <span class="s2">for </span><span class="s1">rec </span><span class="s2">in </span><span class="s1">self.proxy_refs:</span>
+            <span class="s2">if </span><span class="s1">rec.is_valid:</span>
+                <span class="s2">assert False</span>
+
+
+<span class="s1">testing_reaper = ConnectionKiller()</span>
+
+
+<span class="s1">@decorator</span>
+<span class="s2">def </span><span class="s1">assert_conns_closed(fn</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">fn(*args</span><span class="s3">, </span><span class="s1">**kw)</span>
+    <span class="s2">finally</span><span class="s1">:</span>
+        <span class="s1">testing_reaper.assert_all_closed()</span>
+
+
+<span class="s1">@decorator</span>
+<span class="s2">def </span><span class="s1">rollback_open_connections(fn</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s5">&quot;&quot;&quot;Decorator that rolls back all open connections after fn execution.&quot;&quot;&quot;</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">fn(*args</span><span class="s3">, </span><span class="s1">**kw)</span>
+    <span class="s2">finally</span><span class="s1">:</span>
+        <span class="s1">testing_reaper.rollback_all()</span>
+
+
+<span class="s1">@decorator</span>
+<span class="s2">def </span><span class="s1">close_first(fn</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s5">&quot;&quot;&quot;Decorator that closes all connections before fn execution.&quot;&quot;&quot;</span>
+
+    <span class="s1">testing_reaper.checkin_all()</span>
+    <span class="s1">fn(*args</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+
+<span class="s1">@decorator</span>
+<span class="s2">def </span><span class="s1">close_open_connections(fn</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s5">&quot;&quot;&quot;Decorator that closes all connections after fn execution.&quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">fn(*args</span><span class="s3">, </span><span class="s1">**kw)</span>
+    <span class="s2">finally</span><span class="s1">:</span>
+        <span class="s1">testing_reaper.checkin_all()</span>
+
+
+<span class="s2">def </span><span class="s1">all_dialects(exclude=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s2">import </span><span class="s1">sqlalchemy.dialects </span><span class="s2">as </span><span class="s1">d</span>
+
+    <span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">d.__all__:</span>
+        <span class="s0"># TEMPORARY</span>
+        <span class="s2">if </span><span class="s1">exclude </span><span class="s2">and </span><span class="s1">name </span><span class="s2">in </span><span class="s1">exclude:</span>
+            <span class="s2">continue</span>
+        <span class="s1">mod = getattr(d</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">mod:</span>
+            <span class="s1">mod = getattr(</span>
+                <span class="s1">__import__(</span><span class="s4">&quot;sqlalchemy.dialects.%s&quot; </span><span class="s1">% name).dialects</span><span class="s3">, </span><span class="s1">name</span>
+            <span class="s1">)</span>
+        <span class="s2">yield </span><span class="s1">mod.dialect()</span>
+
+
+<span class="s2">class </span><span class="s1">ReconnectFixture:</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">dbapi):</span>
+        <span class="s1">self.dbapi = dbapi</span>
+        <span class="s1">self.connections = []</span>
+        <span class="s1">self.is_stopped = </span><span class="s2">False</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__(self</span><span class="s3">, </span><span class="s1">key):</span>
+        <span class="s2">return </span><span class="s1">getattr(self.dbapi</span><span class="s3">, </span><span class="s1">key)</span>
+
+    <span class="s2">def </span><span class="s1">connect(self</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">conn = self.dbapi.connect(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+        <span class="s2">if </span><span class="s1">self.is_stopped:</span>
+            <span class="s1">self._safe(conn.close)</span>
+            <span class="s1">curs = conn.cursor()  </span><span class="s0"># should fail on Oracle etc.</span>
+            <span class="s0"># should fail for everything that didn't fail</span>
+            <span class="s0"># above, connection is closed</span>
+            <span class="s1">curs.execute(</span><span class="s4">&quot;select 1&quot;</span><span class="s1">)</span>
+            <span class="s2">assert False</span><span class="s3">, </span><span class="s4">&quot;simulated connect failure didn't work&quot;</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.connections.append(conn)</span>
+            <span class="s2">return </span><span class="s1">conn</span>
+
+    <span class="s2">def </span><span class="s1">_safe(self</span><span class="s3">, </span><span class="s1">fn):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">fn()</span>
+        <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s1">warnings.warn(</span><span class="s4">&quot;ReconnectFixture couldn't close connection: %s&quot; </span><span class="s1">% e)</span>
+
+    <span class="s2">def </span><span class="s1">shutdown(self</span><span class="s3">, </span><span class="s1">stop=</span><span class="s2">False</span><span class="s1">):</span>
+        <span class="s0"># TODO: this doesn't cover all cases</span>
+        <span class="s0"># as nicely as we'd like, namely MySQLdb.</span>
+        <span class="s0"># would need to implement R. Brewer's</span>
+        <span class="s0"># proxy server idea to get better</span>
+        <span class="s0"># coverage.</span>
+        <span class="s1">self.is_stopped = stop</span>
+        <span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">list(self.connections):</span>
+            <span class="s1">self._safe(c.close)</span>
+        <span class="s1">self.connections = []</span>
+
+    <span class="s2">def </span><span class="s1">restart(self):</span>
+        <span class="s1">self.is_stopped = </span><span class="s2">False</span>
+
+
+<span class="s2">def </span><span class="s1">reconnecting_engine(url=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">options=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s1">url = url </span><span class="s2">or </span><span class="s1">config.db.url</span>
+    <span class="s1">dbapi = config.db.dialect.dbapi</span>
+    <span class="s2">if not </span><span class="s1">options:</span>
+        <span class="s1">options = {}</span>
+    <span class="s1">options[</span><span class="s4">&quot;module&quot;</span><span class="s1">] = ReconnectFixture(dbapi)</span>
+    <span class="s1">engine = testing_engine(url</span><span class="s3">, </span><span class="s1">options)</span>
+    <span class="s1">_dispose = engine.dispose</span>
+
+    <span class="s2">def </span><span class="s1">dispose():</span>
+        <span class="s1">engine.dialect.dbapi.shutdown()</span>
+        <span class="s1">engine.dialect.dbapi.is_stopped = </span><span class="s2">False</span>
+        <span class="s1">_dispose()</span>
+
+    <span class="s1">engine.test_shutdown = engine.dialect.dbapi.shutdown</span>
+    <span class="s1">engine.test_restart = engine.dialect.dbapi.restart</span>
+    <span class="s1">engine.dispose = dispose</span>
+    <span class="s2">return </span><span class="s1">engine</span>
+
+
+<span class="s1">@typing.overload</span>
+<span class="s2">def </span><span class="s1">testing_engine(</span>
+    <span class="s1">url: Optional[URL] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">options: Optional[Dict[str</span><span class="s3">, </span><span class="s1">Any]] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">asyncio: Literal[</span><span class="s2">False</span><span class="s1">] = </span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">transfer_staticpool: bool = </span><span class="s2">False</span><span class="s3">,</span>
+<span class="s1">) -&gt; Engine: ...</span>
+
+
+<span class="s1">@typing.overload</span>
+<span class="s2">def </span><span class="s1">testing_engine(</span>
+    <span class="s1">url: Optional[URL] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">options: Optional[Dict[str</span><span class="s3">, </span><span class="s1">Any]] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">asyncio: Literal[</span><span class="s2">True</span><span class="s1">] = </span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">transfer_staticpool: bool = </span><span class="s2">False</span><span class="s3">,</span>
+<span class="s1">) -&gt; AsyncEngine: ...</span>
+
+
+<span class="s2">def </span><span class="s1">testing_engine(</span>
+    <span class="s1">url=</span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">options=</span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">asyncio=</span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">transfer_staticpool=</span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">share_pool=</span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">_sqlite_savepoint=</span><span class="s2">False</span><span class="s3">,</span>
+<span class="s1">):</span>
+    <span class="s2">if </span><span class="s1">asyncio:</span>
+        <span class="s2">assert not </span><span class="s1">_sqlite_savepoint</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.ext.asyncio </span><span class="s2">import </span><span class="s1">(</span>
+            <span class="s1">create_async_engine </span><span class="s2">as </span><span class="s1">create_engine</span><span class="s3">,</span>
+        <span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy </span><span class="s2">import </span><span class="s1">create_engine</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.engine.url </span><span class="s2">import </span><span class="s1">make_url</span>
+
+    <span class="s2">if not </span><span class="s1">options:</span>
+        <span class="s1">use_reaper = </span><span class="s2">True</span>
+        <span class="s1">scope = </span><span class="s4">&quot;function&quot;</span>
+        <span class="s1">sqlite_savepoint = </span><span class="s2">False</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">use_reaper = options.pop(</span><span class="s4">&quot;use_reaper&quot;</span><span class="s3">, </span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s1">scope = options.pop(</span><span class="s4">&quot;scope&quot;</span><span class="s3">, </span><span class="s4">&quot;function&quot;</span><span class="s1">)</span>
+        <span class="s1">sqlite_savepoint = options.pop(</span><span class="s4">&quot;sqlite_savepoint&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span>
+
+    <span class="s1">url = url </span><span class="s2">or </span><span class="s1">config.db.url</span>
+
+    <span class="s1">url = make_url(url)</span>
+    <span class="s2">if </span><span class="s1">options </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">config.db </span><span class="s2">is None or </span><span class="s1">url.drivername == config.db.url.drivername:</span>
+            <span class="s1">options = config.db_opts</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">options = {}</span>
+    <span class="s2">elif </span><span class="s1">config.db </span><span class="s2">is not None and </span><span class="s1">url.drivername == config.db.url.drivername:</span>
+        <span class="s1">default_opt = config.db_opts.copy()</span>
+        <span class="s1">default_opt.update(options)</span>
+
+    <span class="s1">engine = create_engine(url</span><span class="s3">, </span><span class="s1">**options)</span>
+
+    <span class="s2">if </span><span class="s1">sqlite_savepoint </span><span class="s2">and </span><span class="s1">engine.name == </span><span class="s4">&quot;sqlite&quot;</span><span class="s1">:</span>
+        <span class="s0"># apply SQLite savepoint workaround</span>
+        <span class="s1">@event.listens_for(engine</span><span class="s3">, </span><span class="s4">&quot;connect&quot;</span><span class="s1">)</span>
+        <span class="s2">def </span><span class="s1">do_connect(dbapi_connection</span><span class="s3">, </span><span class="s1">connection_record):</span>
+            <span class="s1">dbapi_connection.isolation_level = </span><span class="s2">None</span>
+
+        <span class="s1">@event.listens_for(engine</span><span class="s3">, </span><span class="s4">&quot;begin&quot;</span><span class="s1">)</span>
+        <span class="s2">def </span><span class="s1">do_begin(conn):</span>
+            <span class="s1">conn.exec_driver_sql(</span><span class="s4">&quot;BEGIN&quot;</span><span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">transfer_staticpool:</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.pool </span><span class="s2">import </span><span class="s1">StaticPool</span>
+
+        <span class="s2">if </span><span class="s1">config.db </span><span class="s2">is not None and </span><span class="s1">isinstance(config.db.pool</span><span class="s3">, </span><span class="s1">StaticPool):</span>
+            <span class="s1">use_reaper = </span><span class="s2">False</span>
+            <span class="s1">engine.pool._transfer_from(config.db.pool)</span>
+    <span class="s2">elif </span><span class="s1">share_pool:</span>
+        <span class="s1">engine.pool = config.db.pool</span>
+
+    <span class="s2">if </span><span class="s1">scope == </span><span class="s4">&quot;global&quot;</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">asyncio:</span>
+            <span class="s1">engine.sync_engine._has_events = </span><span class="s2">True</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">engine._has_events = (</span>
+                <span class="s2">True  </span><span class="s0"># enable event blocks, helps with profiling</span>
+            <span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">(</span>
+        <span class="s1">isinstance(engine.pool</span><span class="s3">, </span><span class="s1">pool.QueuePool)</span>
+        <span class="s2">and </span><span class="s4">&quot;pool&quot; </span><span class="s2">not in </span><span class="s1">options</span>
+        <span class="s2">and </span><span class="s4">&quot;pool_timeout&quot; </span><span class="s2">not in </span><span class="s1">options</span>
+        <span class="s2">and </span><span class="s4">&quot;max_overflow&quot; </span><span class="s2">not in </span><span class="s1">options</span>
+    <span class="s1">):</span>
+        <span class="s1">engine.pool._timeout = </span><span class="s6">0</span>
+        <span class="s1">engine.pool._max_overflow = </span><span class="s6">0</span>
+    <span class="s2">if </span><span class="s1">use_reaper:</span>
+        <span class="s1">testing_reaper.add_engine(engine</span><span class="s3">, </span><span class="s1">scope)</span>
+
+    <span class="s2">return </span><span class="s1">engine</span>
+
+
+<span class="s2">def </span><span class="s1">mock_engine(dialect_name=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Provides a mocking engine based on the current testing.db. 
+ 
+    This is normally used to test DDL generation flow as emitted 
+    by an Engine. 
+ 
+    It should not be used in other cases, as assert_compile() and 
+    assert_sql_execution() are much better choices with fewer 
+    moving parts. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">from </span><span class="s1">sqlalchemy </span><span class="s2">import </span><span class="s1">create_mock_engine</span>
+
+    <span class="s2">if not </span><span class="s1">dialect_name:</span>
+        <span class="s1">dialect_name = config.db.name</span>
+
+    <span class="s1">buffer = []</span>
+
+    <span class="s2">def </span><span class="s1">executor(sql</span><span class="s3">, </span><span class="s1">*a</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s1">buffer.append(sql)</span>
+
+    <span class="s2">def </span><span class="s1">assert_sql(stmts):</span>
+        <span class="s1">recv = [re.sub(</span><span class="s4">r&quot;[\n\t]&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">str(s)) </span><span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s1">buffer]</span>
+        <span class="s2">assert </span><span class="s1">recv == stmts</span><span class="s3">, </span><span class="s1">recv</span>
+
+    <span class="s2">def </span><span class="s1">print_sql():</span>
+        <span class="s1">d = engine.dialect</span>
+        <span class="s2">return </span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot;</span><span class="s1">.join(str(s.compile(dialect=d)) </span><span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s1">engine.mock)</span>
+
+    <span class="s1">engine = create_mock_engine(dialect_name + </span><span class="s4">&quot;://&quot;</span><span class="s3">, </span><span class="s1">executor)</span>
+    <span class="s2">assert not </span><span class="s1">hasattr(engine</span><span class="s3">, </span><span class="s4">&quot;mock&quot;</span><span class="s1">)</span>
+    <span class="s1">engine.mock = buffer</span>
+    <span class="s1">engine.assert_sql = assert_sql</span>
+    <span class="s1">engine.print_sql = print_sql</span>
+    <span class="s2">return </span><span class="s1">engine</span>
+
+
+<span class="s2">class </span><span class="s1">DBAPIProxyCursor:</span>
+    <span class="s5">&quot;&quot;&quot;Proxy a DBAPI cursor. 
+ 
+    Tests can provide subclasses of this to intercept 
+    DBAPI-level cursor operations. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">engine</span><span class="s3">, </span><span class="s1">conn</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.engine = engine</span>
+        <span class="s1">self.connection = conn</span>
+        <span class="s1">self.cursor = conn.cursor(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s2">def </span><span class="s1">execute(self</span><span class="s3">, </span><span class="s1">stmt</span><span class="s3">, </span><span class="s1">parameters=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">parameters:</span>
+            <span class="s2">return </span><span class="s1">self.cursor.execute(stmt</span><span class="s3">, </span><span class="s1">parameters</span><span class="s3">, </span><span class="s1">**kw)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self.cursor.execute(stmt</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">executemany(self</span><span class="s3">, </span><span class="s1">stmt</span><span class="s3">, </span><span class="s1">params</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">self.cursor.executemany(stmt</span><span class="s3">, </span><span class="s1">params</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">__iter__(self):</span>
+        <span class="s2">return </span><span class="s1">iter(self.cursor)</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__(self</span><span class="s3">, </span><span class="s1">key):</span>
+        <span class="s2">return </span><span class="s1">getattr(self.cursor</span><span class="s3">, </span><span class="s1">key)</span>
+
+
+<span class="s2">class </span><span class="s1">DBAPIProxyConnection:</span>
+    <span class="s5">&quot;&quot;&quot;Proxy a DBAPI connection. 
+ 
+    Tests can provide subclasses of this to intercept 
+    DBAPI-level connection operations. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">engine</span><span class="s3">, </span><span class="s1">conn</span><span class="s3">, </span><span class="s1">cursor_cls):</span>
+        <span class="s1">self.conn = conn</span>
+        <span class="s1">self.engine = engine</span>
+        <span class="s1">self.cursor_cls = cursor_cls</span>
+
+    <span class="s2">def </span><span class="s1">cursor(self</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+        <span class="s2">return </span><span class="s1">self.cursor_cls(self.engine</span><span class="s3">, </span><span class="s1">self.conn</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s2">def </span><span class="s1">close(self):</span>
+        <span class="s1">self.conn.close()</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__(self</span><span class="s3">, </span><span class="s1">key):</span>
+        <span class="s2">return </span><span class="s1">getattr(self.conn</span><span class="s3">, </span><span class="s1">key)</span>
+</pre>
+</body>
+</html>

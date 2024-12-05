@@ -1,0 +1,2593 @@
+<html>
+<head>
+<title>strategy_options.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+strategy_options.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/strategy_options.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">&quot;&quot;&quot; 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">orm_util</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">insp_is_aliased_class</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">insp_is_attribute</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">insp_is_mapper</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">insp_is_mapper_property</span>
+<span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">QueryableAttribute</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">InspectionAttr</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">LoaderOption</span>
+<span class="s3">from </span><span class="s1">.path_registry </span><span class="s3">import </span><span class="s1">_DEFAULT_TOKEN</span>
+<span class="s3">from </span><span class="s1">.path_registry </span><span class="s3">import </span><span class="s1">_StrPathToken</span>
+<span class="s3">from </span><span class="s1">.path_registry </span><span class="s3">import </span><span class="s1">_WILDCARD_TOKEN</span>
+<span class="s3">from </span><span class="s1">.path_registry </span><span class="s3">import </span><span class="s1">AbstractEntityRegistry</span>
+<span class="s3">from </span><span class="s1">.path_registry </span><span class="s3">import </span><span class="s1">path_is_property</span>
+<span class="s3">from </span><span class="s1">.path_registry </span><span class="s3">import </span><span class="s1">PathRegistry</span>
+<span class="s3">from </span><span class="s1">.path_registry </span><span class="s3">import </span><span class="s1">TokenRegistry</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">_orm_full_deannotate</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">AliasedInsp</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">sa_exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">inspect</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">and_</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">cache_key</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">coercions</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">roles</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">traversals</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">visitors</span>
+<span class="s3">from </span><span class="s1">..sql.base </span><span class="s3">import </span><span class="s1">_generative</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Final</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Self</span>
+
+<span class="s1">_RELATIONSHIP_TOKEN: Final[Literal[</span><span class="s4">&quot;relationship&quot;</span><span class="s1">]] = </span><span class="s4">&quot;relationship&quot;</span>
+<span class="s1">_COLUMN_TOKEN: Final[Literal[</span><span class="s4">&quot;column&quot;</span><span class="s1">]] = </span><span class="s4">&quot;column&quot;</span>
+
+<span class="s1">_FN = TypeVar(</span><span class="s4">&quot;_FN&quot;</span><span class="s5">, </span><span class="s1">bound=</span><span class="s4">&quot;Callable[..., Any]&quot;</span><span class="s1">)</span>
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_EntityType</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_InternalEntityType</span>
+    <span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">_MapperEntity</span>
+    <span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">ORMCompileState</span>
+    <span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">QueryContext</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_StrategyKey</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">MapperProperty</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">ORMOption</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.path_registry </span><span class="s3">import </span><span class="s1">_PathRepresentation</span>
+    <span class="s3">from </span><span class="s1">..sql._typing </span><span class="s3">import </span><span class="s1">_ColumnExpressionArgument</span>
+    <span class="s3">from </span><span class="s1">..sql._typing </span><span class="s3">import </span><span class="s1">_FromClauseArgument</span>
+    <span class="s3">from </span><span class="s1">..sql.cache_key </span><span class="s3">import </span><span class="s1">_CacheKeyTraversalType</span>
+    <span class="s3">from </span><span class="s1">..sql.cache_key </span><span class="s3">import </span><span class="s1">CacheKey</span>
+
+
+<span class="s1">_AttrType = Union[Literal[</span><span class="s4">&quot;*&quot;</span><span class="s1">]</span><span class="s5">, </span><span class="s4">&quot;QueryableAttribute[Any]&quot;</span><span class="s1">]</span>
+
+<span class="s1">_WildcardKeyType = Literal[</span><span class="s4">&quot;relationship&quot;</span><span class="s5">, </span><span class="s4">&quot;column&quot;</span><span class="s1">]</span>
+<span class="s1">_StrategySpec = Dict[str</span><span class="s5">, </span><span class="s1">Any]</span>
+<span class="s1">_OptsType = Dict[str</span><span class="s5">, </span><span class="s1">Any]</span>
+<span class="s1">_AttrGroupType = Tuple[_AttrType</span><span class="s5">, </span><span class="s1">...]</span>
+
+
+<span class="s3">class </span><span class="s1">_AbstractLoad(traversals.GenerativeOnTraversal</span><span class="s5">, </span><span class="s1">LoaderOption):</span>
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;propagate_to_loaders&quot;</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s1">_is_strategy_option = </span><span class="s3">True</span>
+    <span class="s1">propagate_to_loaders: bool</span>
+
+    <span class="s3">def </span><span class="s1">contains_eager(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attr: _AttrType</span><span class="s5">,</span>
+        <span class="s1">alias: Optional[_FromClauseArgument] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">_is_chain: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">_propagate_to_loaders: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s2">r&quot;&quot;&quot;Indicate that the given attribute should be eagerly loaded from 
+        columns stated manually in the query. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        The option is used in conjunction with an explicit join that loads 
+        the desired rows, i.e.:: 
+ 
+            sess.query(Order).join(Order.user).options( 
+                contains_eager(Order.user) 
+            ) 
+ 
+        The above query would join from the ``Order`` entity to its related 
+        ``User`` entity, and the returned ``Order`` objects would have the 
+        ``Order.user`` attribute pre-populated. 
+ 
+        It may also be used for customizing the entries in an eagerly loaded 
+        collection; queries will normally want to use the 
+        :ref:`orm_queryguide_populate_existing` execution option assuming the 
+        primary collection of parent objects may already have been loaded:: 
+ 
+            sess.query(User).join(User.addresses).filter( 
+                Address.email_address.like(&quot;%@aol.com&quot;) 
+            ).options(contains_eager(User.addresses)).populate_existing() 
+ 
+        See the section :ref:`contains_eager` for complete usage details. 
+ 
+        .. seealso:: 
+ 
+            :ref:`loading_toplevel` 
+ 
+            :ref:`contains_eager` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">alias </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">if not </span><span class="s1">isinstance(alias</span><span class="s5">, </span><span class="s1">str):</span>
+                <span class="s1">coerced_alias = coercions.expect(roles.FromClauseRole</span><span class="s5">, </span><span class="s1">alias)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">util.warn_deprecated(</span>
+                    <span class="s4">&quot;Passing a string name for the 'alias' argument to &quot;</span>
+                    <span class="s4">&quot;'contains_eager()` is deprecated, and will not work in a &quot;</span>
+                    <span class="s4">&quot;future release.  Please use a sqlalchemy.alias() or &quot;</span>
+                    <span class="s4">&quot;sqlalchemy.orm.aliased() construct.&quot;</span><span class="s5">,</span>
+                    <span class="s1">version=</span><span class="s4">&quot;1.4&quot;</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s1">coerced_alias = alias</span>
+
+        <span class="s3">elif </span><span class="s1">getattr(attr</span><span class="s5">, </span><span class="s4">&quot;_of_type&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">):</span>
+            <span class="s3">assert </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">QueryableAttribute)</span>
+            <span class="s1">ot: Optional[_InternalEntityType[Any]] = inspect(attr._of_type)</span>
+            <span class="s3">assert </span><span class="s1">ot </span><span class="s3">is not None</span>
+            <span class="s1">coerced_alias = ot.selectable</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">coerced_alias = </span><span class="s3">None</span>
+
+        <span class="s1">cloned = self._set_relationship_strategy(</span>
+            <span class="s1">attr</span><span class="s5">,</span>
+            <span class="s1">{</span><span class="s4">&quot;lazy&quot;</span><span class="s1">: </span><span class="s4">&quot;joined&quot;</span><span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">propagate_to_loaders=_propagate_to_loaders</span><span class="s5">,</span>
+            <span class="s1">opts={</span><span class="s4">&quot;eager_from_alias&quot;</span><span class="s1">: coerced_alias}</span><span class="s5">,</span>
+            <span class="s1">_reconcile_to_other=</span><span class="s3">True if </span><span class="s1">_is_chain </span><span class="s3">else None</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">cloned</span>
+
+    <span class="s3">def </span><span class="s1">load_only(self</span><span class="s5">, </span><span class="s1">*attrs: _AttrType</span><span class="s5">, </span><span class="s1">raiseload: bool = </span><span class="s3">False</span><span class="s1">) -&gt; Self:</span>
+        <span class="s2">r&quot;&quot;&quot;Indicate that for a particular entity, only the given list 
+        of column-based attribute names should be loaded; all others will be 
+        deferred. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        Example - given a class ``User``, load only the ``name`` and 
+        ``fullname`` attributes:: 
+ 
+            session.query(User).options(load_only(User.name, User.fullname)) 
+ 
+        Example - given a relationship ``User.addresses -&gt; Address``, specify 
+        subquery loading for the ``User.addresses`` collection, but on each 
+        ``Address`` object load only the ``email_address`` attribute:: 
+ 
+            session.query(User).options( 
+                subqueryload(User.addresses).load_only(Address.email_address) 
+            ) 
+ 
+        For a statement that has multiple entities, 
+        the lead entity can be 
+        specifically referred to using the :class:`_orm.Load` constructor:: 
+ 
+            stmt = ( 
+                select(User, Address) 
+                .join(User.addresses) 
+                .options( 
+                    Load(User).load_only(User.name, User.fullname), 
+                    Load(Address).load_only(Address.email_address), 
+                ) 
+            ) 
+ 
+        When used together with the 
+        :ref:`populate_existing &lt;orm_queryguide_populate_existing&gt;` 
+        execution option only the attributes listed will be refreshed. 
+ 
+        :param \*attrs: Attributes to be loaded, all others will be deferred. 
+ 
+        :param raiseload: raise :class:`.InvalidRequestError` rather than 
+         lazy loading a value when a deferred attribute is accessed. Used 
+         to prevent unwanted SQL from being emitted. 
+ 
+         .. versionadded:: 2.0 
+ 
+        .. seealso:: 
+ 
+            :ref:`orm_queryguide_column_deferral` - in the 
+            :ref:`queryguide_toplevel` 
+ 
+        :param \*attrs: Attributes to be loaded, all others will be deferred. 
+ 
+        :param raiseload: raise :class:`.InvalidRequestError` rather than 
+         lazy loading a value when a deferred attribute is accessed. Used 
+         to prevent unwanted SQL from being emitted. 
+ 
+         .. versionadded:: 2.0 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">cloned = self._set_column_strategy(</span>
+            <span class="s1">attrs</span><span class="s5">,</span>
+            <span class="s1">{</span><span class="s4">&quot;deferred&quot;</span><span class="s1">: </span><span class="s3">False</span><span class="s5">, </span><span class="s4">&quot;instrument&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">wildcard_strategy = {</span><span class="s4">&quot;deferred&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s5">, </span><span class="s4">&quot;instrument&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">raiseload:</span>
+            <span class="s1">wildcard_strategy[</span><span class="s4">&quot;raiseload&quot;</span><span class="s1">] = </span><span class="s3">True</span>
+
+        <span class="s1">cloned = cloned._set_column_strategy(</span>
+            <span class="s1">(</span><span class="s4">&quot;*&quot;</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">wildcard_strategy</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">cloned</span>
+
+    <span class="s3">def </span><span class="s1">joinedload(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attr: _AttrType</span><span class="s5">,</span>
+        <span class="s1">innerjoin: Optional[bool] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate that the given attribute should be loaded using joined 
+        eager loading. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        examples:: 
+ 
+            # joined-load the &quot;orders&quot; collection on &quot;User&quot; 
+            select(User).options(joinedload(User.orders)) 
+ 
+            # joined-load Order.items and then Item.keywords 
+            select(Order).options( 
+                joinedload(Order.items).joinedload(Item.keywords) 
+            ) 
+ 
+            # lazily load Order.items, but when Items are loaded, 
+            # joined-load the keywords collection 
+            select(Order).options( 
+                lazyload(Order.items).joinedload(Item.keywords) 
+            ) 
+ 
+        :param innerjoin: if ``True``, indicates that the joined eager load 
+         should use an inner join instead of the default of left outer join:: 
+ 
+            select(Order).options(joinedload(Order.user, innerjoin=True)) 
+ 
+        In order to chain multiple eager joins together where some may be 
+        OUTER and others INNER, right-nested joins are used to link them:: 
+ 
+            select(A).options( 
+                joinedload(A.bs, innerjoin=False).joinedload( 
+                    B.cs, innerjoin=True 
+                ) 
+            ) 
+ 
+        The above query, linking A.bs via &quot;outer&quot; join and B.cs via &quot;inner&quot; 
+        join would render the joins as &quot;a LEFT OUTER JOIN (b JOIN c)&quot;. When 
+        using older versions of SQLite (&lt; 3.7.16), this form of JOIN is 
+        translated to use full subqueries as this syntax is otherwise not 
+        directly supported. 
+ 
+        The ``innerjoin`` flag can also be stated with the term ``&quot;unnested&quot;``. 
+        This indicates that an INNER JOIN should be used, *unless* the join 
+        is linked to a LEFT OUTER JOIN to the left, in which case it 
+        will render as LEFT OUTER JOIN.  For example, supposing ``A.bs`` 
+        is an outerjoin:: 
+ 
+            select(A).options( 
+                joinedload(A.bs).joinedload(B.cs, innerjoin=&quot;unnested&quot;) 
+            ) 
+ 
+ 
+        The above join will render as &quot;a LEFT OUTER JOIN b LEFT OUTER JOIN c&quot;, 
+        rather than as &quot;a LEFT OUTER JOIN (b JOIN c)&quot;. 
+ 
+        .. note:: The &quot;unnested&quot; flag does **not** affect the JOIN rendered 
+            from a many-to-many association table, e.g. a table configured as 
+            :paramref:`_orm.relationship.secondary`, to the target table; for 
+            correctness of results, these joins are always INNER and are 
+            therefore right-nested if linked to an OUTER join. 
+ 
+        .. note:: 
+ 
+            The joins produced by :func:`_orm.joinedload` are **anonymously 
+            aliased**. The criteria by which the join proceeds cannot be 
+            modified, nor can the ORM-enabled :class:`_sql.Select` or legacy 
+            :class:`_query.Query` refer to these joins in any way, including 
+            ordering. See :ref:`zen_of_eager_loading` for further detail. 
+ 
+            To produce a specific SQL JOIN which is explicitly available, use 
+            :meth:`_sql.Select.join` and :meth:`_query.Query.join`. To combine 
+            explicit JOINs with eager loading of collections, use 
+            :func:`_orm.contains_eager`; see :ref:`contains_eager`. 
+ 
+        .. seealso:: 
+ 
+            :ref:`loading_toplevel` 
+ 
+            :ref:`joined_eager_loading` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">loader = self._set_relationship_strategy(</span>
+            <span class="s1">attr</span><span class="s5">,</span>
+            <span class="s1">{</span><span class="s4">&quot;lazy&quot;</span><span class="s1">: </span><span class="s4">&quot;joined&quot;</span><span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">opts=(</span>
+                <span class="s1">{</span><span class="s4">&quot;innerjoin&quot;</span><span class="s1">: innerjoin}</span>
+                <span class="s3">if </span><span class="s1">innerjoin </span><span class="s3">is not None</span>
+                <span class="s3">else </span><span class="s1">util.EMPTY_DICT</span>
+            <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">loader</span>
+
+    <span class="s3">def </span><span class="s1">subqueryload(self</span><span class="s5">, </span><span class="s1">attr: _AttrType) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate that the given attribute should be loaded using 
+        subquery eager loading. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        examples:: 
+ 
+            # subquery-load the &quot;orders&quot; collection on &quot;User&quot; 
+            select(User).options(subqueryload(User.orders)) 
+ 
+            # subquery-load Order.items and then Item.keywords 
+            select(Order).options( 
+                subqueryload(Order.items).subqueryload(Item.keywords) 
+            ) 
+ 
+            # lazily load Order.items, but when Items are loaded, 
+            # subquery-load the keywords collection 
+            select(Order).options( 
+                lazyload(Order.items).subqueryload(Item.keywords) 
+            ) 
+ 
+ 
+        .. seealso:: 
+ 
+            :ref:`loading_toplevel` 
+ 
+            :ref:`subquery_eager_loading` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._set_relationship_strategy(attr</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;lazy&quot;</span><span class="s1">: </span><span class="s4">&quot;subquery&quot;</span><span class="s1">})</span>
+
+    <span class="s3">def </span><span class="s1">selectinload(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attr: _AttrType</span><span class="s5">,</span>
+        <span class="s1">recursion_depth: Optional[int] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate that the given attribute should be loaded using 
+        SELECT IN eager loading. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        examples:: 
+ 
+            # selectin-load the &quot;orders&quot; collection on &quot;User&quot; 
+            select(User).options(selectinload(User.orders)) 
+ 
+            # selectin-load Order.items and then Item.keywords 
+            select(Order).options( 
+                selectinload(Order.items).selectinload(Item.keywords) 
+            ) 
+ 
+            # lazily load Order.items, but when Items are loaded, 
+            # selectin-load the keywords collection 
+            select(Order).options( 
+                lazyload(Order.items).selectinload(Item.keywords) 
+            ) 
+ 
+        :param recursion_depth: optional int; when set to a positive integer 
+         in conjunction with a self-referential relationship, 
+         indicates &quot;selectin&quot; loading will continue that many levels deep 
+         automatically until no items are found. 
+ 
+         .. note:: The :paramref:`_orm.selectinload.recursion_depth` option 
+            currently supports only self-referential relationships.  There 
+            is not yet an option to automatically traverse recursive structures 
+            with more than one relationship involved. 
+ 
+            Additionally, the :paramref:`_orm.selectinload.recursion_depth` 
+            parameter is new and experimental and should be treated as &quot;alpha&quot; 
+            status for the 2.0 series. 
+ 
+         .. versionadded:: 2.0 added 
+            :paramref:`_orm.selectinload.recursion_depth` 
+ 
+ 
+        .. seealso:: 
+ 
+            :ref:`loading_toplevel` 
+ 
+            :ref:`selectin_eager_loading` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._set_relationship_strategy(</span>
+            <span class="s1">attr</span><span class="s5">,</span>
+            <span class="s1">{</span><span class="s4">&quot;lazy&quot;</span><span class="s1">: </span><span class="s4">&quot;selectin&quot;</span><span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">opts={</span><span class="s4">&quot;recursion_depth&quot;</span><span class="s1">: recursion_depth}</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">lazyload(self</span><span class="s5">, </span><span class="s1">attr: _AttrType) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate that the given attribute should be loaded using &quot;lazy&quot; 
+        loading. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        .. seealso:: 
+ 
+            :ref:`loading_toplevel` 
+ 
+            :ref:`lazy_loading` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._set_relationship_strategy(attr</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;lazy&quot;</span><span class="s1">: </span><span class="s4">&quot;select&quot;</span><span class="s1">})</span>
+
+    <span class="s3">def </span><span class="s1">immediateload(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attr: _AttrType</span><span class="s5">,</span>
+        <span class="s1">recursion_depth: Optional[int] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate that the given attribute should be loaded using 
+        an immediate load with a per-attribute SELECT statement. 
+ 
+        The load is achieved using the &quot;lazyloader&quot; strategy and does not 
+        fire off any additional eager loaders. 
+ 
+        The :func:`.immediateload` option is superseded in general 
+        by the :func:`.selectinload` option, which performs the same task 
+        more efficiently by emitting a SELECT for all loaded objects. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        :param recursion_depth: optional int; when set to a positive integer 
+         in conjunction with a self-referential relationship, 
+         indicates &quot;selectin&quot; loading will continue that many levels deep 
+         automatically until no items are found. 
+ 
+         .. note:: The :paramref:`_orm.immediateload.recursion_depth` option 
+            currently supports only self-referential relationships.  There 
+            is not yet an option to automatically traverse recursive structures 
+            with more than one relationship involved. 
+ 
+         .. warning:: This parameter is new and experimental and should be 
+            treated as &quot;alpha&quot; status 
+ 
+         .. versionadded:: 2.0 added 
+            :paramref:`_orm.immediateload.recursion_depth` 
+ 
+ 
+        .. seealso:: 
+ 
+            :ref:`loading_toplevel` 
+ 
+            :ref:`selectin_eager_loading` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">loader = self._set_relationship_strategy(</span>
+            <span class="s1">attr</span><span class="s5">,</span>
+            <span class="s1">{</span><span class="s4">&quot;lazy&quot;</span><span class="s1">: </span><span class="s4">&quot;immediate&quot;</span><span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">opts={</span><span class="s4">&quot;recursion_depth&quot;</span><span class="s1">: recursion_depth}</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">loader</span>
+
+    <span class="s3">def </span><span class="s1">noload(self</span><span class="s5">, </span><span class="s1">attr: _AttrType) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate that the given relationship attribute should remain 
+        unloaded. 
+ 
+        The relationship attribute will return ``None`` when accessed without 
+        producing any loading effect. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        :func:`_orm.noload` applies to :func:`_orm.relationship` attributes 
+        only. 
+ 
+        .. legacy:: The :func:`_orm.noload` option is **legacy**.  As it 
+           forces collections to be empty, which invariably leads to 
+           non-intuitive and difficult to predict results.  There are no 
+           legitimate uses for this option in modern SQLAlchemy. 
+ 
+        .. seealso:: 
+ 
+            :ref:`loading_toplevel` 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">self._set_relationship_strategy(attr</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;lazy&quot;</span><span class="s1">: </span><span class="s4">&quot;noload&quot;</span><span class="s1">})</span>
+
+    <span class="s3">def </span><span class="s1">raiseload(self</span><span class="s5">, </span><span class="s1">attr: _AttrType</span><span class="s5">, </span><span class="s1">sql_only: bool = </span><span class="s3">False</span><span class="s1">) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate that the given attribute should raise an error if accessed. 
+ 
+        A relationship attribute configured with :func:`_orm.raiseload` will 
+        raise an :exc:`~sqlalchemy.exc.InvalidRequestError` upon access. The 
+        typical way this is useful is when an application is attempting to 
+        ensure that all relationship attributes that are accessed in a 
+        particular context would have been already loaded via eager loading. 
+        Instead of having to read through SQL logs to ensure lazy loads aren't 
+        occurring, this strategy will cause them to raise immediately. 
+ 
+        :func:`_orm.raiseload` applies to :func:`_orm.relationship` attributes 
+        only. In order to apply raise-on-SQL behavior to a column-based 
+        attribute, use the :paramref:`.orm.defer.raiseload` parameter on the 
+        :func:`.defer` loader option. 
+ 
+        :param sql_only: if True, raise only if the lazy load would emit SQL, 
+         but not if it is only checking the identity map, or determining that 
+         the related value should just be None due to missing keys. When False, 
+         the strategy will raise for all varieties of relationship loading. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        .. seealso:: 
+ 
+            :ref:`loading_toplevel` 
+ 
+            :ref:`prevent_lazy_with_raiseload` 
+ 
+            :ref:`orm_queryguide_deferred_raiseload` 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">self._set_relationship_strategy(</span>
+            <span class="s1">attr</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;lazy&quot;</span><span class="s1">: </span><span class="s4">&quot;raise_on_sql&quot; </span><span class="s3">if </span><span class="s1">sql_only </span><span class="s3">else </span><span class="s4">&quot;raise&quot;</span><span class="s1">}</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">defaultload(self</span><span class="s5">, </span><span class="s1">attr: _AttrType) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate an attribute should load using its predefined loader style. 
+ 
+        The behavior of this loading option is to not change the current 
+        loading style of the attribute, meaning that the previously configured 
+        one is used or, if no previous style was selected, the default 
+        loading will be used. 
+ 
+        This method is used to link to other loader options further into 
+        a chain of attributes without altering the loader style of the links 
+        along the chain.  For example, to set joined eager loading for an 
+        element of an element:: 
+ 
+            session.query(MyClass).options( 
+                defaultload(MyClass.someattribute).joinedload( 
+                    MyOtherClass.someotherattribute 
+                ) 
+            ) 
+ 
+        :func:`.defaultload` is also useful for setting column-level options on 
+        a related class, namely that of :func:`.defer` and :func:`.undefer`:: 
+ 
+            session.scalars( 
+                select(MyClass).options( 
+                    defaultload(MyClass.someattribute) 
+                    .defer(&quot;some_column&quot;) 
+                    .undefer(&quot;some_other_column&quot;) 
+                ) 
+            ) 
+ 
+        .. seealso:: 
+ 
+            :ref:`orm_queryguide_relationship_sub_options` 
+ 
+            :meth:`_orm.Load.options` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._set_relationship_strategy(attr</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">defer(self</span><span class="s5">, </span><span class="s1">key: _AttrType</span><span class="s5">, </span><span class="s1">raiseload: bool = </span><span class="s3">False</span><span class="s1">) -&gt; Self:</span>
+        <span class="s2">r&quot;&quot;&quot;Indicate that the given column-oriented attribute should be 
+        deferred, e.g. not loaded until accessed. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        e.g.:: 
+ 
+            from sqlalchemy.orm import defer 
+ 
+            session.query(MyClass).options( 
+                defer(MyClass.attribute_one), 
+                defer(MyClass.attribute_two) 
+            ) 
+ 
+        To specify a deferred load of an attribute on a related class, 
+        the path can be specified one token at a time, specifying the loading 
+        style for each link along the chain.  To leave the loading style 
+        for a link unchanged, use :func:`_orm.defaultload`:: 
+ 
+            session.query(MyClass).options( 
+                defaultload(MyClass.someattr).defer(RelatedClass.some_column) 
+            ) 
+ 
+        Multiple deferral options related to a relationship can be bundled 
+        at once using :meth:`_orm.Load.options`:: 
+ 
+ 
+            select(MyClass).options( 
+                defaultload(MyClass.someattr).options( 
+                    defer(RelatedClass.some_column), 
+                    defer(RelatedClass.some_other_column), 
+                    defer(RelatedClass.another_column) 
+                ) 
+            ) 
+ 
+        :param key: Attribute to be deferred. 
+ 
+        :param raiseload: raise :class:`.InvalidRequestError` rather than 
+         lazy loading a value when the deferred attribute is accessed. Used 
+         to prevent unwanted SQL from being emitted. 
+ 
+        .. versionadded:: 1.4 
+ 
+        .. seealso:: 
+ 
+            :ref:`orm_queryguide_column_deferral` - in the 
+            :ref:`queryguide_toplevel` 
+ 
+            :func:`_orm.load_only` 
+ 
+            :func:`_orm.undefer` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">strategy = {</span><span class="s4">&quot;deferred&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s5">, </span><span class="s4">&quot;instrument&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">raiseload:</span>
+            <span class="s1">strategy[</span><span class="s4">&quot;raiseload&quot;</span><span class="s1">] = </span><span class="s3">True</span>
+        <span class="s3">return </span><span class="s1">self._set_column_strategy((key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">, </span><span class="s1">strategy)</span>
+
+    <span class="s3">def </span><span class="s1">undefer(self</span><span class="s5">, </span><span class="s1">key: _AttrType) -&gt; Self:</span>
+        <span class="s2">r&quot;&quot;&quot;Indicate that the given column-oriented attribute should be 
+        undeferred, e.g. specified within the SELECT statement of the entity 
+        as a whole. 
+ 
+        The column being undeferred is typically set up on the mapping as a 
+        :func:`.deferred` attribute. 
+ 
+        This function is part of the :class:`_orm.Load` interface and supports 
+        both method-chained and standalone operation. 
+ 
+        Examples:: 
+ 
+            # undefer two columns 
+            session.query(MyClass).options( 
+                undefer(MyClass.col1), undefer(MyClass.col2) 
+            ) 
+ 
+            # undefer all columns specific to a single class using Load + * 
+            session.query(MyClass, MyOtherClass).options( 
+                Load(MyClass).undefer(&quot;*&quot;) 
+            ) 
+ 
+            # undefer a column on a related object 
+            select(MyClass).options( 
+                defaultload(MyClass.items).undefer(MyClass.text) 
+            ) 
+ 
+        :param key: Attribute to be undeferred. 
+ 
+        .. seealso:: 
+ 
+            :ref:`orm_queryguide_column_deferral` - in the 
+            :ref:`queryguide_toplevel` 
+ 
+            :func:`_orm.defer` 
+ 
+            :func:`_orm.undefer_group` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._set_column_strategy(</span>
+            <span class="s1">(key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;deferred&quot;</span><span class="s1">: </span><span class="s3">False</span><span class="s5">, </span><span class="s4">&quot;instrument&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">undefer_group(self</span><span class="s5">, </span><span class="s1">name: str) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate that columns within the given deferred group name should be 
+        undeferred. 
+ 
+        The columns being undeferred are set up on the mapping as 
+        :func:`.deferred` attributes and include a &quot;group&quot; name. 
+ 
+        E.g:: 
+ 
+            session.query(MyClass).options(undefer_group(&quot;large_attrs&quot;)) 
+ 
+        To undefer a group of attributes on a related entity, the path can be 
+        spelled out using relationship loader options, such as 
+        :func:`_orm.defaultload`:: 
+ 
+            select(MyClass).options( 
+                defaultload(&quot;someattr&quot;).undefer_group(&quot;large_attrs&quot;) 
+            ) 
+ 
+        .. seealso:: 
+ 
+            :ref:`orm_queryguide_column_deferral` - in the 
+            :ref:`queryguide_toplevel` 
+ 
+            :func:`_orm.defer` 
+ 
+            :func:`_orm.undefer` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._set_column_strategy(</span>
+            <span class="s1">(_WILDCARD_TOKEN</span><span class="s5">,</span><span class="s1">)</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">{</span><span class="s4">f&quot;undefer_group_</span><span class="s6">{</span><span class="s1">name</span><span class="s6">}</span><span class="s4">&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">with_expression(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">key: _AttrType</span><span class="s5">,</span>
+        <span class="s1">expression: _ColumnExpressionArgument[Any]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s2">r&quot;&quot;&quot;Apply an ad-hoc SQL expression to a &quot;deferred expression&quot; 
+        attribute. 
+ 
+        This option is used in conjunction with the 
+        :func:`_orm.query_expression` mapper-level construct that indicates an 
+        attribute which should be the target of an ad-hoc SQL expression. 
+ 
+        E.g.:: 
+ 
+            stmt = select(SomeClass).options( 
+                with_expression(SomeClass.x_y_expr, SomeClass.x + SomeClass.y) 
+            ) 
+ 
+        .. versionadded:: 1.2 
+ 
+        :param key: Attribute to be populated 
+ 
+        :param expr: SQL expression to be applied to the attribute. 
+ 
+        .. seealso:: 
+ 
+            :ref:`orm_queryguide_with_expression` - background and usage 
+            examples 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">expression = _orm_full_deannotate(</span>
+            <span class="s1">coercions.expect(roles.LabeledColumnExprRole</span><span class="s5">, </span><span class="s1">expression)</span>
+        <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">self._set_column_strategy(</span>
+            <span class="s1">(key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;query_expression&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span><span class="s5">, </span><span class="s1">extra_criteria=(expression</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">selectin_polymorphic(self</span><span class="s5">, </span><span class="s1">classes: Iterable[Type[Any]]) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Indicate an eager load should take place for all attributes 
+        specific to a subclass. 
+ 
+        This uses an additional SELECT with IN against all matched primary 
+        key values, and is the per-query analogue to the ``&quot;selectin&quot;`` 
+        setting on the :paramref:`.mapper.polymorphic_load` parameter. 
+ 
+        .. versionadded:: 1.2 
+ 
+        .. seealso:: 
+ 
+            :ref:`polymorphic_selectin` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self = self._set_class_strategy(</span>
+            <span class="s1">{</span><span class="s4">&quot;selectinload_polymorphic&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">opts={</span>
+                <span class="s4">&quot;entities&quot;</span><span class="s1">: tuple(</span>
+                    <span class="s1">sorted((inspect(cls) </span><span class="s3">for </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">classes)</span><span class="s5">, </span><span class="s1">key=id)</span>
+                <span class="s1">)</span>
+            <span class="s1">}</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_coerce_strat(self</span><span class="s5">, </span><span class="s1">strategy: _StrategySpec) -&gt; _StrategyKey: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_coerce_strat(self</span><span class="s5">, </span><span class="s1">strategy: Literal[</span><span class="s3">None</span><span class="s1">]) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s3">def </span><span class="s1">_coerce_strat(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">strategy: Optional[_StrategySpec]</span>
+    <span class="s1">) -&gt; Optional[_StrategyKey]:</span>
+        <span class="s3">if </span><span class="s1">strategy </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">strategy_key = tuple(sorted(strategy.items()))</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">strategy_key = </span><span class="s3">None</span>
+        <span class="s3">return </span><span class="s1">strategy_key</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s3">def </span><span class="s1">_set_relationship_strategy(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attr: _AttrType</span><span class="s5">,</span>
+        <span class="s1">strategy: Optional[_StrategySpec]</span><span class="s5">,</span>
+        <span class="s1">propagate_to_loaders: bool = </span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">opts: Optional[_OptsType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">_reconcile_to_other: Optional[bool] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s1">strategy_key = self._coerce_strat(strategy)</span>
+
+        <span class="s1">self._clone_for_bind_strategy(</span>
+            <span class="s1">(attr</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">strategy_key</span><span class="s5">,</span>
+            <span class="s1">_RELATIONSHIP_TOKEN</span><span class="s5">,</span>
+            <span class="s1">opts=opts</span><span class="s5">,</span>
+            <span class="s1">propagate_to_loaders=propagate_to_loaders</span><span class="s5">,</span>
+            <span class="s1">reconcile_to_other=_reconcile_to_other</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s3">def </span><span class="s1">_set_column_strategy(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attrs: Tuple[_AttrType</span><span class="s5">, </span><span class="s1">...]</span><span class="s5">,</span>
+        <span class="s1">strategy: Optional[_StrategySpec]</span><span class="s5">,</span>
+        <span class="s1">opts: Optional[_OptsType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">extra_criteria: Optional[Tuple[Any</span><span class="s5">, </span><span class="s1">...]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s1">strategy_key = self._coerce_strat(strategy)</span>
+
+        <span class="s1">self._clone_for_bind_strategy(</span>
+            <span class="s1">attrs</span><span class="s5">,</span>
+            <span class="s1">strategy_key</span><span class="s5">,</span>
+            <span class="s1">_COLUMN_TOKEN</span><span class="s5">,</span>
+            <span class="s1">opts=opts</span><span class="s5">,</span>
+            <span class="s1">attr_group=attrs</span><span class="s5">,</span>
+            <span class="s1">extra_criteria=extra_criteria</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s3">def </span><span class="s1">_set_generic_strategy(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attrs: Tuple[_AttrType</span><span class="s5">, </span><span class="s1">...]</span><span class="s5">,</span>
+        <span class="s1">strategy: _StrategySpec</span><span class="s5">,</span>
+        <span class="s1">_reconcile_to_other: Optional[bool] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s1">strategy_key = self._coerce_strat(strategy)</span>
+        <span class="s1">self._clone_for_bind_strategy(</span>
+            <span class="s1">attrs</span><span class="s5">,</span>
+            <span class="s1">strategy_key</span><span class="s5">,</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">propagate_to_loaders=</span><span class="s3">True</span><span class="s5">,</span>
+            <span class="s1">reconcile_to_other=_reconcile_to_other</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s3">def </span><span class="s1">_set_class_strategy(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">strategy: _StrategySpec</span><span class="s5">, </span><span class="s1">opts: _OptsType</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s1">strategy_key = self._coerce_strat(strategy)</span>
+
+        <span class="s1">self._clone_for_bind_strategy(</span><span class="s3">None</span><span class="s5">, </span><span class="s1">strategy_key</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">opts=opts)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_apply_to_parent(self</span><span class="s5">, </span><span class="s1">parent: Load) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;apply this :class:`_orm._AbstractLoad` object as a sub-option o 
+        a :class:`_orm.Load` object. 
+ 
+        Implementation is provided by subclasses. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">options(self</span><span class="s5">, </span><span class="s1">*opts: _AbstractLoad) -&gt; Self:</span>
+        <span class="s2">r&quot;&quot;&quot;Apply a series of options as sub-options to this 
+        :class:`_orm._AbstractLoad` object. 
+ 
+        Implementation is provided by subclasses. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">_clone_for_bind_strategy(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attrs: Optional[Tuple[_AttrType</span><span class="s5">, </span><span class="s1">...]]</span><span class="s5">,</span>
+        <span class="s1">strategy: Optional[_StrategyKey]</span><span class="s5">,</span>
+        <span class="s1">wildcard_key: Optional[_WildcardKeyType]</span><span class="s5">,</span>
+        <span class="s1">opts: Optional[_OptsType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">attr_group: Optional[_AttrGroupType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">propagate_to_loaders: bool = </span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">reconcile_to_other: Optional[bool] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">extra_criteria: Optional[Tuple[Any</span><span class="s5">, </span><span class="s1">...]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">process_compile_state_replaced_entities(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">compile_state: ORMCompileState</span><span class="s5">,</span>
+        <span class="s1">mapper_entities: Sequence[_MapperEntity]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if not </span><span class="s1">compile_state.compile_options._enable_eagerloads:</span>
+            <span class="s3">return</span>
+
+        <span class="s0"># process is being run here so that the options given are validated</span>
+        <span class="s0"># against what the lead entities were, as well as to accommodate</span>
+        <span class="s0"># for the entities having been replaced with equivalents</span>
+        <span class="s1">self._process(</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">mapper_entities</span><span class="s5">,</span>
+            <span class="s3">not </span><span class="s1">bool(compile_state.current_path)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">process_compile_state(self</span><span class="s5">, </span><span class="s1">compile_state: ORMCompileState) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if not </span><span class="s1">compile_state.compile_options._enable_eagerloads:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">self._process(</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">compile_state._lead_mapper_entities</span><span class="s5">,</span>
+            <span class="s3">not </span><span class="s1">bool(compile_state.current_path)</span>
+            <span class="s3">and not </span><span class="s1">compile_state.compile_options._for_refresh_state</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_process(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">compile_state: ORMCompileState</span><span class="s5">,</span>
+        <span class="s1">mapper_entities: Sequence[_MapperEntity]</span><span class="s5">,</span>
+        <span class="s1">raiseerr: bool</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;implemented by subclasses&quot;&quot;&quot;</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_chop_path(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">to_chop: _PathRepresentation</span><span class="s5">,</span>
+        <span class="s1">path: PathRegistry</span><span class="s5">,</span>
+        <span class="s1">debug: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Optional[_PathRepresentation]:</span>
+        <span class="s1">i = -</span><span class="s7">1</span>
+
+        <span class="s3">for </span><span class="s1">i</span><span class="s5">, </span><span class="s1">(c_token</span><span class="s5">, </span><span class="s1">p_token) </span><span class="s3">in </span><span class="s1">enumerate(</span>
+            <span class="s1">zip(to_chop</span><span class="s5">, </span><span class="s1">path.natural_path)</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">isinstance(c_token</span><span class="s5">, </span><span class="s1">str):</span>
+                <span class="s3">if </span><span class="s1">i == </span><span class="s7">0 </span><span class="s3">and </span><span class="s1">(</span>
+                    <span class="s1">c_token.endswith(</span><span class="s4">f&quot;:</span><span class="s6">{</span><span class="s1">_DEFAULT_TOKEN</span><span class="s6">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+                    <span class="s3">or </span><span class="s1">c_token.endswith(</span><span class="s4">f&quot;:</span><span class="s6">{</span><span class="s1">_WILDCARD_TOKEN</span><span class="s6">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+                <span class="s1">):</span>
+                    <span class="s3">return </span><span class="s1">to_chop</span>
+                <span class="s3">elif </span><span class="s1">(</span>
+                    <span class="s1">c_token != </span><span class="s4">f&quot;</span><span class="s6">{</span><span class="s1">_RELATIONSHIP_TOKEN</span><span class="s6">}</span><span class="s4">:</span><span class="s6">{</span><span class="s1">_WILDCARD_TOKEN</span><span class="s6">}</span><span class="s4">&quot;</span>
+                    <span class="s3">and </span><span class="s1">c_token != p_token.key  </span><span class="s0"># type: ignore</span>
+                <span class="s1">):</span>
+                    <span class="s3">return None</span>
+
+            <span class="s3">if </span><span class="s1">c_token </span><span class="s3">is </span><span class="s1">p_token:</span>
+                <span class="s3">continue</span>
+            <span class="s3">elif </span><span class="s1">(</span>
+                <span class="s1">isinstance(c_token</span><span class="s5">, </span><span class="s1">InspectionAttr)</span>
+                <span class="s3">and </span><span class="s1">insp_is_mapper(c_token)</span>
+                <span class="s3">and </span><span class="s1">insp_is_mapper(p_token)</span>
+                <span class="s3">and </span><span class="s1">c_token.isa(p_token)</span>
+            <span class="s1">):</span>
+                <span class="s3">continue</span>
+
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+        <span class="s3">return </span><span class="s1">to_chop[i + </span><span class="s7">1 </span><span class="s1">:]</span>
+
+
+<span class="s3">class </span><span class="s1">Load(_AbstractLoad):</span>
+    <span class="s2">&quot;&quot;&quot;Represents loader options which modify the state of a 
+    ORM-enabled :class:`_sql.Select` or a legacy :class:`_query.Query` in 
+    order to affect how various mapped attributes are loaded. 
+ 
+    The :class:`_orm.Load` object is in most cases used implicitly behind the 
+    scenes when one makes use of a query option like :func:`_orm.joinedload`, 
+    :func:`_orm.defer`, or similar.   It typically is not instantiated directly 
+    except for in some very specific cases. 
+ 
+    .. seealso:: 
+ 
+        :ref:`orm_queryguide_relationship_per_entity_wildcard` - illustrates an 
+        example where direct use of :class:`_orm.Load` may be useful 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;path&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;context&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;additional_source_entities&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">_traverse_internals = [</span>
+        <span class="s1">(</span><span class="s4">&quot;path&quot;</span><span class="s5">, </span><span class="s1">visitors.ExtendedInternalTraversal.dp_has_cache_key)</span><span class="s5">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;context&quot;</span><span class="s5">,</span>
+            <span class="s1">visitors.InternalTraversal.dp_has_cache_key_list</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">(</span><span class="s4">&quot;propagate_to_loaders&quot;</span><span class="s5">, </span><span class="s1">visitors.InternalTraversal.dp_boolean)</span><span class="s5">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;additional_source_entities&quot;</span><span class="s5">,</span>
+            <span class="s1">visitors.InternalTraversal.dp_has_cache_key_list</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+    <span class="s1">]</span>
+    <span class="s1">_cache_key_traversal = </span><span class="s3">None</span>
+
+    <span class="s1">path: PathRegistry</span>
+    <span class="s1">context: Tuple[_LoadElement</span><span class="s5">, </span><span class="s1">...]</span>
+    <span class="s1">additional_source_entities: Tuple[_InternalEntityType[Any]</span><span class="s5">, </span><span class="s1">...]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">entity: _EntityType[Any]):</span>
+        <span class="s1">insp = cast(</span><span class="s4">&quot;Union[Mapper[Any], AliasedInsp[Any]]&quot;</span><span class="s5">, </span><span class="s1">inspect(entity))</span>
+        <span class="s1">insp._post_inspect</span>
+
+        <span class="s1">self.path = insp._path_registry</span>
+        <span class="s1">self.context = ()</span>
+        <span class="s1">self.propagate_to_loaders = </span><span class="s3">False</span>
+        <span class="s1">self.additional_source_entities = ()</span>
+
+    <span class="s3">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s4">f&quot;Load(</span><span class="s6">{</span><span class="s1">self.path[</span><span class="s7">0</span><span class="s1">]</span><span class="s6">}</span><span class="s4">)&quot;</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_construct_for_existing_path(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">path: AbstractEntityRegistry</span>
+    <span class="s1">) -&gt; Load:</span>
+        <span class="s1">load = cls.__new__(cls)</span>
+        <span class="s1">load.path = path</span>
+        <span class="s1">load.context = ()</span>
+        <span class="s1">load.propagate_to_loaders = </span><span class="s3">False</span>
+        <span class="s1">load.additional_source_entities = ()</span>
+        <span class="s3">return </span><span class="s1">load</span>
+
+    <span class="s3">def </span><span class="s1">_adapt_cached_option_to_uncached_option(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">context: QueryContext</span><span class="s5">, </span><span class="s1">uncached_opt: ORMOption</span>
+    <span class="s1">) -&gt; ORMOption:</span>
+        <span class="s3">if </span><span class="s1">uncached_opt </span><span class="s3">is </span><span class="s1">self:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+        <span class="s3">return </span><span class="s1">self._adjust_for_extra_criteria(context)</span>
+
+    <span class="s3">def </span><span class="s1">_prepend_path(self</span><span class="s5">, </span><span class="s1">path: PathRegistry) -&gt; Load:</span>
+        <span class="s1">cloned = self._clone()</span>
+        <span class="s1">cloned.context = tuple(</span>
+            <span class="s1">element._prepend_path(path) </span><span class="s3">for </span><span class="s1">element </span><span class="s3">in </span><span class="s1">self.context</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">cloned</span>
+
+    <span class="s3">def </span><span class="s1">_adjust_for_extra_criteria(self</span><span class="s5">, </span><span class="s1">context: QueryContext) -&gt; Load:</span>
+        <span class="s2">&quot;&quot;&quot;Apply the current bound parameters in a QueryContext to all 
+        occurrences &quot;extra_criteria&quot; stored within this ``Load`` object, 
+        returning a new instance of this ``Load`` object. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0"># avoid generating cache keys for the queries if we don't</span>
+        <span class="s0"># actually have any extra_criteria options, which is the</span>
+        <span class="s0"># common case</span>
+        <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">self.context:</span>
+            <span class="s3">if </span><span class="s1">value._extra_criteria:</span>
+                <span class="s3">break</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+
+        <span class="s1">replacement_cache_key = context.user_passed_query._generate_cache_key()</span>
+
+        <span class="s3">if </span><span class="s1">replacement_cache_key </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+
+        <span class="s1">orig_query = context.compile_state.select_statement</span>
+        <span class="s1">orig_cache_key = orig_query._generate_cache_key()</span>
+        <span class="s3">assert </span><span class="s1">orig_cache_key </span><span class="s3">is not None</span>
+
+        <span class="s3">def </span><span class="s1">process(</span>
+            <span class="s1">opt: _LoadElement</span><span class="s5">,</span>
+            <span class="s1">replacement_cache_key: CacheKey</span><span class="s5">,</span>
+            <span class="s1">orig_cache_key: CacheKey</span><span class="s5">,</span>
+        <span class="s1">) -&gt; _LoadElement:</span>
+            <span class="s1">cloned_opt = opt._clone()</span>
+
+            <span class="s1">cloned_opt._extra_criteria = tuple(</span>
+                <span class="s1">replacement_cache_key._apply_params_to_element(</span>
+                    <span class="s1">orig_cache_key</span><span class="s5">, </span><span class="s1">crit</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">crit </span><span class="s3">in </span><span class="s1">cloned_opt._extra_criteria</span>
+            <span class="s1">)</span>
+
+            <span class="s3">return </span><span class="s1">cloned_opt</span>
+
+        <span class="s1">cloned = self._clone()</span>
+        <span class="s1">cloned.context = tuple(</span>
+            <span class="s1">(</span>
+                <span class="s1">process(value</span><span class="s5">, </span><span class="s1">replacement_cache_key</span><span class="s5">, </span><span class="s1">orig_cache_key)</span>
+                <span class="s3">if </span><span class="s1">value._extra_criteria</span>
+                <span class="s3">else </span><span class="s1">value</span>
+            <span class="s1">)</span>
+            <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">self.context</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">cloned</span>
+
+    <span class="s3">def </span><span class="s1">_reconcile_query_entities_with_us(self</span><span class="s5">, </span><span class="s1">mapper_entities</span><span class="s5">, </span><span class="s1">raiseerr):</span>
+        <span class="s2">&quot;&quot;&quot;called at process time to allow adjustment of the root 
+        entity inside of _LoadElement objects. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">path = self.path</span>
+
+        <span class="s1">ezero = </span><span class="s3">None</span>
+        <span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">mapper_entities:</span>
+            <span class="s1">ezero = ent.entity_zero</span>
+            <span class="s3">if </span><span class="s1">ezero </span><span class="s3">and </span><span class="s1">orm_util._entity_corresponds_to(</span>
+                <span class="s0"># technically this can be a token also, but this is</span>
+                <span class="s0"># safe to pass to _entity_corresponds_to()</span>
+                <span class="s1">ezero</span><span class="s5">,</span>
+                <span class="s1">cast(</span><span class="s4">&quot;_InternalEntityType[Any]&quot;</span><span class="s5">, </span><span class="s1">path[</span><span class="s7">0</span><span class="s1">])</span><span class="s5">,</span>
+            <span class="s1">):</span>
+                <span class="s3">return </span><span class="s1">ezero</span>
+
+        <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">_process(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">compile_state: ORMCompileState</span><span class="s5">,</span>
+        <span class="s1">mapper_entities: Sequence[_MapperEntity]</span><span class="s5">,</span>
+        <span class="s1">raiseerr: bool</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">reconciled_lead_entity = self._reconcile_query_entities_with_us(</span>
+            <span class="s1">mapper_entities</span><span class="s5">, </span><span class="s1">raiseerr</span>
+        <span class="s1">)</span>
+
+        <span class="s0"># if the context has a current path, this is a lazy load</span>
+        <span class="s1">has_current_path = bool(compile_state.compile_options._current_path)</span>
+
+        <span class="s3">for </span><span class="s1">loader </span><span class="s3">in </span><span class="s1">self.context:</span>
+            <span class="s0"># issue #11292</span>
+            <span class="s0"># historically, propagate_to_loaders was only considered at</span>
+            <span class="s0"># object loading time, whether or not to carry along options</span>
+            <span class="s0"># onto an object's loaded state where it would be used by lazyload.</span>
+            <span class="s0"># however, the defaultload() option needs to propagate in case</span>
+            <span class="s0"># its sub-options propagate_to_loaders, but its sub-options</span>
+            <span class="s0"># that dont propagate should not be applied for lazy loaders.</span>
+            <span class="s0"># so we check again</span>
+            <span class="s3">if </span><span class="s1">has_current_path </span><span class="s3">and not </span><span class="s1">loader.propagate_to_loaders:</span>
+                <span class="s3">continue</span>
+            <span class="s1">loader.process_compile_state(</span>
+                <span class="s1">self</span><span class="s5">,</span>
+                <span class="s1">compile_state</span><span class="s5">,</span>
+                <span class="s1">mapper_entities</span><span class="s5">,</span>
+                <span class="s1">reconciled_lead_entity</span><span class="s5">,</span>
+                <span class="s1">raiseerr</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_apply_to_parent(self</span><span class="s5">, </span><span class="s1">parent: Load) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;apply this :class:`_orm.Load` object as a sub-option of another 
+        :class:`_orm.Load` object. 
+ 
+        This method is used by the :meth:`_orm.Load.options` method. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">cloned = self._generate()</span>
+
+        <span class="s3">assert </span><span class="s1">cloned.propagate_to_loaders == self.propagate_to_loaders</span>
+
+        <span class="s3">if not </span><span class="s1">any(</span>
+            <span class="s1">orm_util._entity_corresponds_to_use_path_impl(</span>
+                <span class="s1">elem</span><span class="s5">, </span><span class="s1">cloned.path.odd_element(</span><span class="s7">0</span><span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">(parent.path.odd_element(-</span><span class="s7">1</span><span class="s1">)</span><span class="s5">,</span><span class="s1">)</span>
+            <span class="s1">+ parent.additional_source_entities</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">len(cloned.path) &gt; </span><span class="s7">1</span><span class="s1">:</span>
+                <span class="s1">attrname = cloned.path[</span><span class="s7">1</span><span class="s1">]</span>
+                <span class="s1">parent_entity = cloned.path[</span><span class="s7">0</span><span class="s1">]</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">attrname = cloned.path[</span><span class="s7">0</span><span class="s1">]</span>
+                <span class="s1">parent_entity = cloned.path[</span><span class="s7">0</span><span class="s1">]</span>
+            <span class="s1">_raise_for_does_not_link(parent.path</span><span class="s5">, </span><span class="s1">attrname</span><span class="s5">, </span><span class="s1">parent_entity)</span>
+
+        <span class="s1">cloned.path = PathRegistry.coerce(parent.path[</span><span class="s7">0</span><span class="s1">:-</span><span class="s7">1</span><span class="s1">] + cloned.path[:])</span>
+
+        <span class="s3">if </span><span class="s1">self.context:</span>
+            <span class="s1">cloned.context = tuple(</span>
+                <span class="s1">value._prepend_path_from(parent) </span><span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">self.context</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">cloned.context:</span>
+            <span class="s1">parent.context += cloned.context</span>
+            <span class="s1">parent.additional_source_entities += (</span>
+                <span class="s1">cloned.additional_source_entities</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s3">def </span><span class="s1">options(self</span><span class="s5">, </span><span class="s1">*opts: _AbstractLoad) -&gt; Self:</span>
+        <span class="s2">r&quot;&quot;&quot;Apply a series of options as sub-options to this 
+        :class:`_orm.Load` 
+        object. 
+ 
+        E.g.:: 
+ 
+            query = session.query(Author) 
+            query = query.options( 
+                        joinedload(Author.book).options( 
+                            load_only(Book.summary, Book.excerpt), 
+                            joinedload(Book.citations).options( 
+                                joinedload(Citation.author) 
+                            ) 
+                        ) 
+                    ) 
+ 
+        :param \*opts: A series of loader option objects (ultimately 
+         :class:`_orm.Load` objects) which should be applied to the path 
+         specified by this :class:`_orm.Load` object. 
+ 
+        .. versionadded:: 1.3.6 
+ 
+        .. seealso:: 
+ 
+            :func:`.defaultload` 
+ 
+            :ref:`orm_queryguide_relationship_sub_options` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">for </span><span class="s1">opt </span><span class="s3">in </span><span class="s1">opts:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">opt._apply_to_parent(self)</span>
+            <span class="s3">except </span><span class="s1">AttributeError </span><span class="s3">as </span><span class="s1">ae:</span>
+                <span class="s3">if not </span><span class="s1">isinstance(opt</span><span class="s5">, </span><span class="s1">_AbstractLoad):</span>
+                    <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                        <span class="s4">f&quot;Loader option </span><span class="s6">{</span><span class="s1">opt</span><span class="s6">} </span><span class="s4">is not compatible with the &quot;</span>
+                        <span class="s4">&quot;Load.options() method.&quot;</span>
+                    <span class="s1">) </span><span class="s3">from </span><span class="s1">ae</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">raise</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_clone_for_bind_strategy(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attrs: Optional[Tuple[_AttrType</span><span class="s5">, </span><span class="s1">...]]</span><span class="s5">,</span>
+        <span class="s1">strategy: Optional[_StrategyKey]</span><span class="s5">,</span>
+        <span class="s1">wildcard_key: Optional[_WildcardKeyType]</span><span class="s5">,</span>
+        <span class="s1">opts: Optional[_OptsType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">attr_group: Optional[_AttrGroupType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">propagate_to_loaders: bool = </span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">reconcile_to_other: Optional[bool] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">extra_criteria: Optional[Tuple[Any</span><span class="s5">, </span><span class="s1">...]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s0"># for individual strategy that needs to propagate, set the whole</span>
+        <span class="s0"># Load container to also propagate, so that it shows up in</span>
+        <span class="s0"># InstanceState.load_options</span>
+        <span class="s3">if </span><span class="s1">propagate_to_loaders:</span>
+            <span class="s1">self.propagate_to_loaders = </span><span class="s3">True</span>
+
+        <span class="s3">if </span><span class="s1">self.path.is_token:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s4">&quot;Wildcard token cannot be followed by another entity&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">elif </span><span class="s1">path_is_property(self.path):</span>
+            <span class="s0"># re-use the lookup which will raise a nicely formatted</span>
+            <span class="s0"># LoaderStrategyException</span>
+            <span class="s3">if </span><span class="s1">strategy:</span>
+                <span class="s1">self.path.prop._strategy_lookup(self.path.prop</span><span class="s5">, </span><span class="s1">strategy[</span><span class="s7">0</span><span class="s1">])</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">f&quot;Mapped attribute '</span><span class="s6">{</span><span class="s1">self.path.prop</span><span class="s6">}</span><span class="s4">' does not &quot;</span>
+                    <span class="s4">&quot;refer to a mapped entity&quot;</span>
+                <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">attrs </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">load_element = _ClassStrategyLoad.create(</span>
+                <span class="s1">self.path</span><span class="s5">,</span>
+                <span class="s3">None</span><span class="s5">,</span>
+                <span class="s1">strategy</span><span class="s5">,</span>
+                <span class="s1">wildcard_key</span><span class="s5">,</span>
+                <span class="s1">opts</span><span class="s5">,</span>
+                <span class="s1">propagate_to_loaders</span><span class="s5">,</span>
+                <span class="s1">attr_group=attr_group</span><span class="s5">,</span>
+                <span class="s1">reconcile_to_other=reconcile_to_other</span><span class="s5">,</span>
+                <span class="s1">extra_criteria=extra_criteria</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">load_element:</span>
+                <span class="s1">self.context += (load_element</span><span class="s5">,</span><span class="s1">)</span>
+                <span class="s3">assert </span><span class="s1">opts </span><span class="s3">is not None</span>
+                <span class="s1">self.additional_source_entities += cast(</span>
+                    <span class="s4">&quot;Tuple[_InternalEntityType[Any]]&quot;</span><span class="s5">, </span><span class="s1">opts[</span><span class="s4">&quot;entities&quot;</span><span class="s1">]</span>
+                <span class="s1">)</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">attrs:</span>
+                <span class="s3">if </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">str):</span>
+                    <span class="s1">load_element = _TokenStrategyLoad.create(</span>
+                        <span class="s1">self.path</span><span class="s5">,</span>
+                        <span class="s1">attr</span><span class="s5">,</span>
+                        <span class="s1">strategy</span><span class="s5">,</span>
+                        <span class="s1">wildcard_key</span><span class="s5">,</span>
+                        <span class="s1">opts</span><span class="s5">,</span>
+                        <span class="s1">propagate_to_loaders</span><span class="s5">,</span>
+                        <span class="s1">attr_group=attr_group</span><span class="s5">,</span>
+                        <span class="s1">reconcile_to_other=reconcile_to_other</span><span class="s5">,</span>
+                        <span class="s1">extra_criteria=extra_criteria</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">load_element = _AttributeStrategyLoad.create(</span>
+                        <span class="s1">self.path</span><span class="s5">,</span>
+                        <span class="s1">attr</span><span class="s5">,</span>
+                        <span class="s1">strategy</span><span class="s5">,</span>
+                        <span class="s1">wildcard_key</span><span class="s5">,</span>
+                        <span class="s1">opts</span><span class="s5">,</span>
+                        <span class="s1">propagate_to_loaders</span><span class="s5">,</span>
+                        <span class="s1">attr_group=attr_group</span><span class="s5">,</span>
+                        <span class="s1">reconcile_to_other=reconcile_to_other</span><span class="s5">,</span>
+                        <span class="s1">extra_criteria=extra_criteria</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+
+                <span class="s3">if </span><span class="s1">load_element:</span>
+                    <span class="s0"># for relationship options, update self.path on this Load</span>
+                    <span class="s0"># object with the latest path.</span>
+                    <span class="s3">if </span><span class="s1">wildcard_key </span><span class="s3">is </span><span class="s1">_RELATIONSHIP_TOKEN:</span>
+                        <span class="s1">self.path = load_element.path</span>
+                    <span class="s1">self.context += (load_element</span><span class="s5">,</span><span class="s1">)</span>
+
+                    <span class="s0"># this seems to be effective for selectinloader,</span>
+                    <span class="s0"># giving the extra match to one more level deep.</span>
+                    <span class="s0"># but does not work for immediateloader, which still</span>
+                    <span class="s0"># must add additional options at load time</span>
+                    <span class="s3">if </span><span class="s1">load_element.local_opts.get(</span><span class="s4">&quot;recursion_depth&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+                        <span class="s1">r1 = load_element._recurse()</span>
+                        <span class="s1">self.context += (r1</span><span class="s5">,</span><span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self):</span>
+        <span class="s1">d = self._shallow_to_dict()</span>
+        <span class="s1">d[</span><span class="s4">&quot;path&quot;</span><span class="s1">] = self.path.serialize()</span>
+        <span class="s3">return </span><span class="s1">d</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state):</span>
+        <span class="s1">state[</span><span class="s4">&quot;path&quot;</span><span class="s1">] = PathRegistry.deserialize(state[</span><span class="s4">&quot;path&quot;</span><span class="s1">])</span>
+        <span class="s1">self._shallow_from_dict(state)</span>
+
+
+<span class="s3">class </span><span class="s1">_WildcardLoad(_AbstractLoad):</span>
+    <span class="s2">&quot;&quot;&quot;represent a standalone '*' load operation&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;strategy&quot;</span><span class="s5">, </span><span class="s4">&quot;path&quot;</span><span class="s5">, </span><span class="s4">&quot;local_opts&quot;</span><span class="s1">)</span>
+
+    <span class="s1">_traverse_internals = [</span>
+        <span class="s1">(</span><span class="s4">&quot;strategy&quot;</span><span class="s5">, </span><span class="s1">visitors.ExtendedInternalTraversal.dp_plain_obj)</span><span class="s5">,</span>
+        <span class="s1">(</span><span class="s4">&quot;path&quot;</span><span class="s5">, </span><span class="s1">visitors.ExtendedInternalTraversal.dp_plain_obj)</span><span class="s5">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;local_opts&quot;</span><span class="s5">,</span>
+            <span class="s1">visitors.ExtendedInternalTraversal.dp_string_multi_dict</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+    <span class="s1">]</span>
+    <span class="s1">cache_key_traversal: _CacheKeyTraversalType = </span><span class="s3">None</span>
+
+    <span class="s1">strategy: Optional[Tuple[Any</span><span class="s5">, </span><span class="s1">...]]</span>
+    <span class="s1">local_opts: _OptsType</span>
+    <span class="s1">path: Union[Tuple[()]</span><span class="s5">, </span><span class="s1">Tuple[str]]</span>
+    <span class="s1">propagate_to_loaders = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.path = ()</span>
+        <span class="s1">self.strategy = </span><span class="s3">None</span>
+        <span class="s1">self.local_opts = util.EMPTY_DICT</span>
+
+    <span class="s3">def </span><span class="s1">_clone_for_bind_strategy(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attrs</span><span class="s5">,</span>
+        <span class="s1">strategy</span><span class="s5">,</span>
+        <span class="s1">wildcard_key</span><span class="s5">,</span>
+        <span class="s1">opts=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">attr_group=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">propagate_to_loaders=</span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">reconcile_to_other=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">extra_criteria=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s3">assert </span><span class="s1">attrs </span><span class="s3">is not None</span>
+        <span class="s1">attr = attrs[</span><span class="s7">0</span><span class="s1">]</span>
+        <span class="s3">assert </span><span class="s1">(</span>
+            <span class="s1">wildcard_key</span>
+            <span class="s3">and </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">str)</span>
+            <span class="s3">and </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">(_WILDCARD_TOKEN</span><span class="s5">, </span><span class="s1">_DEFAULT_TOKEN)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">attr = </span><span class="s4">f&quot;</span><span class="s6">{</span><span class="s1">wildcard_key</span><span class="s6">}</span><span class="s4">:</span><span class="s6">{</span><span class="s1">attr</span><span class="s6">}</span><span class="s4">&quot;</span>
+
+        <span class="s1">self.strategy = strategy</span>
+        <span class="s1">self.path = (attr</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">opts:</span>
+            <span class="s1">self.local_opts = util.immutabledict(opts)</span>
+
+        <span class="s3">assert </span><span class="s1">extra_criteria </span><span class="s3">is None</span>
+
+    <span class="s3">def </span><span class="s1">options(self</span><span class="s5">, </span><span class="s1">*opts: _AbstractLoad) -&gt; Self:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;Star option does not support sub-options&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_apply_to_parent(self</span><span class="s5">, </span><span class="s1">parent: Load) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;apply this :class:`_orm._WildcardLoad` object as a sub-option of 
+        a :class:`_orm.Load` object. 
+ 
+        This method is used by the :meth:`_orm.Load.options` method.   Note 
+        that :class:`_orm.WildcardLoad` itself can't have sub-options, but 
+        it may be used as the sub-option of a :class:`_orm.Load` object. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">assert </span><span class="s1">self.path</span>
+        <span class="s1">attr = self.path[</span><span class="s7">0</span><span class="s1">]</span>
+        <span class="s3">if </span><span class="s1">attr.endswith(_DEFAULT_TOKEN):</span>
+            <span class="s1">attr = </span><span class="s4">f&quot;</span><span class="s6">{</span><span class="s1">attr.split(</span><span class="s4">':'</span><span class="s1">)[</span><span class="s7">0</span><span class="s1">]</span><span class="s6">}</span><span class="s4">:</span><span class="s6">{</span><span class="s1">_WILDCARD_TOKEN</span><span class="s6">}</span><span class="s4">&quot;</span>
+
+        <span class="s1">effective_path = cast(AbstractEntityRegistry</span><span class="s5">, </span><span class="s1">parent.path).token(attr)</span>
+
+        <span class="s3">assert </span><span class="s1">effective_path.is_token</span>
+
+        <span class="s1">loader = _TokenStrategyLoad.create(</span>
+            <span class="s1">effective_path</span><span class="s5">,</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">self.strategy</span><span class="s5">,</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">self.local_opts</span><span class="s5">,</span>
+            <span class="s1">self.propagate_to_loaders</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">parent.context += (loader</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_process(self</span><span class="s5">, </span><span class="s1">compile_state</span><span class="s5">, </span><span class="s1">mapper_entities</span><span class="s5">, </span><span class="s1">raiseerr):</span>
+        <span class="s1">is_refresh = compile_state.compile_options._for_refresh_state</span>
+
+        <span class="s3">if </span><span class="s1">is_refresh </span><span class="s3">and not </span><span class="s1">self.propagate_to_loaders:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">entities = [ent.entity_zero </span><span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">mapper_entities]</span>
+        <span class="s1">current_path = compile_state.current_path</span>
+
+        <span class="s1">start_path: _PathRepresentation = self.path</span>
+
+        <span class="s3">if </span><span class="s1">current_path:</span>
+            <span class="s0"># TODO: no cases in test suite where we actually get</span>
+            <span class="s0"># None back here</span>
+            <span class="s1">new_path = self._chop_path(start_path</span><span class="s5">, </span><span class="s1">current_path)</span>
+            <span class="s3">if </span><span class="s1">new_path </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return</span>
+
+            <span class="s0"># chop_path does not actually &quot;chop&quot; a wildcard token path,</span>
+            <span class="s0"># just returns it</span>
+            <span class="s3">assert </span><span class="s1">new_path == start_path</span>
+
+        <span class="s0"># start_path is a single-token tuple</span>
+        <span class="s3">assert </span><span class="s1">start_path </span><span class="s3">and </span><span class="s1">len(start_path) == </span><span class="s7">1</span>
+
+        <span class="s1">token = start_path[</span><span class="s7">0</span><span class="s1">]</span>
+        <span class="s3">assert </span><span class="s1">isinstance(token</span><span class="s5">, </span><span class="s1">str)</span>
+        <span class="s1">entity = self._find_entity_basestring(entities</span><span class="s5">, </span><span class="s1">token</span><span class="s5">, </span><span class="s1">raiseerr)</span>
+
+        <span class="s3">if not </span><span class="s1">entity:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">path_element = entity</span>
+
+        <span class="s0"># transfer our entity-less state into a Load() object</span>
+        <span class="s0"># with a real entity path.  Start with the lead entity</span>
+        <span class="s0"># we just located, then go through the rest of our path</span>
+        <span class="s0"># tokens and populate into the Load().</span>
+
+        <span class="s3">assert </span><span class="s1">isinstance(token</span><span class="s5">, </span><span class="s1">str)</span>
+        <span class="s1">loader = _TokenStrategyLoad.create(</span>
+            <span class="s1">path_element._path_registry</span><span class="s5">,</span>
+            <span class="s1">token</span><span class="s5">,</span>
+            <span class="s1">self.strategy</span><span class="s5">,</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">self.local_opts</span><span class="s5">,</span>
+            <span class="s1">self.propagate_to_loaders</span><span class="s5">,</span>
+            <span class="s1">raiseerr=raiseerr</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">if not </span><span class="s1">loader:</span>
+            <span class="s3">return</span>
+
+        <span class="s3">assert </span><span class="s1">loader.path.is_token</span>
+
+        <span class="s0"># don't pass a reconciled lead entity here</span>
+        <span class="s1">loader.process_compile_state(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">compile_state</span><span class="s5">, </span><span class="s1">mapper_entities</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">raiseerr</span>
+        <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">loader</span>
+
+    <span class="s3">def </span><span class="s1">_find_entity_basestring(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">entities: Iterable[_InternalEntityType[Any]]</span><span class="s5">,</span>
+        <span class="s1">token: str</span><span class="s5">,</span>
+        <span class="s1">raiseerr: bool</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Optional[_InternalEntityType[Any]]:</span>
+        <span class="s3">if </span><span class="s1">token.endswith(</span><span class="s4">f&quot;:</span><span class="s6">{</span><span class="s1">_WILDCARD_TOKEN</span><span class="s6">}</span><span class="s4">&quot;</span><span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">len(list(entities)) != </span><span class="s7">1</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">raiseerr:</span>
+                    <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                        <span class="s4">&quot;Can't apply wildcard ('*') or load_only() &quot;</span>
+                        <span class="s4">f&quot;loader option to multiple entities &quot;</span>
+                        <span class="s4">f&quot;</span><span class="s6">{</span><span class="s4">', '</span><span class="s1">.join(str(ent) </span><span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">entities)</span><span class="s6">}</span><span class="s4">. Specify &quot;</span>
+                        <span class="s4">&quot;loader options for each entity individually, such as &quot;</span>
+                        <span class="s4">f&quot;&quot;&quot;</span><span class="s6">{</span>
+                            <span class="s4">&quot;, &quot;</span><span class="s1">.join(</span>
+                                <span class="s4">f&quot;Load(</span><span class="s6">{</span><span class="s1">ent</span><span class="s6">}</span><span class="s4">).some_option('*')&quot;</span>
+                                <span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">entities</span>
+                            <span class="s1">)</span>
+                        <span class="s6">}</span><span class="s4">.&quot;&quot;&quot;</span>
+                    <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">token.endswith(_DEFAULT_TOKEN):</span>
+            <span class="s1">raiseerr = </span><span class="s3">False</span>
+
+        <span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">entities:</span>
+            <span class="s0"># return only the first _MapperEntity when searching</span>
+            <span class="s0"># based on string prop name.   Ideally object</span>
+            <span class="s0"># attributes are used to specify more exactly.</span>
+            <span class="s3">return </span><span class="s1">ent</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">raiseerr:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">&quot;Query has only expression-based entities - &quot;</span>
+                    <span class="s4">f'can</span><span class="s6">\'</span><span class="s4">t find property named &quot;</span><span class="s6">{</span><span class="s1">token</span><span class="s6">}</span><span class="s4">&quot;.'</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self) -&gt; Dict[str</span><span class="s5">, </span><span class="s1">Any]:</span>
+        <span class="s1">d = self._shallow_to_dict()</span>
+        <span class="s3">return </span><span class="s1">d</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state: Dict[str</span><span class="s5">, </span><span class="s1">Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._shallow_from_dict(state)</span>
+
+
+<span class="s3">class </span><span class="s1">_LoadElement(</span>
+    <span class="s1">cache_key.HasCacheKey</span><span class="s5">, </span><span class="s1">traversals.HasShallowCopy</span><span class="s5">, </span><span class="s1">visitors.Traversible</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;represents strategy information to select for a LoaderStrategy 
+    and pass options to it. 
+ 
+    :class:`._LoadElement` objects provide the inner datastructure 
+    stored by a :class:`_orm.Load` object and are also the object passed 
+    to methods like :meth:`.LoaderStrategy.setup_query`. 
+ 
+    .. versionadded:: 2.0 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;path&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;strategy&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;propagate_to_loaders&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;local_opts&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_extra_criteria&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_reconcile_to_other&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;load_element&quot;</span>
+
+    <span class="s1">_traverse_internals = [</span>
+        <span class="s1">(</span><span class="s4">&quot;path&quot;</span><span class="s5">, </span><span class="s1">visitors.ExtendedInternalTraversal.dp_has_cache_key)</span><span class="s5">,</span>
+        <span class="s1">(</span><span class="s4">&quot;strategy&quot;</span><span class="s5">, </span><span class="s1">visitors.ExtendedInternalTraversal.dp_plain_obj)</span><span class="s5">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;local_opts&quot;</span><span class="s5">,</span>
+            <span class="s1">visitors.ExtendedInternalTraversal.dp_string_multi_dict</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">(</span><span class="s4">&quot;_extra_criteria&quot;</span><span class="s5">, </span><span class="s1">visitors.InternalTraversal.dp_clauseelement_list)</span><span class="s5">,</span>
+        <span class="s1">(</span><span class="s4">&quot;propagate_to_loaders&quot;</span><span class="s5">, </span><span class="s1">visitors.InternalTraversal.dp_plain_obj)</span><span class="s5">,</span>
+        <span class="s1">(</span><span class="s4">&quot;_reconcile_to_other&quot;</span><span class="s5">, </span><span class="s1">visitors.InternalTraversal.dp_plain_obj)</span><span class="s5">,</span>
+    <span class="s1">]</span>
+    <span class="s1">_cache_key_traversal = </span><span class="s3">None</span>
+
+    <span class="s1">_extra_criteria: Tuple[Any</span><span class="s5">, </span><span class="s1">...]</span>
+
+    <span class="s1">_reconcile_to_other: Optional[bool]</span>
+    <span class="s1">strategy: Optional[_StrategyKey]</span>
+    <span class="s1">path: PathRegistry</span>
+    <span class="s1">propagate_to_loaders: bool</span>
+
+    <span class="s1">local_opts: util.immutabledict[str</span><span class="s5">, </span><span class="s1">Any]</span>
+
+    <span class="s1">is_token_strategy: bool</span>
+    <span class="s1">is_class_strategy: bool</span>
+
+    <span class="s3">def </span><span class="s1">__hash__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">id(self)</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other):</span>
+        <span class="s3">return </span><span class="s1">traversals.compare(self</span><span class="s5">, </span><span class="s1">other)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">is_opts_only(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">bool(self.local_opts </span><span class="s3">and </span><span class="s1">self.strategy </span><span class="s3">is None</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_clone(self</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; _LoadElement:</span>
+        <span class="s1">cls = self.__class__</span>
+        <span class="s1">s = cls.__new__(cls)</span>
+
+        <span class="s1">self._shallow_copy_to(s)</span>
+        <span class="s3">return </span><span class="s1">s</span>
+
+    <span class="s3">def </span><span class="s1">_update_opts(self</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; _LoadElement:</span>
+        <span class="s1">new = self._clone()</span>
+        <span class="s1">new.local_opts = new.local_opts.union(kw)</span>
+        <span class="s3">return </span><span class="s1">new</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self) -&gt; Dict[str</span><span class="s5">, </span><span class="s1">Any]:</span>
+        <span class="s1">d = self._shallow_to_dict()</span>
+        <span class="s1">d[</span><span class="s4">&quot;path&quot;</span><span class="s1">] = self.path.serialize()</span>
+        <span class="s3">return </span><span class="s1">d</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state: Dict[str</span><span class="s5">, </span><span class="s1">Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">state[</span><span class="s4">&quot;path&quot;</span><span class="s1">] = PathRegistry.deserialize(state[</span><span class="s4">&quot;path&quot;</span><span class="s1">])</span>
+        <span class="s1">self._shallow_from_dict(state)</span>
+
+    <span class="s3">def </span><span class="s1">_raise_for_no_match(self</span><span class="s5">, </span><span class="s1">parent_loader</span><span class="s5">, </span><span class="s1">mapper_entities):</span>
+        <span class="s1">path = parent_loader.path</span>
+
+        <span class="s1">found_entities = </span><span class="s3">False</span>
+        <span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">mapper_entities:</span>
+            <span class="s1">ezero = ent.entity_zero</span>
+            <span class="s3">if </span><span class="s1">ezero:</span>
+                <span class="s1">found_entities = </span><span class="s3">True</span>
+                <span class="s3">break</span>
+
+        <span class="s3">if not </span><span class="s1">found_entities:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s4">&quot;Query has only expression-based entities; &quot;</span>
+                <span class="s4">f&quot;attribute loader options for </span><span class="s6">{</span><span class="s1">path[</span><span class="s7">0</span><span class="s1">]</span><span class="s6">} </span><span class="s4">can't &quot;</span>
+                <span class="s4">&quot;be applied here.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s4">f&quot;Mapped class </span><span class="s6">{</span><span class="s1">path[</span><span class="s7">0</span><span class="s1">]</span><span class="s6">} </span><span class="s4">does not apply to any of the &quot;</span>
+                <span class="s4">f&quot;root entities in this query, e.g. &quot;</span>
+                <span class="s4">f&quot;&quot;&quot;</span><span class="s6">{</span>
+                    <span class="s4">&quot;, &quot;</span><span class="s1">.join(</span>
+                        <span class="s1">str(x.entity_zero)</span>
+                        <span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">mapper_entities </span><span class="s3">if </span><span class="s1">x.entity_zero</span>
+                    <span class="s1">)</span><span class="s6">}</span><span class="s4">. Please &quot;&quot;&quot;</span>
+                <span class="s4">&quot;specify the full path &quot;</span>
+                <span class="s4">&quot;from one of the root entities to the target &quot;</span>
+                <span class="s4">&quot;attribute. &quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_adjust_effective_path_for_current_path(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">effective_path: PathRegistry</span><span class="s5">, </span><span class="s1">current_path: PathRegistry</span>
+    <span class="s1">) -&gt; Optional[PathRegistry]:</span>
+        <span class="s2">&quot;&quot;&quot;receives the 'current_path' entry from an :class:`.ORMCompileState` 
+        instance, which is set during lazy loads and secondary loader strategy 
+        loads, and adjusts the given path to be relative to the 
+        current_path. 
+ 
+        E.g. given a loader path and current path:: 
+ 
+            lp: User -&gt; orders -&gt; Order -&gt; items -&gt; Item -&gt; keywords -&gt; Keyword 
+ 
+            cp: User -&gt; orders -&gt; Order -&gt; items 
+ 
+        The adjusted path would be:: 
+ 
+            Item -&gt; keywords -&gt; Keyword 
+ 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">chopped_start_path = Load._chop_path(</span>
+            <span class="s1">effective_path.natural_path</span><span class="s5">, </span><span class="s1">current_path</span>
+        <span class="s1">)</span>
+        <span class="s3">if not </span><span class="s1">chopped_start_path:</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">tokens_removed_from_start_path = len(effective_path) - len(</span>
+            <span class="s1">chopped_start_path</span>
+        <span class="s1">)</span>
+
+        <span class="s1">loader_lead_path_element = self.path[tokens_removed_from_start_path]</span>
+
+        <span class="s1">effective_path = PathRegistry.coerce(</span>
+            <span class="s1">(loader_lead_path_element</span><span class="s5">,</span><span class="s1">) + chopped_start_path[</span><span class="s7">1</span><span class="s1">:]</span>
+        <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">effective_path</span>
+
+    <span class="s3">def </span><span class="s1">_init_path(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">wildcard_key</span><span class="s5">, </span><span class="s1">attr_group</span><span class="s5">, </span><span class="s1">raiseerr</span><span class="s5">, </span><span class="s1">extra_criteria</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Apply ORM attributes and/or wildcard to an existing path, producing 
+        a new path. 
+ 
+        This method is used within the :meth:`.create` method to initialize 
+        a :class:`._LoadElement` object. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">_prepare_for_compile_state(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent_loader</span><span class="s5">,</span>
+        <span class="s1">compile_state</span><span class="s5">,</span>
+        <span class="s1">mapper_entities</span><span class="s5">,</span>
+        <span class="s1">reconciled_lead_entity</span><span class="s5">,</span>
+        <span class="s1">raiseerr</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;implemented by subclasses.&quot;&quot;&quot;</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">process_compile_state(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent_loader</span><span class="s5">,</span>
+        <span class="s1">compile_state</span><span class="s5">,</span>
+        <span class="s1">mapper_entities</span><span class="s5">,</span>
+        <span class="s1">reconciled_lead_entity</span><span class="s5">,</span>
+        <span class="s1">raiseerr</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;populate ORMCompileState.attributes with loader state for this 
+        _LoadElement. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">keys = self._prepare_for_compile_state(</span>
+            <span class="s1">parent_loader</span><span class="s5">,</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">mapper_entities</span><span class="s5">,</span>
+            <span class="s1">reconciled_lead_entity</span><span class="s5">,</span>
+            <span class="s1">raiseerr</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">keys:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compile_state.attributes:</span>
+                <span class="s1">compile_state.attributes[key] = _LoadElement._reconcile(</span>
+                    <span class="s1">self</span><span class="s5">, </span><span class="s1">compile_state.attributes[key]</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">compile_state.attributes[key] = self</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">create(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">path: PathRegistry</span><span class="s5">,</span>
+        <span class="s1">attr: Union[_AttrType</span><span class="s5">, </span><span class="s1">_StrPathToken</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]</span><span class="s5">,</span>
+        <span class="s1">strategy: Optional[_StrategyKey]</span><span class="s5">,</span>
+        <span class="s1">wildcard_key: Optional[_WildcardKeyType]</span><span class="s5">,</span>
+        <span class="s1">local_opts: Optional[_OptsType]</span><span class="s5">,</span>
+        <span class="s1">propagate_to_loaders: bool</span><span class="s5">,</span>
+        <span class="s1">raiseerr: bool = </span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">attr_group: Optional[_AttrGroupType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">reconcile_to_other: Optional[bool] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">extra_criteria: Optional[Tuple[Any</span><span class="s5">, </span><span class="s1">...]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; _LoadElement:</span>
+        <span class="s2">&quot;&quot;&quot;Create a new :class:`._LoadElement` object.&quot;&quot;&quot;</span>
+
+        <span class="s1">opt = cls.__new__(cls)</span>
+        <span class="s1">opt.path = path</span>
+        <span class="s1">opt.strategy = strategy</span>
+        <span class="s1">opt.propagate_to_loaders = propagate_to_loaders</span>
+        <span class="s1">opt.local_opts = (</span>
+            <span class="s1">util.immutabledict(local_opts) </span><span class="s3">if </span><span class="s1">local_opts </span><span class="s3">else </span><span class="s1">util.EMPTY_DICT</span>
+        <span class="s1">)</span>
+        <span class="s1">opt._extra_criteria = ()</span>
+
+        <span class="s3">if </span><span class="s1">reconcile_to_other </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">opt._reconcile_to_other = reconcile_to_other</span>
+        <span class="s3">elif </span><span class="s1">strategy </span><span class="s3">is None and not </span><span class="s1">local_opts:</span>
+            <span class="s1">opt._reconcile_to_other = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">opt._reconcile_to_other = </span><span class="s3">None</span>
+
+        <span class="s1">path = opt._init_path(</span>
+            <span class="s1">path</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">wildcard_key</span><span class="s5">, </span><span class="s1">attr_group</span><span class="s5">, </span><span class="s1">raiseerr</span><span class="s5">, </span><span class="s1">extra_criteria</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if not </span><span class="s1">path:</span>
+            <span class="s3">return None  </span><span class="s0"># type: ignore</span>
+
+        <span class="s3">assert </span><span class="s1">opt.is_token_strategy == path.is_token</span>
+
+        <span class="s1">opt.path = path</span>
+        <span class="s3">return </span><span class="s1">opt</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">_recurse(self) -&gt; _LoadElement:</span>
+        <span class="s1">cloned = self._clone()</span>
+        <span class="s1">cloned.path = PathRegistry.coerce(self.path[:] + self.path[-</span><span class="s7">2</span><span class="s1">:])</span>
+
+        <span class="s3">return </span><span class="s1">cloned</span>
+
+    <span class="s3">def </span><span class="s1">_prepend_path_from(self</span><span class="s5">, </span><span class="s1">parent: Load) -&gt; _LoadElement:</span>
+        <span class="s2">&quot;&quot;&quot;adjust the path of this :class:`._LoadElement` to be 
+        a subpath of that of the given parent :class:`_orm.Load` object's 
+        path. 
+ 
+        This is used by the :meth:`_orm.Load._apply_to_parent` method, 
+        which is in turn part of the :meth:`_orm.Load.options` method. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if not </span><span class="s1">any(</span>
+            <span class="s1">orm_util._entity_corresponds_to_use_path_impl(</span>
+                <span class="s1">elem</span><span class="s5">,</span>
+                <span class="s1">self.path.odd_element(</span><span class="s7">0</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">(parent.path.odd_element(-</span><span class="s7">1</span><span class="s1">)</span><span class="s5">,</span><span class="s1">)</span>
+            <span class="s1">+ parent.additional_source_entities</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s4">f'Attribute &quot;</span><span class="s6">{</span><span class="s1">self.path[</span><span class="s7">1</span><span class="s1">]</span><span class="s6">}</span><span class="s4">&quot; does not link '</span>
+                <span class="s4">f'from element &quot;</span><span class="s6">{</span><span class="s1">parent.path[-</span><span class="s7">1</span><span class="s1">]</span><span class="s6">}</span><span class="s4">&quot;.'</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">self._prepend_path(parent.path)</span>
+
+    <span class="s3">def </span><span class="s1">_prepend_path(self</span><span class="s5">, </span><span class="s1">path: PathRegistry) -&gt; _LoadElement:</span>
+        <span class="s1">cloned = self._clone()</span>
+
+        <span class="s3">assert </span><span class="s1">cloned.strategy == self.strategy</span>
+        <span class="s3">assert </span><span class="s1">cloned.local_opts == self.local_opts</span>
+        <span class="s3">assert </span><span class="s1">cloned.is_class_strategy == self.is_class_strategy</span>
+
+        <span class="s1">cloned.path = PathRegistry.coerce(path[</span><span class="s7">0</span><span class="s1">:-</span><span class="s7">1</span><span class="s1">] + cloned.path[:])</span>
+
+        <span class="s3">return </span><span class="s1">cloned</span>
+
+    <span class="s1">@staticmethod</span>
+    <span class="s3">def </span><span class="s1">_reconcile(</span>
+        <span class="s1">replacement: _LoadElement</span><span class="s5">, </span><span class="s1">existing: _LoadElement</span>
+    <span class="s1">) -&gt; _LoadElement:</span>
+        <span class="s2">&quot;&quot;&quot;define behavior for when two Load objects are to be put into 
+        the context.attributes under the same key. 
+ 
+        :param replacement: ``_LoadElement`` that seeks to replace the 
+         existing one 
+ 
+        :param existing: ``_LoadElement`` that is already present. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s0"># mapper inheritance loading requires fine-grained &quot;block other</span>
+        <span class="s0"># options&quot; / &quot;allow these options to be overridden&quot; behaviors</span>
+        <span class="s0"># see test_poly_loading.py</span>
+
+        <span class="s3">if </span><span class="s1">replacement._reconcile_to_other:</span>
+            <span class="s3">return </span><span class="s1">existing</span>
+        <span class="s3">elif </span><span class="s1">replacement._reconcile_to_other </span><span class="s3">is False</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">replacement</span>
+        <span class="s3">elif </span><span class="s1">existing._reconcile_to_other:</span>
+            <span class="s3">return </span><span class="s1">replacement</span>
+        <span class="s3">elif </span><span class="s1">existing._reconcile_to_other </span><span class="s3">is False</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">existing</span>
+
+        <span class="s3">if </span><span class="s1">existing </span><span class="s3">is </span><span class="s1">replacement:</span>
+            <span class="s3">return </span><span class="s1">replacement</span>
+        <span class="s3">elif </span><span class="s1">(</span>
+            <span class="s1">existing.strategy == replacement.strategy</span>
+            <span class="s3">and </span><span class="s1">existing.local_opts == replacement.local_opts</span>
+        <span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">replacement</span>
+        <span class="s3">elif </span><span class="s1">replacement.is_opts_only:</span>
+            <span class="s1">existing = existing._clone()</span>
+            <span class="s1">existing.local_opts = existing.local_opts.union(</span>
+                <span class="s1">replacement.local_opts</span>
+            <span class="s1">)</span>
+            <span class="s1">existing._extra_criteria += replacement._extra_criteria</span>
+            <span class="s3">return </span><span class="s1">existing</span>
+        <span class="s3">elif </span><span class="s1">existing.is_opts_only:</span>
+            <span class="s1">replacement = replacement._clone()</span>
+            <span class="s1">replacement.local_opts = replacement.local_opts.union(</span>
+                <span class="s1">existing.local_opts</span>
+            <span class="s1">)</span>
+            <span class="s1">replacement._extra_criteria += existing._extra_criteria</span>
+            <span class="s3">return </span><span class="s1">replacement</span>
+        <span class="s3">elif </span><span class="s1">replacement.path.is_token:</span>
+            <span class="s0"># use 'last one wins' logic for wildcard options.  this is also</span>
+            <span class="s0"># kind of inconsistent vs. options that are specific paths which</span>
+            <span class="s0"># will raise as below</span>
+            <span class="s3">return </span><span class="s1">replacement</span>
+
+        <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+            <span class="s4">f&quot;Loader strategies for </span><span class="s6">{</span><span class="s1">replacement.path</span><span class="s6">} </span><span class="s4">conflict&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_AttributeStrategyLoad(_LoadElement):</span>
+    <span class="s2">&quot;&quot;&quot;Loader strategies against specific relationship or column paths. 
+ 
+    e.g.:: 
+ 
+        joinedload(User.addresses) 
+        defer(Order.name) 
+        selectinload(User.orders).lazyload(Order.items) 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;_of_type&quot;</span><span class="s5">, </span><span class="s4">&quot;_path_with_polymorphic_path&quot;</span><span class="s1">)</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;attribute_strategy_load_element&quot;</span>
+
+    <span class="s1">_traverse_internals = _LoadElement._traverse_internals + [</span>
+        <span class="s1">(</span><span class="s4">&quot;_of_type&quot;</span><span class="s5">, </span><span class="s1">visitors.ExtendedInternalTraversal.dp_multi)</span><span class="s5">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;_path_with_polymorphic_path&quot;</span><span class="s5">,</span>
+            <span class="s1">visitors.ExtendedInternalTraversal.dp_has_cache_key</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+    <span class="s1">]</span>
+
+    <span class="s1">_of_type: Union[Mapper[Any]</span><span class="s5">, </span><span class="s1">AliasedInsp[Any]</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]</span>
+    <span class="s1">_path_with_polymorphic_path: Optional[PathRegistry]</span>
+
+    <span class="s1">is_class_strategy = </span><span class="s3">False</span>
+    <span class="s1">is_token_strategy = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">_init_path(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">wildcard_key</span><span class="s5">, </span><span class="s1">attr_group</span><span class="s5">, </span><span class="s1">raiseerr</span><span class="s5">, </span><span class="s1">extra_criteria</span>
+    <span class="s1">):</span>
+        <span class="s3">assert </span><span class="s1">attr </span><span class="s3">is not None</span>
+        <span class="s1">self._of_type = </span><span class="s3">None</span>
+        <span class="s1">self._path_with_polymorphic_path = </span><span class="s3">None</span>
+        <span class="s1">insp</span><span class="s5">, </span><span class="s1">_</span><span class="s5">, </span><span class="s1">prop = _parse_attr_argument(attr)</span>
+
+        <span class="s3">if </span><span class="s1">insp.is_property:</span>
+            <span class="s0"># direct property can be sent from internal strategy logic</span>
+            <span class="s0"># that sets up specific loaders, such as</span>
+            <span class="s0"># emit_lazyload-&gt;_lazyload_reverse</span>
+            <span class="s0"># prop = found_property = attr</span>
+            <span class="s1">prop = attr</span>
+            <span class="s1">path = path[prop]</span>
+
+            <span class="s3">if </span><span class="s1">path.has_entity:</span>
+                <span class="s1">path = path.entity_path</span>
+            <span class="s3">return </span><span class="s1">path</span>
+
+        <span class="s3">elif not </span><span class="s1">insp.is_attribute:</span>
+            <span class="s0"># should not reach here;</span>
+            <span class="s3">assert False</span>
+
+        <span class="s0"># here we assume we have user-passed InstrumentedAttribute</span>
+        <span class="s3">if not </span><span class="s1">orm_util._entity_corresponds_to_use_path_impl(</span>
+            <span class="s1">path[-</span><span class="s7">1</span><span class="s1">]</span><span class="s5">, </span><span class="s1">attr.parent</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">raiseerr:</span>
+                <span class="s3">if </span><span class="s1">attr_group </span><span class="s3">and </span><span class="s1">attr </span><span class="s3">is not </span><span class="s1">attr_group[</span><span class="s7">0</span><span class="s1">]:</span>
+                    <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                        <span class="s4">&quot;Can't apply wildcard ('*') or load_only() &quot;</span>
+                        <span class="s4">&quot;loader option to multiple entities in the &quot;</span>
+                        <span class="s4">&quot;same option. Use separate options per entity.&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">_raise_for_does_not_link(path</span><span class="s5">, </span><span class="s1">str(attr)</span><span class="s5">, </span><span class="s1">attr.parent)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+
+        <span class="s0"># note the essential logic of this attribute was very different in</span>
+        <span class="s0"># 1.4, where there were caching failures in e.g.</span>
+        <span class="s0"># test_relationship_criteria.py::RelationshipCriteriaTest::</span>
+        <span class="s0"># test_selectinload_nested_criteria[True] if an existing</span>
+        <span class="s0"># &quot;_extra_criteria&quot; on a Load object were replaced with that coming</span>
+        <span class="s0"># from an attribute.   This appears to have been an artifact of how</span>
+        <span class="s0"># _UnboundLoad / Load interacted together, which was opaque and</span>
+        <span class="s0"># poorly defined.</span>
+        <span class="s3">if </span><span class="s1">extra_criteria:</span>
+            <span class="s3">assert not </span><span class="s1">attr._extra_criteria</span>
+            <span class="s1">self._extra_criteria = extra_criteria</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._extra_criteria = attr._extra_criteria</span>
+
+        <span class="s3">if </span><span class="s1">getattr(attr</span><span class="s5">, </span><span class="s4">&quot;_of_type&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">):</span>
+            <span class="s1">ac = attr._of_type</span>
+            <span class="s1">ext_info = inspect(ac)</span>
+            <span class="s1">self._of_type = ext_info</span>
+
+            <span class="s1">self._path_with_polymorphic_path = path.entity_path[prop]</span>
+
+            <span class="s1">path = path[prop][ext_info]</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">path = path[prop]</span>
+
+        <span class="s3">if </span><span class="s1">path.has_entity:</span>
+            <span class="s1">path = path.entity_path</span>
+
+        <span class="s3">return </span><span class="s1">path</span>
+
+    <span class="s3">def </span><span class="s1">_generate_extra_criteria(self</span><span class="s5">, </span><span class="s1">context):</span>
+        <span class="s2">&quot;&quot;&quot;Apply the current bound parameters in a QueryContext to the 
+        immediate &quot;extra_criteria&quot; stored with this Load object. 
+ 
+        Load objects are typically pulled from the cached version of 
+        the statement from a QueryContext.  The statement currently being 
+        executed will have new values (and keys) for bound parameters in the 
+        extra criteria which need to be applied by loader strategies when 
+        they handle this criteria for a result set. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">assert </span><span class="s1">(</span>
+            <span class="s1">self._extra_criteria</span>
+        <span class="s1">)</span><span class="s5">, </span><span class="s4">&quot;this should only be called if _extra_criteria is present&quot;</span>
+
+        <span class="s1">orig_query = context.compile_state.select_statement</span>
+        <span class="s1">current_query = context.query</span>
+
+        <span class="s0"># NOTE: while it seems like we should not do the &quot;apply&quot; operation</span>
+        <span class="s0"># here if orig_query is current_query, skipping it in the &quot;optimized&quot;</span>
+        <span class="s0"># case causes the query to be different from a cache key perspective,</span>
+        <span class="s0"># because we are creating a copy of the criteria which is no longer</span>
+        <span class="s0"># the same identity of the _extra_criteria in the loader option</span>
+        <span class="s0"># itself.  cache key logic produces a different key for</span>
+        <span class="s0"># (A, copy_of_A) vs. (A, A), because in the latter case it shortens</span>
+        <span class="s0"># the second part of the key to just indicate on identity.</span>
+
+        <span class="s0"># if orig_query is current_query:</span>
+        <span class="s0"># not cached yet.   just do the and_()</span>
+        <span class="s0">#    return and_(*self._extra_criteria)</span>
+
+        <span class="s1">k1 = orig_query._generate_cache_key()</span>
+        <span class="s1">k2 = current_query._generate_cache_key()</span>
+
+        <span class="s3">return </span><span class="s1">k2._apply_params_to_element(k1</span><span class="s5">, </span><span class="s1">and_(*self._extra_criteria))</span>
+
+    <span class="s3">def </span><span class="s1">_set_of_type_info(self</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">current_path):</span>
+        <span class="s3">assert </span><span class="s1">self._path_with_polymorphic_path</span>
+
+        <span class="s1">pwpi = self._of_type</span>
+        <span class="s3">assert </span><span class="s1">pwpi</span>
+        <span class="s3">if not </span><span class="s1">pwpi.is_aliased_class:</span>
+            <span class="s1">pwpi = inspect(</span>
+                <span class="s1">orm_util.AliasedInsp._with_polymorphic_factory(</span>
+                    <span class="s1">pwpi.mapper.base_mapper</span><span class="s5">,</span>
+                    <span class="s1">(pwpi.mapper</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">aliased=</span><span class="s3">True</span><span class="s5">,</span>
+                    <span class="s1">_use_mapper_path=</span><span class="s3">True</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">start_path = self._path_with_polymorphic_path</span>
+        <span class="s3">if </span><span class="s1">current_path:</span>
+            <span class="s1">new_path = self._adjust_effective_path_for_current_path(</span>
+                <span class="s1">start_path</span><span class="s5">, </span><span class="s1">current_path</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">new_path </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return</span>
+            <span class="s1">start_path = new_path</span>
+
+        <span class="s1">key = (</span><span class="s4">&quot;path_with_polymorphic&quot;</span><span class="s5">, </span><span class="s1">start_path.natural_path)</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">context:</span>
+            <span class="s1">existing_aliased_insp = context[key]</span>
+            <span class="s1">this_aliased_insp = pwpi</span>
+            <span class="s1">new_aliased_insp = existing_aliased_insp._merge_with(</span>
+                <span class="s1">this_aliased_insp</span>
+            <span class="s1">)</span>
+            <span class="s1">context[key] = new_aliased_insp</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">context[key] = pwpi</span>
+
+    <span class="s3">def </span><span class="s1">_prepare_for_compile_state(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent_loader</span><span class="s5">,</span>
+        <span class="s1">compile_state</span><span class="s5">,</span>
+        <span class="s1">mapper_entities</span><span class="s5">,</span>
+        <span class="s1">reconciled_lead_entity</span><span class="s5">,</span>
+        <span class="s1">raiseerr</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s0"># _AttributeStrategyLoad</span>
+
+        <span class="s1">current_path = compile_state.current_path</span>
+        <span class="s1">is_refresh = compile_state.compile_options._for_refresh_state</span>
+        <span class="s3">assert not </span><span class="s1">self.path.is_token</span>
+
+        <span class="s3">if </span><span class="s1">is_refresh </span><span class="s3">and not </span><span class="s1">self.propagate_to_loaders:</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s3">if </span><span class="s1">self._of_type:</span>
+            <span class="s0"># apply additional with_polymorphic alias that may have been</span>
+            <span class="s0"># generated.  this has to happen even if this is a defaultload</span>
+            <span class="s1">self._set_of_type_info(compile_state.attributes</span><span class="s5">, </span><span class="s1">current_path)</span>
+
+        <span class="s0"># omit setting loader attributes for a &quot;defaultload&quot; type of option</span>
+        <span class="s3">if not </span><span class="s1">self.strategy </span><span class="s3">and not </span><span class="s1">self.local_opts:</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s3">if </span><span class="s1">raiseerr </span><span class="s3">and not </span><span class="s1">reconciled_lead_entity:</span>
+            <span class="s1">self._raise_for_no_match(parent_loader</span><span class="s5">, </span><span class="s1">mapper_entities)</span>
+
+        <span class="s3">if </span><span class="s1">self.path.has_entity:</span>
+            <span class="s1">effective_path = self.path.parent</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">effective_path = self.path</span>
+
+        <span class="s3">if </span><span class="s1">current_path:</span>
+            <span class="s3">assert </span><span class="s1">effective_path </span><span class="s3">is not None</span>
+            <span class="s1">effective_path = self._adjust_effective_path_for_current_path(</span>
+                <span class="s1">effective_path</span><span class="s5">, </span><span class="s1">current_path</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">effective_path </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s3">return </span><span class="s1">[(</span><span class="s4">&quot;loader&quot;</span><span class="s5">, </span><span class="s1">cast(PathRegistry</span><span class="s5">, </span><span class="s1">effective_path).natural_path)]</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self):</span>
+        <span class="s1">d = super().__getstate__()</span>
+
+        <span class="s0"># can't pickle this.  See</span>
+        <span class="s0"># test_pickled.py -&gt; test_lazyload_extra_criteria_not_supported</span>
+        <span class="s0"># where we should be emitting a warning for the usual case where this</span>
+        <span class="s0"># would be non-None</span>
+        <span class="s1">d[</span><span class="s4">&quot;_extra_criteria&quot;</span><span class="s1">] = ()</span>
+
+        <span class="s3">if </span><span class="s1">self._path_with_polymorphic_path:</span>
+            <span class="s1">d[</span><span class="s4">&quot;_path_with_polymorphic_path&quot;</span><span class="s1">] = (</span>
+                <span class="s1">self._path_with_polymorphic_path.serialize()</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self._of_type:</span>
+            <span class="s3">if </span><span class="s1">self._of_type.is_aliased_class:</span>
+                <span class="s1">d[</span><span class="s4">&quot;_of_type&quot;</span><span class="s1">] = </span><span class="s3">None</span>
+            <span class="s3">elif </span><span class="s1">self._of_type.is_mapper:</span>
+                <span class="s1">d[</span><span class="s4">&quot;_of_type&quot;</span><span class="s1">] = self._of_type.class_</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">assert False</span><span class="s5">, </span><span class="s4">&quot;unexpected object for _of_type&quot;</span>
+
+        <span class="s3">return </span><span class="s1">d</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state):</span>
+        <span class="s1">super().__setstate__(state)</span>
+
+        <span class="s3">if </span><span class="s1">state.get(</span><span class="s4">&quot;_path_with_polymorphic_path&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">):</span>
+            <span class="s1">self._path_with_polymorphic_path = PathRegistry.deserialize(</span>
+                <span class="s1">state[</span><span class="s4">&quot;_path_with_polymorphic_path&quot;</span><span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._path_with_polymorphic_path = </span><span class="s3">None</span>
+
+        <span class="s3">if </span><span class="s1">state.get(</span><span class="s4">&quot;_of_type&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">):</span>
+            <span class="s1">self._of_type = inspect(state[</span><span class="s4">&quot;_of_type&quot;</span><span class="s1">])</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._of_type = </span><span class="s3">None</span>
+
+
+<span class="s3">class </span><span class="s1">_TokenStrategyLoad(_LoadElement):</span>
+    <span class="s2">&quot;&quot;&quot;Loader strategies against wildcard attributes 
+ 
+    e.g.:: 
+ 
+        raiseload('*') 
+        Load(User).lazyload('*') 
+        defer('*') 
+        load_only(User.name, User.email)  # will create a defer('*') 
+        joinedload(User.addresses).raiseload('*') 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;token_strategy_load_element&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s3">True</span>
+    <span class="s1">is_class_strategy = </span><span class="s3">False</span>
+    <span class="s1">is_token_strategy = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">_init_path(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">wildcard_key</span><span class="s5">, </span><span class="s1">attr_group</span><span class="s5">, </span><span class="s1">raiseerr</span><span class="s5">, </span><span class="s1">extra_criteria</span>
+    <span class="s1">):</span>
+        <span class="s0"># assert isinstance(attr, str) or attr is None</span>
+        <span class="s3">if </span><span class="s1">attr </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">default_token = attr.endswith(_DEFAULT_TOKEN)</span>
+            <span class="s3">if </span><span class="s1">attr.endswith(_WILDCARD_TOKEN) </span><span class="s3">or </span><span class="s1">default_token:</span>
+                <span class="s3">if </span><span class="s1">wildcard_key:</span>
+                    <span class="s1">attr = </span><span class="s4">f&quot;</span><span class="s6">{</span><span class="s1">wildcard_key</span><span class="s6">}</span><span class="s4">:</span><span class="s6">{</span><span class="s1">attr</span><span class="s6">}</span><span class="s4">&quot;</span>
+
+                <span class="s1">path = path.token(attr)</span>
+                <span class="s3">return </span><span class="s1">path</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">&quot;Strings are not accepted for attribute names in loader &quot;</span>
+                    <span class="s4">&quot;options; please use class-bound attributes directly.&quot;</span>
+                <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">path</span>
+
+    <span class="s3">def </span><span class="s1">_prepare_for_compile_state(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent_loader</span><span class="s5">,</span>
+        <span class="s1">compile_state</span><span class="s5">,</span>
+        <span class="s1">mapper_entities</span><span class="s5">,</span>
+        <span class="s1">reconciled_lead_entity</span><span class="s5">,</span>
+        <span class="s1">raiseerr</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s0"># _TokenStrategyLoad</span>
+
+        <span class="s1">current_path = compile_state.current_path</span>
+        <span class="s1">is_refresh = compile_state.compile_options._for_refresh_state</span>
+
+        <span class="s3">assert </span><span class="s1">self.path.is_token</span>
+
+        <span class="s3">if </span><span class="s1">is_refresh </span><span class="s3">and not </span><span class="s1">self.propagate_to_loaders:</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s0"># omit setting attributes for a &quot;defaultload&quot; type of option</span>
+        <span class="s3">if not </span><span class="s1">self.strategy </span><span class="s3">and not </span><span class="s1">self.local_opts:</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s1">effective_path = self.path</span>
+        <span class="s3">if </span><span class="s1">reconciled_lead_entity:</span>
+            <span class="s1">effective_path = PathRegistry.coerce(</span>
+                <span class="s1">(reconciled_lead_entity</span><span class="s5">,</span><span class="s1">) + effective_path.path[</span><span class="s7">1</span><span class="s1">:]</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">current_path:</span>
+            <span class="s1">new_effective_path = self._adjust_effective_path_for_current_path(</span>
+                <span class="s1">effective_path</span><span class="s5">, </span><span class="s1">current_path</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">new_effective_path </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">[]</span>
+            <span class="s1">effective_path = new_effective_path</span>
+
+        <span class="s0"># for a wildcard token, expand out the path we set</span>
+        <span class="s0"># to encompass everything from the query entity on</span>
+        <span class="s0"># forward.  not clear if this is necessary when current_path</span>
+        <span class="s0"># is set.</span>
+
+        <span class="s3">return </span><span class="s1">[</span>
+            <span class="s1">(</span><span class="s4">&quot;loader&quot;</span><span class="s5">, </span><span class="s1">natural_path)</span>
+            <span class="s3">for </span><span class="s1">natural_path </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s1">cast(</span>
+                    <span class="s1">TokenRegistry</span><span class="s5">, </span><span class="s1">effective_path</span>
+                <span class="s1">)._generate_natural_for_superclasses()</span>
+            <span class="s1">)</span>
+        <span class="s1">]</span>
+
+
+<span class="s3">class </span><span class="s1">_ClassStrategyLoad(_LoadElement):</span>
+    <span class="s2">&quot;&quot;&quot;Loader strategies that deals with a class as a target, not 
+    an attribute path 
+ 
+    e.g.:: 
+ 
+        q = s.query(Person).options( 
+            selectin_polymorphic(Person, [Engineer, Manager]) 
+        ) 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s3">True</span>
+    <span class="s1">is_class_strategy = </span><span class="s3">True</span>
+    <span class="s1">is_token_strategy = </span><span class="s3">False</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;class_strategy_load_element&quot;</span>
+
+    <span class="s3">def </span><span class="s1">_init_path(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">wildcard_key</span><span class="s5">, </span><span class="s1">attr_group</span><span class="s5">, </span><span class="s1">raiseerr</span><span class="s5">, </span><span class="s1">extra_criteria</span>
+    <span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">path</span>
+
+    <span class="s3">def </span><span class="s1">_prepare_for_compile_state(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent_loader</span><span class="s5">,</span>
+        <span class="s1">compile_state</span><span class="s5">,</span>
+        <span class="s1">mapper_entities</span><span class="s5">,</span>
+        <span class="s1">reconciled_lead_entity</span><span class="s5">,</span>
+        <span class="s1">raiseerr</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s0"># _ClassStrategyLoad</span>
+
+        <span class="s1">current_path = compile_state.current_path</span>
+        <span class="s1">is_refresh = compile_state.compile_options._for_refresh_state</span>
+
+        <span class="s3">if </span><span class="s1">is_refresh </span><span class="s3">and not </span><span class="s1">self.propagate_to_loaders:</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s0"># omit setting attributes for a &quot;defaultload&quot; type of option</span>
+        <span class="s3">if not </span><span class="s1">self.strategy </span><span class="s3">and not </span><span class="s1">self.local_opts:</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s1">effective_path = self.path</span>
+
+        <span class="s3">if </span><span class="s1">current_path:</span>
+            <span class="s1">new_effective_path = self._adjust_effective_path_for_current_path(</span>
+                <span class="s1">effective_path</span><span class="s5">, </span><span class="s1">current_path</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">new_effective_path </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">[]</span>
+            <span class="s1">effective_path = new_effective_path</span>
+
+        <span class="s3">return </span><span class="s1">[(</span><span class="s4">&quot;loader&quot;</span><span class="s5">, </span><span class="s1">effective_path.natural_path)]</span>
+
+
+<span class="s3">def </span><span class="s1">_generate_from_keys(</span>
+    <span class="s1">meth: Callable[...</span><span class="s5">, </span><span class="s1">_AbstractLoad]</span><span class="s5">,</span>
+    <span class="s1">keys: Tuple[_AttrType</span><span class="s5">, </span><span class="s1">...]</span><span class="s5">,</span>
+    <span class="s1">chained: bool</span><span class="s5">,</span>
+    <span class="s1">kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; _AbstractLoad:</span>
+    <span class="s1">lead_element: Optional[_AbstractLoad] = </span><span class="s3">None</span>
+
+    <span class="s1">attr: Any</span>
+    <span class="s3">for </span><span class="s1">is_default</span><span class="s5">, </span><span class="s1">_keys </span><span class="s3">in </span><span class="s1">(</span><span class="s3">True</span><span class="s5">, </span><span class="s1">keys[</span><span class="s7">0</span><span class="s1">:-</span><span class="s7">1</span><span class="s1">])</span><span class="s5">, </span><span class="s1">(</span><span class="s3">False</span><span class="s5">, </span><span class="s1">keys[-</span><span class="s7">1</span><span class="s1">:]):</span>
+        <span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">_keys:</span>
+            <span class="s3">if </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">str):</span>
+                <span class="s3">if </span><span class="s1">attr.startswith(</span><span class="s4">&quot;.&quot; </span><span class="s1">+ _WILDCARD_TOKEN):</span>
+                    <span class="s1">util.warn_deprecated(</span>
+                        <span class="s4">&quot;The undocumented `.{WILDCARD}` format is &quot;</span>
+                        <span class="s4">&quot;deprecated &quot;</span>
+                        <span class="s4">&quot;and will be removed in a future version as &quot;</span>
+                        <span class="s4">&quot;it is &quot;</span>
+                        <span class="s4">&quot;believed to be unused. &quot;</span>
+                        <span class="s4">&quot;If you have been using this functionality, &quot;</span>
+                        <span class="s4">&quot;please &quot;</span>
+                        <span class="s4">&quot;comment on Issue #4390 on the SQLAlchemy project &quot;</span>
+                        <span class="s4">&quot;tracker.&quot;</span><span class="s5">,</span>
+                        <span class="s1">version=</span><span class="s4">&quot;1.4&quot;</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                    <span class="s1">attr = attr[</span><span class="s7">1</span><span class="s1">:]</span>
+
+                <span class="s3">if </span><span class="s1">attr == _WILDCARD_TOKEN:</span>
+                    <span class="s3">if </span><span class="s1">is_default:</span>
+                        <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                            <span class="s4">&quot;Wildcard token cannot be followed by &quot;</span>
+                            <span class="s4">&quot;another entity&quot;</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+
+                    <span class="s3">if </span><span class="s1">lead_element </span><span class="s3">is None</span><span class="s1">:</span>
+                        <span class="s1">lead_element = _WildcardLoad()</span>
+
+                    <span class="s1">lead_element = meth(lead_element</span><span class="s5">, </span><span class="s1">_DEFAULT_TOKEN</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                        <span class="s4">&quot;Strings are not accepted for attribute names in &quot;</span>
+                        <span class="s4">&quot;loader options; please use class-bound &quot;</span>
+                        <span class="s4">&quot;attributes directly.&quot;</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">lead_element </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s1">_</span><span class="s5">, </span><span class="s1">lead_entity</span><span class="s5">, </span><span class="s1">_ = _parse_attr_argument(attr)</span>
+                    <span class="s1">lead_element = Load(lead_entity)</span>
+
+                <span class="s3">if </span><span class="s1">is_default:</span>
+                    <span class="s3">if not </span><span class="s1">chained:</span>
+                        <span class="s1">lead_element = lead_element.defaultload(attr)</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">lead_element = meth(</span>
+                            <span class="s1">lead_element</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">_is_chain=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">**kw</span>
+                        <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">lead_element = meth(lead_element</span><span class="s5">, </span><span class="s1">attr</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">assert </span><span class="s1">lead_element</span>
+    <span class="s3">return </span><span class="s1">lead_element</span>
+
+
+<span class="s3">def </span><span class="s1">_parse_attr_argument(</span>
+    <span class="s1">attr: _AttrType</span><span class="s5">,</span>
+<span class="s1">) -&gt; Tuple[InspectionAttr</span><span class="s5">, </span><span class="s1">_InternalEntityType[Any]</span><span class="s5">, </span><span class="s1">MapperProperty[Any]]:</span>
+    <span class="s2">&quot;&quot;&quot;parse an attribute or wildcard argument to produce an 
+    :class:`._AbstractLoad` instance. 
+ 
+    This is used by the standalone loader strategy functions like 
+    ``joinedload()``, ``defer()``, etc. to produce :class:`_orm.Load` or 
+    :class:`._WildcardLoad` objects. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s0"># TODO: need to figure out this None thing being returned by</span>
+        <span class="s0"># inspect(), it should not have None as an option in most cases</span>
+        <span class="s0"># if at all</span>
+        <span class="s1">insp: InspectionAttr = inspect(attr)  </span><span class="s0"># type: ignore</span>
+    <span class="s3">except </span><span class="s1">sa_exc.NoInspectionAvailable </span><span class="s3">as </span><span class="s1">err:</span>
+        <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+            <span class="s4">&quot;expected ORM mapped attribute for loader strategy argument&quot;</span>
+        <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+
+    <span class="s1">lead_entity: _InternalEntityType[Any]</span>
+
+    <span class="s3">if </span><span class="s1">insp_is_mapper_property(insp):</span>
+        <span class="s1">lead_entity = insp.parent</span>
+        <span class="s1">prop = insp</span>
+    <span class="s3">elif </span><span class="s1">insp_is_attribute(insp):</span>
+        <span class="s1">lead_entity = insp.parent</span>
+        <span class="s1">prop = insp.prop</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+            <span class="s4">&quot;expected ORM mapped attribute for loader strategy argument&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s3">return </span><span class="s1">insp</span><span class="s5">, </span><span class="s1">lead_entity</span><span class="s5">, </span><span class="s1">prop</span>
+
+
+<span class="s3">def </span><span class="s1">loader_unbound_fn(fn: _FN) -&gt; _FN:</span>
+    <span class="s2">&quot;&quot;&quot;decorator that applies docstrings between standalone loader functions 
+    and the loader methods on :class:`._AbstractLoad`. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">bound_fn = getattr(_AbstractLoad</span><span class="s5">, </span><span class="s1">fn.__name__)</span>
+    <span class="s1">fn_doc = bound_fn.__doc__</span>
+    <span class="s1">bound_fn.__doc__ = </span><span class="s4">f&quot;&quot;&quot;Produce a new :class:`_orm.Load` object with the</span>
+<span class="s4">:func:`_orm.</span><span class="s6">{</span><span class="s1">fn.__name__</span><span class="s6">}</span><span class="s4">` option applied.</span>
+
+<span class="s4">See :func:`_orm.</span><span class="s6">{</span><span class="s1">fn.__name__</span><span class="s6">}</span><span class="s4">` for usage examples.</span>
+
+<span class="s4">&quot;&quot;&quot;</span>
+
+    <span class="s1">fn.__doc__ = fn_doc</span>
+    <span class="s3">return </span><span class="s1">fn</span>
+
+
+<span class="s0"># standalone functions follow.  docstrings are filled in</span>
+<span class="s0"># by the ``@loader_unbound_fn`` decorator.</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">contains_eager(*keys: _AttrType</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(Load.contains_eager</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s3">True</span><span class="s5">, </span><span class="s1">kw)</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">load_only(*attrs: _AttrType</span><span class="s5">, </span><span class="s1">raiseload: bool = </span><span class="s3">False</span><span class="s1">) -&gt; _AbstractLoad:</span>
+    <span class="s0"># TODO: attrs against different classes.  we likely have to</span>
+    <span class="s0"># add some extra state to Load of some kind</span>
+    <span class="s1">_</span><span class="s5">, </span><span class="s1">lead_element</span><span class="s5">, </span><span class="s1">_ = _parse_attr_argument(attrs[</span><span class="s7">0</span><span class="s1">])</span>
+    <span class="s3">return </span><span class="s1">Load(lead_element).load_only(*attrs</span><span class="s5">, </span><span class="s1">raiseload=raiseload)</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">joinedload(*keys: _AttrType</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(Load.joinedload</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">kw)</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">subqueryload(*keys: _AttrType) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(Load.subqueryload</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">{})</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">selectinload(</span>
+    <span class="s1">*keys: _AttrType</span><span class="s5">, </span><span class="s1">recursion_depth: Optional[int] = </span><span class="s3">None</span>
+<span class="s1">) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(</span>
+        <span class="s1">Load.selectinload</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;recursion_depth&quot;</span><span class="s1">: recursion_depth}</span>
+    <span class="s1">)</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">lazyload(*keys: _AttrType) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(Load.lazyload</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">{})</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">immediateload(</span>
+    <span class="s1">*keys: _AttrType</span><span class="s5">, </span><span class="s1">recursion_depth: Optional[int] = </span><span class="s3">None</span>
+<span class="s1">) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(</span>
+        <span class="s1">Load.immediateload</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;recursion_depth&quot;</span><span class="s1">: recursion_depth}</span>
+    <span class="s1">)</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">noload(*keys: _AttrType) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(Load.noload</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">{})</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">raiseload(*keys: _AttrType</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(Load.raiseload</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">kw)</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">defaultload(*keys: _AttrType) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(Load.defaultload</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">{})</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">defer(</span>
+    <span class="s1">key: _AttrType</span><span class="s5">, </span><span class="s1">*addl_attrs: _AttrType</span><span class="s5">, </span><span class="s1">raiseload: bool = </span><span class="s3">False</span>
+<span class="s1">) -&gt; _AbstractLoad:</span>
+    <span class="s3">if </span><span class="s1">addl_attrs:</span>
+        <span class="s1">util.warn_deprecated(</span>
+            <span class="s4">&quot;The *addl_attrs on orm.defer is deprecated.  Please use &quot;</span>
+            <span class="s4">&quot;method chaining in conjunction with defaultload() to &quot;</span>
+            <span class="s4">&quot;indicate a path.&quot;</span><span class="s5">,</span>
+            <span class="s1">version=</span><span class="s4">&quot;1.3&quot;</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">raiseload:</span>
+        <span class="s1">kw = {</span><span class="s4">&quot;raiseload&quot;</span><span class="s1">: raiseload}</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">kw = {}</span>
+
+    <span class="s3">return </span><span class="s1">_generate_from_keys(Load.defer</span><span class="s5">, </span><span class="s1">(key</span><span class="s5">,</span><span class="s1">) + addl_attrs</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">kw)</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">undefer(key: _AttrType</span><span class="s5">, </span><span class="s1">*addl_attrs: _AttrType) -&gt; _AbstractLoad:</span>
+    <span class="s3">if </span><span class="s1">addl_attrs:</span>
+        <span class="s1">util.warn_deprecated(</span>
+            <span class="s4">&quot;The *addl_attrs on orm.undefer is deprecated.  Please use &quot;</span>
+            <span class="s4">&quot;method chaining in conjunction with defaultload() to &quot;</span>
+            <span class="s4">&quot;indicate a path.&quot;</span><span class="s5">,</span>
+            <span class="s1">version=</span><span class="s4">&quot;1.3&quot;</span><span class="s5">,</span>
+        <span class="s1">)</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(Load.undefer</span><span class="s5">, </span><span class="s1">(key</span><span class="s5">,</span><span class="s1">) + addl_attrs</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">{})</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">undefer_group(name: str) -&gt; _AbstractLoad:</span>
+    <span class="s1">element = _WildcardLoad()</span>
+    <span class="s3">return </span><span class="s1">element.undefer_group(name)</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">with_expression(</span>
+    <span class="s1">key: _AttrType</span><span class="s5">, </span><span class="s1">expression: _ColumnExpressionArgument[Any]</span>
+<span class="s1">) -&gt; _AbstractLoad:</span>
+    <span class="s3">return </span><span class="s1">_generate_from_keys(</span>
+        <span class="s1">Load.with_expression</span><span class="s5">, </span><span class="s1">(key</span><span class="s5">,</span><span class="s1">)</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;expression&quot;</span><span class="s1">: expression}</span>
+    <span class="s1">)</span>
+
+
+<span class="s1">@loader_unbound_fn</span>
+<span class="s3">def </span><span class="s1">selectin_polymorphic(</span>
+    <span class="s1">base_cls: _EntityType[Any]</span><span class="s5">, </span><span class="s1">classes: Iterable[Type[Any]]</span>
+<span class="s1">) -&gt; _AbstractLoad:</span>
+    <span class="s1">ul = Load(base_cls)</span>
+    <span class="s3">return </span><span class="s1">ul.selectin_polymorphic(classes)</span>
+
+
+<span class="s3">def </span><span class="s1">_raise_for_does_not_link(path</span><span class="s5">, </span><span class="s1">attrname</span><span class="s5">, </span><span class="s1">parent_entity):</span>
+    <span class="s3">if </span><span class="s1">len(path) &gt; </span><span class="s7">1</span><span class="s1">:</span>
+        <span class="s1">path_is_of_type = path[-</span><span class="s7">1</span><span class="s1">].entity </span><span class="s3">is not </span><span class="s1">path[-</span><span class="s7">2</span><span class="s1">].mapper.class_</span>
+        <span class="s3">if </span><span class="s1">insp_is_aliased_class(parent_entity):</span>
+            <span class="s1">parent_entity_str = str(parent_entity)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">parent_entity_str = parent_entity.class_.__name__</span>
+
+        <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+            <span class="s4">f'ORM mapped entity or attribute &quot;</span><span class="s6">{</span><span class="s1">attrname</span><span class="s6">}</span><span class="s4">&quot; does not '</span>
+            <span class="s4">f'link from relationship &quot;</span><span class="s6">{</span><span class="s1">path[-</span><span class="s7">2</span><span class="s1">]</span><span class="s6">}</span><span class="s4">%s&quot;.%s'</span>
+            <span class="s1">% (</span>
+                <span class="s4">f&quot;.of_type(</span><span class="s6">{</span><span class="s1">path[-</span><span class="s7">1</span><span class="s1">]</span><span class="s6">}</span><span class="s4">)&quot; </span><span class="s3">if </span><span class="s1">path_is_of_type </span><span class="s3">else </span><span class="s4">&quot;&quot;</span><span class="s5">,</span>
+                <span class="s1">(</span>
+                    <span class="s4">&quot;  Did you mean to use &quot;</span>
+                    <span class="s4">f'&quot;</span><span class="s6">{</span><span class="s1">path[-</span><span class="s7">2</span><span class="s1">]</span><span class="s6">}</span><span class="s4">'</span>
+                    <span class="s4">f'.of_type(</span><span class="s6">{</span><span class="s1">parent_entity_str</span><span class="s6">}</span><span class="s4">)&quot; or &quot;loadopt.options('</span>
+                    <span class="s4">f&quot;selectin_polymorphic(</span><span class="s6">{</span><span class="s1">path[-</span><span class="s7">2</span><span class="s1">].mapper.class_.__name__</span><span class="s6">}</span><span class="s4">, &quot;</span>
+                    <span class="s4">f'[</span><span class="s6">{</span><span class="s1">parent_entity_str</span><span class="s6">}</span><span class="s4">]), ...)&quot; ?'</span>
+                    <span class="s3">if not </span><span class="s1">path_is_of_type</span>
+                    <span class="s3">and not </span><span class="s1">path[-</span><span class="s7">1</span><span class="s1">].is_aliased_class</span>
+                    <span class="s3">and </span><span class="s1">orm_util._entity_corresponds_to(</span>
+                        <span class="s1">path.entity</span><span class="s5">, </span><span class="s1">inspect(parent_entity).mapper</span>
+                    <span class="s1">)</span>
+                    <span class="s3">else </span><span class="s4">&quot;&quot;</span>
+                <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+            <span class="s4">f'ORM mapped attribute &quot;</span><span class="s6">{</span><span class="s1">attrname</span><span class="s6">}</span><span class="s4">&quot; does not '</span>
+            <span class="s4">f'link mapped class &quot;</span><span class="s6">{</span><span class="s1">path[-</span><span class="s7">1</span><span class="s1">]</span><span class="s6">}</span><span class="s4">&quot;'</span>
+        <span class="s1">)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<html>
+<head>
+<title>gerenciar_funcionarios.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+.s1 { color: #e8bf6a;}
+.s2 { color: #bababa;}
+.s3 { color: #a5c261;}
+.s4 { color: #5d69bb;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+gerenciar_funcionarios.html</font>
+</center></td></tr></table>
+<pre><span class="s0">{% extends 'modelo_base2.html' %}</span>
+
+<span class="s0">{% block conteudo %}</span>
+<span class="s1">&lt;h1&gt;</span><span class="s0">Gerenciar Funcionários</span><span class="s1">&lt;/h1&gt;</span>
+
+<span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;card-container2&quot;</span><span class="s1">&gt;</span>
+    <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;card2&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;h3&gt;</span><span class="s0">Criar Funcionário</span><span class="s1">&lt;/h3&gt;</span>
+        <span class="s1">&lt;p&gt;</span><span class="s0">Adicione um novo funcionário à plataforma.</span><span class="s1">&lt;/p&gt;</span>
+        <span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('criar_funcionario') }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn&quot;</span><span class="s1">&gt;</span><span class="s0">Criar Funcionário</span><span class="s1">&lt;/a&gt;</span>
+    <span class="s1">&lt;/div&gt;</span>
+
+    <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;card2&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;h3&gt;</span><span class="s0">Listar Funcionários</span><span class="s1">&lt;/h3&gt;</span>
+        <span class="s1">&lt;p&gt;</span><span class="s0">Visualize todos os funcionários cadastrados.</span><span class="s1">&lt;/p&gt;</span>
+        <span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('listar_funcionarios') }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn&quot;</span><span class="s1">&gt;</span><span class="s0">Listar Funcionários</span><span class="s1">&lt;/a&gt;</span>
+    <span class="s1">&lt;/div&gt;</span>
+
+
+    <span class="s4">&lt;!-- Lista de Funcionários --&gt;</span>
+<span class="s1">&lt;/div&gt;</span>
+
+<span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('gerenciamento') }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn voltar2&quot;</span><span class="s1">&gt;</span><span class="s0">Voltar</span><span class="s1">&lt;/a&gt;</span>
+
+<span class="s0">{% endblock %}</span>
+</pre>
+</body>
+</html>

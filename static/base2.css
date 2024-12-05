@@ -1,0 +1,583 @@
+/* Reset básico */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+    background-color: #e1e1e1; /* Cor de fundo padrão */
+    color: #333; /* Cor do texto padrão */
+}
+/* Barra de navegação */
+.nav-bar {
+    height: 50px;
+    background-color: #333; /* Fundo escuro */
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between; /* Espaça os itens de navegação e a lupa */
+    align-items: center; /* Centraliza verticalmente */
+}
+
+.nav-bar .menu {
+    list-style: none;
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    justify-content: center; /* Centraliza os itens da navegação */
+    flex-grow: 1; /* Faz os itens da navegação ocuparem o espaço disponível */
+}
+
+.nav-bar .menu li {
+    color: white;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 14px;
+    transition: color 0.3s ease;
+}
+
+.nav-bar .menu li:hover {
+    color: #f4a261; /* Cor de destaque ao passar o mouse */
+}
+
+
+/* Caixa de pesquisa */
+.search-box {
+    height: 22px;
+    display: none; /* Oculta a caixa de pesquisa por padrão */
+    background-color: #05fa00;
+    position: absolute;
+    top: 14px; /* Posiciona a caixa abaixo da barra de navegação */
+    right: 70px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.search-box input {
+    height: 18px;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+.search-box button {
+    top: -5px;
+    right: -60px;
+    position: absolute;
+    height: 28px;
+    background-color: #121aff;
+    color: white;
+    padding: 8px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.search-box button:hover {
+    background-color: #f4a261;
+}
+
+/* Responsividade */
+@media (max-width: 768px) {
+    .nav-bar .menu {
+        flex-direction: column; /* Coloca os itens da navegação em coluna em telas menores */
+        gap: 10px;
+    }
+
+    .search-icon {
+        font-size: 18px;
+    }
+
+    .search-box {
+        right: 10px; /* Ajusta a posição da caixa em telas menores */
+        top: 40px;
+    }
+}
+
+
+
+/* Conteúdo principal */
+.content {
+    background-color: #4a1faa; /* Roxo */
+    display: flex;
+    flex-wrap: wrap; /* Permite quebra em várias linhas */
+    gap: 30px; /* Espaçamento entre caixas */
+    justify-content: center;
+    padding: 20px;
+    height: 330px;
+}
+
+.box {
+    margin-top: 50px;
+    width: 180px; /* Largura fixa inicial */
+    height: 180px;
+    aspect-ratio: 1 / 1; /* Mantém o formato quadrado */
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Estilização dinâmica por posição */
+.box {
+    background-color: #333; /* Preto */
+}
+
+
+.box:hover {
+    transform: scale(1.1); /* Zoom ao passar o mouse */
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2); /* Efeito de sombra */
+}
+
+/* Responsividade */
+@media (max-width: 768px) {
+    .header-banner {
+        font-size: 18px;
+        height: 150px;
+    }
+
+    .content {
+        gap: 15px; /* Reduz o espaço entre caixas em telas menores */
+    }
+
+    .box {
+        width: calc(50% - 15px); /* Largura dinâmica para duas caixas por linha */
+    }
+}
+
+/* Container que vai segurar o conteúdo centralizado e a lupa */
+.header-content {
+    display: flex;
+    justify-content: space-between; /* Espaça o texto e a lupa */
+    align-items: center; /* Alinha verticalmente */
+    width: 100%; /* Garante que ocupe toda a largura disponível */
+}
+
+/* Texto do cabeçalho */
+.header-text {
+    font-size: 24px;
+}
+
+
+
+/* Caixa de pesquisa */
+.usuario-box {
+    height: 22px;
+    display: none; /* Oculta a caixa de pesquisa por padrão */
+    background-color: #05fa00;
+    position: absolute;
+    top: 14px; /* Posiciona a caixa abaixo da barra de navegação */
+    right: 70px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+
+.usuario-btn button {
+    top: 8px;
+    left: 12px;
+    position: absolute;
+    height: 30px;
+    background-color: #f1a500;
+    color: white;
+    padding: 8px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.usuario-box button:hover {
+    background-color: #ffffff;
+}
+
+/* Contêiner de cards */
+.card-container {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 30px;
+    flex-wrap: wrap;
+}
+
+/* Estilo de cada card */
+.card {
+    background-color: #ffffff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 20px;
+    width: 30%;
+    text-align: center;
+    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-10px);
+    box-shadow: 0px 6px 12px rgba(0, 0, 0, 0.2);
+}
+
+.card h3 {
+    font-size: 1.5rem;
+    margin-bottom: 15px;
+}
+
+.card p {
+    font-size: 1rem;
+    color: #555;
+    margin-bottom: 20px;
+}
+
+.card .btn {
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #4CAF50;
+    color: #ffffff;
+    text-decoration: none;
+    border-radius: 5px;
+    transition: background-color 0.3s;
+}
+
+.card .btn:hover {
+    background-color: #45a049;
+}
+
+/* Estilo do botão de Voltar */
+.voltar {
+    display: block;
+    width: 200px;
+    margin: 30px auto;
+    text-align: center;
+    background-color: #f44336;
+    padding: 10px;
+    border-radius: 5px;
+    color: #ffffff;
+    text-decoration: none;
+    font-size: 1rem;
+    transition: background-color 0.3s;
+}
+
+.voltar:hover {
+    background-color: #e53935;
+}
+.TituloGerenciamento {
+    color: #cb00c4;
+    text-align: center;
+
+}
+
+h1 {
+    font-family: "Arial Black";
+}
+a {
+    text-decoration: none;
+    color: #fc0000;
+}
+a {
+    font-family: -apple-system, BlinkMacSystemFont, avenir next, avenir, segoe ui, helvetica neue, helvetica, Cantarell, Ubuntu, roboto, noto, arial, sans-serif;
+}
+
+/* Contêiner de cards */
+.card-container2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    margin-top: 30px;
+    justify-items: center;
+    padding: 0 20px;
+}
+
+/* Estilo de cada card */
+.card2 {
+    background-color: #ffffff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    width: 100%;
+    max-width: 350px;
+}
+
+/* Efeito ao passar o mouse sobre o card */
+.card2:hover {
+    transform: translateY(-10px);
+    box-shadow: 0px 6px 12px rgba(0, 0, 0, 0.2);
+}
+
+.card2 h3 {
+    font-size: 1.5rem;
+    margin-bottom: 15px;
+    color: #333;
+}
+
+.card2 p {
+    font-size: 1rem;
+    color: #555;
+    margin-bottom: 20px;
+}
+
+.card2 .btn {
+    display: inline-block;
+    padding: 12px 25px;
+    background-color: #4CAF50;
+    color: #ffffff;
+    text-decoration: none;
+    border-radius: 5px;
+    font-size: 1.1rem;
+    transition: background-color 0.3s ease;
+    margin-top: 10px;
+}
+
+.card2 .btn:hover {
+    background-color: #45a049;
+}
+
+/* Estilo do botão Voltar */
+.voltar2 {
+    display: inline-block;
+    width: 200px;
+    margin-top: 30px;
+    text-align: center;
+    background-color: #f44336;
+    padding: 12px;
+    border-radius: 5px;
+    color: #ffffff;
+    font-size: 1.2rem;
+    text-decoration: none;
+    transition: background-color 0.3s ease;
+    margin: 30px 560px auto;
+}
+
+.voltar2:hover {
+    background-color: #e53935;
+}
+
+/* Estilos gerais para a tabela */
+.tabela-funcionarios {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    font-family: Arial, sans-serif;
+    box-shadow: 0px 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.tabela-funcionarios th, .tabela-funcionarios td {
+    padding: 10px 15px;
+    text-align: left;
+    border: 1px solid #ddd;
+}
+
+/* Cabeçalho da tabela */
+.tabela-funcionarios th {
+    background-color: #4CAF50;
+    color: white;
+}
+
+/* Estilo das linhas da tabela */
+.tabela-funcionarios tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+.tabela-funcionarios tr:hover {
+    background-color: #e9e9e9;
+}
+
+/* Estilo dos botões */
+.btn2 {
+    padding: 8px 12px;
+    border-radius: 5px;
+    text-decoration: none;
+    color: white;
+    font-size: 14px;
+    text-align: center;
+    display: inline-block;
+    margin: 5px 0;
+}
+
+.btn2.editar {
+    background-color: #4CAF50;
+}
+
+.btn2.editar:hover {
+    background-color: #45a049;
+}
+
+.btn2.deletar {
+    background-color: #f44336;
+}
+
+.btn2.deletar:hover {
+    background-color: #e53935;
+}
+
+.btn3.voltar {
+    padding: 10px 15px;
+    background-color: #009688;
+    text-decoration: none;
+    border-radius: 5px;
+    color: white;
+}
+
+.btn3.voltar:hover {
+    background-color: #00796b;
+}
+
+/* Responsividade */
+@media screen and (max-width: 768px) {
+    .tabela-funcionarios th, .tabela-funcionarios td {
+        padding: 8px;
+        font-size: 12px;
+    }
+}
+
+/* Estilos gerais para o formulário */
+form.criar {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #f9f9f9;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    font-family: Arial, sans-serif;
+}
+
+
+
+/* Estilos dos rótulos (labels) */
+label.criar {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: #333;
+}
+
+/* Estilos dos campos de input */
+input.criar, select.criar, button.criar {
+    width: 100%;
+    padding: 12px;
+    margin-bottom: 15px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 16px;
+    box-sizing: border-box;
+}
+
+/* Estilo específico para o input de telefone */
+input.criar[type="tel"] {
+    padding-left: 10px;
+}
+
+/* Estilo específico para o botão de envio */
+button.criar {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+
+button.criar:hover {
+    background-color: #45a049;
+}
+
+/* Estilo das mensagens de erro e sucesso */
+ul.criar {
+    list-style: none;
+    padding: 0;
+    margin-bottom: 20px;
+}
+
+ul.criar li {
+    padding: 10px;
+    border-radius: 5px;
+    margin-bottom: 10px;
+}
+
+ul.criar li.success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+ul.criar_F li.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+/* Estilo do link "Voltar" */
+a.criar {
+    display: inline-block;
+    padding: 5px 5px;
+    background-color: #009688;
+    color: white;
+    text-decoration: none;
+    border-radius: 5px;
+    font-size: 14px;
+    text-align: center;
+    margin-top: 10px;
+}
+
+a.criar:hover {
+    background-color: #00796b;
+}
+
+/* Estilos para a responsividade */
+@media (max-width: 768px) {
+    form {
+        padding: 15px;
+    }
+
+    h2 {
+        font-size: 20px;
+    }
+
+    input, select, button {
+        padding: 10px;
+    }
+}
+
+.erro {
+    color: #7b0096; /* Vermelho para destacar erros */
+    font-size: 0.9em;
+}
+
+/* Estilo para mensagens flash */
+.success {
+    color: green;
+    background-color: lightgreen;
+    padding: 10px;
+    border-radius: 5px;
+    margin-bottom: 10px;
+}
+
+.danger {
+    color: red;
+    background-color: lightcoral;
+    padding: 10px;
+    border-radius: 5px;
+    margin-bottom: 10px;
+}
+
+ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+li {
+    margin-bottom: 10px;
+}

@@ -1,0 +1,354 @@
+<html>
+<head>
+<title>model.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #5d69bb;}
+.s5 { color: #96bf7d;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+model.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+
+<span class="s0">import </span><span class="s1">sqlalchemy </span><span class="s0">as </span><span class="s1">sa</span>
+<span class="s0">import </span><span class="s1">sqlalchemy.orm </span><span class="s0">as </span><span class="s1">sa_orm</span>
+
+<span class="s0">from </span><span class="s1">.query </span><span class="s0">import </span><span class="s1">Query</span>
+
+<span class="s0">if </span><span class="s1">t.TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">.extension </span><span class="s0">import </span><span class="s1">SQLAlchemy</span>
+
+
+<span class="s0">class </span><span class="s1">_QueryProperty:</span>
+    <span class="s2">&quot;&quot;&quot;A class property that creates a query object for a model. 
+ 
+    :meta private: 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__get__(self</span><span class="s3">, </span><span class="s1">obj: Model | </span><span class="s0">None</span><span class="s3">, </span><span class="s1">cls: type[Model]) -&gt; Query:</span>
+        <span class="s0">return </span><span class="s1">cls.query_class(</span>
+            <span class="s1">cls</span><span class="s3">, </span><span class="s1">session=cls.__fsa__.session()  </span><span class="s4"># type: ignore[arg-type]</span>
+        <span class="s1">)</span>
+
+
+<span class="s0">class </span><span class="s1">Model:</span>
+    <span class="s2">&quot;&quot;&quot;The base class of the :attr:`.SQLAlchemy.Model` declarative model class. 
+ 
+    To define models, subclass :attr:`db.Model &lt;.SQLAlchemy.Model&gt;`, not this. To 
+    customize ``db.Model``, subclass this and pass it as ``model_class`` to 
+    :class:`.SQLAlchemy`. To customize ``db.Model`` at the metaclass level, pass an 
+    already created declarative model class as ``model_class``. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__fsa__: t.ClassVar[SQLAlchemy]</span>
+    <span class="s5">&quot;&quot;&quot;Internal reference to the extension object. 
+ 
+    :meta private: 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">query_class: t.ClassVar[type[Query]] = Query</span>
+    <span class="s5">&quot;&quot;&quot;Query class used by :attr:`query`. Defaults to :attr:`.SQLAlchemy.Query`, which 
+    defaults to :class:`.Query`. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">query: t.ClassVar[Query] = _QueryProperty()  </span><span class="s4"># type: ignore[assignment]</span>
+    <span class="s5">&quot;&quot;&quot;A SQLAlchemy query for a model. Equivalent to ``db.session.query(Model)``. Can be 
+    customized per-model by overriding :attr:`query_class`. 
+ 
+    .. warning:: 
+        The query interface is considered legacy in SQLAlchemy. Prefer using 
+        ``session.execute(select())`` instead. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s1">state = sa.inspect(self)</span>
+        <span class="s0">assert </span><span class="s1">state </span><span class="s0">is not None</span>
+
+        <span class="s0">if </span><span class="s1">state.transient:</span>
+            <span class="s1">pk = </span><span class="s5">f&quot;(transient </span><span class="s6">{</span><span class="s1">id(self)</span><span class="s6">}</span><span class="s5">)&quot;</span>
+        <span class="s0">elif </span><span class="s1">state.pending:</span>
+            <span class="s1">pk = </span><span class="s5">f&quot;(pending </span><span class="s6">{</span><span class="s1">id(self)</span><span class="s6">}</span><span class="s5">)&quot;</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">pk = </span><span class="s5">&quot;, &quot;</span><span class="s1">.join(map(str</span><span class="s3">, </span><span class="s1">state.identity))</span>
+
+        <span class="s0">return </span><span class="s5">f&quot;&lt;</span><span class="s6">{</span><span class="s1">type(self).__name__</span><span class="s6">} {</span><span class="s1">pk</span><span class="s6">}</span><span class="s5">&gt;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">BindMetaMixin(type):</span>
+    <span class="s2">&quot;&quot;&quot;Metaclass mixin that sets a model's ``metadata`` based on its ``__bind_key__``. 
+ 
+    If the model sets ``metadata`` or ``__table__`` directly, ``__bind_key__`` is 
+    ignored. If the ``metadata`` is the same as the parent model, it will not be set 
+    directly on the child model. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__fsa__: SQLAlchemy</span>
+    <span class="s1">metadata: sa.MetaData</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">cls</span><span class="s3">, </span><span class="s1">name: str</span><span class="s3">, </span><span class="s1">bases: tuple[type</span><span class="s3">, </span><span class="s1">...]</span><span class="s3">, </span><span class="s1">d: dict[str</span><span class="s3">, </span><span class="s1">t.Any]</span><span class="s3">, </span><span class="s1">**kwargs: t.Any</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">if not </span><span class="s1">(</span><span class="s5">&quot;metadata&quot; </span><span class="s0">in </span><span class="s1">cls.__dict__ </span><span class="s0">or </span><span class="s5">&quot;__table__&quot; </span><span class="s0">in </span><span class="s1">cls.__dict__):</span>
+            <span class="s1">bind_key = getattr(cls</span><span class="s3">, </span><span class="s5">&quot;__bind_key__&quot;</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)</span>
+            <span class="s1">parent_metadata = getattr(cls</span><span class="s3">, </span><span class="s5">&quot;metadata&quot;</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)</span>
+            <span class="s1">metadata = cls.__fsa__._make_metadata(bind_key)</span>
+
+            <span class="s0">if </span><span class="s1">metadata </span><span class="s0">is not </span><span class="s1">parent_metadata:</span>
+                <span class="s1">cls.metadata = metadata</span>
+
+        <span class="s1">super().__init__(name</span><span class="s3">, </span><span class="s1">bases</span><span class="s3">, </span><span class="s1">d</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+
+<span class="s0">class </span><span class="s1">BindMixin:</span>
+    <span class="s2">&quot;&quot;&quot;DeclarativeBase mixin to set a model's ``metadata`` based on ``__bind_key__``. 
+ 
+    If no ``__bind_key__`` is specified, the model will use the default metadata 
+    provided by ``DeclarativeBase`` or ``DeclarativeBaseNoMeta``. 
+    If the model doesn't set ``metadata`` or ``__table__`` directly 
+    and does set ``__bind_key__``, the model will use the metadata 
+    for the specified bind key. 
+    If the ``metadata`` is the same as the parent model, it will not be set 
+    directly on the child model. 
+ 
+    .. versionchanged:: 3.1.0 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__fsa__: SQLAlchemy</span>
+    <span class="s1">metadata: sa.MetaData</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">__init_subclass__(cls: t.Type[BindMixin]</span><span class="s3">, </span><span class="s1">**kwargs: t.Dict[str</span><span class="s3">, </span><span class="s1">t.Any]) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">if not </span><span class="s1">(</span><span class="s5">&quot;metadata&quot; </span><span class="s0">in </span><span class="s1">cls.__dict__ </span><span class="s0">or </span><span class="s5">&quot;__table__&quot; </span><span class="s0">in </span><span class="s1">cls.__dict__) </span><span class="s0">and </span><span class="s1">hasattr(</span>
+            <span class="s1">cls</span><span class="s3">, </span><span class="s5">&quot;__bind_key__&quot;</span>
+        <span class="s1">):</span>
+            <span class="s1">bind_key = getattr(cls</span><span class="s3">, </span><span class="s5">&quot;__bind_key__&quot;</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)</span>
+            <span class="s1">parent_metadata = getattr(cls</span><span class="s3">, </span><span class="s5">&quot;metadata&quot;</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)</span>
+            <span class="s1">metadata = cls.__fsa__._make_metadata(bind_key)</span>
+
+            <span class="s0">if </span><span class="s1">metadata </span><span class="s0">is not </span><span class="s1">parent_metadata:</span>
+                <span class="s1">cls.metadata = metadata</span>
+
+        <span class="s1">super().__init_subclass__(**kwargs)</span>
+
+
+<span class="s0">class </span><span class="s1">NameMetaMixin(type):</span>
+    <span class="s2">&quot;&quot;&quot;Metaclass mixin that sets a model's ``__tablename__`` by converting the 
+    ``CamelCase`` class name to ``snake_case``. A name is set for non-abstract models 
+    that do not otherwise define ``__tablename__``. If a model does not define a primary 
+    key, it will not generate a name or ``__table__``, for single-table inheritance. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">metadata: sa.MetaData</span>
+    <span class="s1">__tablename__: str</span>
+    <span class="s1">__table__: sa.Table</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">cls</span><span class="s3">, </span><span class="s1">name: str</span><span class="s3">, </span><span class="s1">bases: tuple[type</span><span class="s3">, </span><span class="s1">...]</span><span class="s3">, </span><span class="s1">d: dict[str</span><span class="s3">, </span><span class="s1">t.Any]</span><span class="s3">, </span><span class="s1">**kwargs: t.Any</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">if </span><span class="s1">should_set_tablename(cls):</span>
+            <span class="s1">cls.__tablename__ = camel_to_snake_case(cls.__name__)</span>
+
+        <span class="s1">super().__init__(name</span><span class="s3">, </span><span class="s1">bases</span><span class="s3">, </span><span class="s1">d</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s4"># __table_cls__ has run. If no table was created, use the parent table.</span>
+        <span class="s0">if </span><span class="s1">(</span>
+            <span class="s5">&quot;__tablename__&quot; </span><span class="s0">not in </span><span class="s1">cls.__dict__</span>
+            <span class="s0">and </span><span class="s5">&quot;__table__&quot; </span><span class="s0">in </span><span class="s1">cls.__dict__</span>
+            <span class="s0">and </span><span class="s1">cls.__dict__[</span><span class="s5">&quot;__table__&quot;</span><span class="s1">] </span><span class="s0">is None</span>
+        <span class="s1">):</span>
+            <span class="s0">del </span><span class="s1">cls.__table__</span>
+
+    <span class="s0">def </span><span class="s1">__table_cls__(cls</span><span class="s3">, </span><span class="s1">*args: t.Any</span><span class="s3">, </span><span class="s1">**kwargs: t.Any) -&gt; sa.Table | </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;This is called by SQLAlchemy during mapper setup. It determines the final 
+        table object that the model will use. 
+ 
+        If no primary key is found, that indicates single-table inheritance, so no table 
+        will be created and ``__tablename__`` will be unset. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">schema = kwargs.get(</span><span class="s5">&quot;schema&quot;</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">schema </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">key = args[</span><span class="s7">0</span><span class="s1">]</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">key = </span><span class="s5">f&quot;</span><span class="s6">{</span><span class="s1">schema</span><span class="s6">}</span><span class="s5">.</span><span class="s6">{</span><span class="s1">args[</span><span class="s7">0</span><span class="s1">]</span><span class="s6">}</span><span class="s5">&quot;</span>
+
+        <span class="s4"># Check if a table with this name already exists. Allows reflected tables to be</span>
+        <span class="s4"># applied to models by name.</span>
+        <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">cls.metadata.tables:</span>
+            <span class="s0">return </span><span class="s1">sa.Table(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s4"># If a primary key is found, create a table for joined-table inheritance.</span>
+        <span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">args:</span>
+            <span class="s0">if </span><span class="s1">(isinstance(arg</span><span class="s3">, </span><span class="s1">sa.Column) </span><span class="s0">and </span><span class="s1">arg.primary_key) </span><span class="s0">or </span><span class="s1">isinstance(</span>
+                <span class="s1">arg</span><span class="s3">, </span><span class="s1">sa.PrimaryKeyConstraint</span>
+            <span class="s1">):</span>
+                <span class="s0">return </span><span class="s1">sa.Table(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s4"># If no base classes define a table, return one that's missing a primary key</span>
+        <span class="s4"># so SQLAlchemy shows the correct error.</span>
+        <span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">cls.__mro__[</span><span class="s7">1</span><span class="s1">:-</span><span class="s7">1</span><span class="s1">]:</span>
+            <span class="s0">if </span><span class="s5">&quot;__table__&quot; </span><span class="s0">in </span><span class="s1">base.__dict__:</span>
+                <span class="s0">break</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">sa.Table(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s4"># Single-table inheritance, use the parent table name. __init__ will unset</span>
+        <span class="s4"># __table__ based on this.</span>
+        <span class="s0">if </span><span class="s5">&quot;__tablename__&quot; </span><span class="s0">in </span><span class="s1">cls.__dict__:</span>
+            <span class="s0">del </span><span class="s1">cls.__tablename__</span>
+
+        <span class="s0">return None</span>
+
+
+<span class="s0">class </span><span class="s1">NameMixin:</span>
+    <span class="s2">&quot;&quot;&quot;DeclarativeBase mixin that sets a model's ``__tablename__`` by converting the 
+    ``CamelCase`` class name to ``snake_case``. A name is set for non-abstract models 
+    that do not otherwise define ``__tablename__``. If a model does not define a primary 
+    key, it will not generate a name or ``__table__``, for single-table inheritance. 
+ 
+    .. versionchanged:: 3.1.0 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">metadata: sa.MetaData</span>
+    <span class="s1">__tablename__: str</span>
+    <span class="s1">__table__: sa.Table</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">__init_subclass__(cls: t.Type[NameMixin]</span><span class="s3">, </span><span class="s1">**kwargs: t.Dict[str</span><span class="s3">, </span><span class="s1">t.Any]) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">if </span><span class="s1">should_set_tablename(cls):</span>
+            <span class="s1">cls.__tablename__ = camel_to_snake_case(cls.__name__)</span>
+
+        <span class="s1">super().__init_subclass__(**kwargs)</span>
+
+        <span class="s4"># __table_cls__ has run. If no table was created, use the parent table.</span>
+        <span class="s0">if </span><span class="s1">(</span>
+            <span class="s5">&quot;__tablename__&quot; </span><span class="s0">not in </span><span class="s1">cls.__dict__</span>
+            <span class="s0">and </span><span class="s5">&quot;__table__&quot; </span><span class="s0">in </span><span class="s1">cls.__dict__</span>
+            <span class="s0">and </span><span class="s1">cls.__dict__[</span><span class="s5">&quot;__table__&quot;</span><span class="s1">] </span><span class="s0">is None</span>
+        <span class="s1">):</span>
+            <span class="s0">del </span><span class="s1">cls.__table__</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">__table_cls__(cls</span><span class="s3">, </span><span class="s1">*args: t.Any</span><span class="s3">, </span><span class="s1">**kwargs: t.Any) -&gt; sa.Table | </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;This is called by SQLAlchemy during mapper setup. It determines the final 
+        table object that the model will use. 
+ 
+        If no primary key is found, that indicates single-table inheritance, so no table 
+        will be created and ``__tablename__`` will be unset. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">schema = kwargs.get(</span><span class="s5">&quot;schema&quot;</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">schema </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">key = args[</span><span class="s7">0</span><span class="s1">]</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">key = </span><span class="s5">f&quot;</span><span class="s6">{</span><span class="s1">schema</span><span class="s6">}</span><span class="s5">.</span><span class="s6">{</span><span class="s1">args[</span><span class="s7">0</span><span class="s1">]</span><span class="s6">}</span><span class="s5">&quot;</span>
+
+        <span class="s4"># Check if a table with this name already exists. Allows reflected tables to be</span>
+        <span class="s4"># applied to models by name.</span>
+        <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">cls.metadata.tables:</span>
+            <span class="s0">return </span><span class="s1">sa.Table(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s4"># If a primary key is found, create a table for joined-table inheritance.</span>
+        <span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">args:</span>
+            <span class="s0">if </span><span class="s1">(isinstance(arg</span><span class="s3">, </span><span class="s1">sa.Column) </span><span class="s0">and </span><span class="s1">arg.primary_key) </span><span class="s0">or </span><span class="s1">isinstance(</span>
+                <span class="s1">arg</span><span class="s3">, </span><span class="s1">sa.PrimaryKeyConstraint</span>
+            <span class="s1">):</span>
+                <span class="s0">return </span><span class="s1">sa.Table(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s4"># If no base classes define a table, return one that's missing a primary key</span>
+        <span class="s4"># so SQLAlchemy shows the correct error.</span>
+        <span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">cls.__mro__[</span><span class="s7">1</span><span class="s1">:-</span><span class="s7">1</span><span class="s1">]:</span>
+            <span class="s0">if </span><span class="s5">&quot;__table__&quot; </span><span class="s0">in </span><span class="s1">base.__dict__:</span>
+                <span class="s0">break</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">sa.Table(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s4"># Single-table inheritance, use the parent table name. __init__ will unset</span>
+        <span class="s4"># __table__ based on this.</span>
+        <span class="s0">if </span><span class="s5">&quot;__tablename__&quot; </span><span class="s0">in </span><span class="s1">cls.__dict__:</span>
+            <span class="s0">del </span><span class="s1">cls.__tablename__</span>
+
+        <span class="s0">return None</span>
+
+
+<span class="s0">def </span><span class="s1">should_set_tablename(cls: type) -&gt; bool:</span>
+    <span class="s2">&quot;&quot;&quot;Determine whether ``__tablename__`` should be generated for a model. 
+ 
+    -   If no class in the MRO sets a name, one should be generated. 
+    -   If a declared attr is found, it should be used instead. 
+    -   If a name is found, it should be used if the class is a mixin, otherwise one 
+        should be generated. 
+    -   Abstract models should not have one generated. 
+ 
+    Later, ``__table_cls__`` will determine if the model looks like single or 
+    joined-table inheritance. If no primary key is found, the name will be unset. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">(</span>
+        <span class="s1">cls.__dict__.get(</span><span class="s5">&quot;__abstract__&quot;</span><span class="s3">, </span><span class="s0">False</span><span class="s1">)</span>
+        <span class="s0">or </span><span class="s1">(</span>
+            <span class="s0">not </span><span class="s1">issubclass(cls</span><span class="s3">, </span><span class="s1">(sa_orm.DeclarativeBase</span><span class="s3">, </span><span class="s1">sa_orm.DeclarativeBaseNoMeta))</span>
+            <span class="s0">and not </span><span class="s1">any(isinstance(b</span><span class="s3">, </span><span class="s1">sa_orm.DeclarativeMeta) </span><span class="s0">for </span><span class="s1">b </span><span class="s0">in </span><span class="s1">cls.__mro__[</span><span class="s7">1</span><span class="s1">:])</span>
+        <span class="s1">)</span>
+        <span class="s0">or </span><span class="s1">any(</span>
+            <span class="s1">(b </span><span class="s0">is </span><span class="s1">sa_orm.DeclarativeBase </span><span class="s0">or </span><span class="s1">b </span><span class="s0">is </span><span class="s1">sa_orm.DeclarativeBaseNoMeta)</span>
+            <span class="s0">for </span><span class="s1">b </span><span class="s0">in </span><span class="s1">cls.__bases__</span>
+        <span class="s1">)</span>
+    <span class="s1">):</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">cls.__mro__:</span>
+        <span class="s0">if </span><span class="s5">&quot;__tablename__&quot; </span><span class="s0">not in </span><span class="s1">base.__dict__:</span>
+            <span class="s0">continue</span>
+
+        <span class="s0">if </span><span class="s1">isinstance(base.__dict__[</span><span class="s5">&quot;__tablename__&quot;</span><span class="s1">]</span><span class="s3">, </span><span class="s1">sa_orm.declared_attr):</span>
+            <span class="s0">return False</span>
+
+        <span class="s0">return not </span><span class="s1">(</span>
+            <span class="s1">base </span><span class="s0">is </span><span class="s1">cls</span>
+            <span class="s0">or </span><span class="s1">base.__dict__.get(</span><span class="s5">&quot;__abstract__&quot;</span><span class="s3">, </span><span class="s0">False</span><span class="s1">)</span>
+            <span class="s0">or not </span><span class="s1">(</span>
+                <span class="s4"># SQLAlchemy 1.x</span>
+                <span class="s1">isinstance(base</span><span class="s3">, </span><span class="s1">sa_orm.DeclarativeMeta)</span>
+                <span class="s4"># 2.x: DeclarativeBas uses this as metaclass</span>
+                <span class="s0">or </span><span class="s1">isinstance(base</span><span class="s3">, </span><span class="s1">sa_orm.decl_api.DeclarativeAttributeIntercept)</span>
+                <span class="s4"># 2.x: DeclarativeBaseNoMeta doesn't use a metaclass</span>
+                <span class="s0">or </span><span class="s1">issubclass(base</span><span class="s3">, </span><span class="s1">sa_orm.DeclarativeBaseNoMeta)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s0">return True</span>
+
+
+<span class="s0">def </span><span class="s1">camel_to_snake_case(name: str) -&gt; str:</span>
+    <span class="s2">&quot;&quot;&quot;Convert a ``CamelCase`` name to ``snake_case``.&quot;&quot;&quot;</span>
+    <span class="s1">name = re.sub(</span><span class="s5">r&quot;((?&lt;=[a-z0-9])[A-Z]|(?!^)[A-Z](?=[a-z]))&quot;</span><span class="s3">, </span><span class="s5">r&quot;_\1&quot;</span><span class="s3">, </span><span class="s1">name)</span>
+    <span class="s0">return </span><span class="s1">name.lower().lstrip(</span><span class="s5">&quot;_&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">class </span><span class="s1">DefaultMeta(BindMetaMixin</span><span class="s3">, </span><span class="s1">NameMetaMixin</span><span class="s3">, </span><span class="s1">sa_orm.DeclarativeMeta):</span>
+    <span class="s2">&quot;&quot;&quot;SQLAlchemy declarative metaclass that provides ``__bind_key__`` and 
+    ``__tablename__`` support. 
+    &quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">DefaultMetaNoName(BindMetaMixin</span><span class="s3">, </span><span class="s1">sa_orm.DeclarativeMeta):</span>
+    <span class="s2">&quot;&quot;&quot;SQLAlchemy declarative metaclass that provides ``__bind_key__`` and 
+    ``__tablename__`` support. 
+    &quot;&quot;&quot;</span>
+</pre>
+</body>
+</html>

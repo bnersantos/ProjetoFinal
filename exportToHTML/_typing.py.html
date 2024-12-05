@@ -1,0 +1,45 @@
+<html>
+<head>
+<title>_typing.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_typing.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/_typing.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Mapping</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">..sql._typing </span><span class="s2">import </span><span class="s1">_DDLColumnArgument</span>
+<span class="s2">from </span><span class="s1">..sql.elements </span><span class="s2">import </span><span class="s1">DQLDMLClauseElement</span>
+<span class="s2">from </span><span class="s1">..sql.schema </span><span class="s2">import </span><span class="s1">ColumnCollectionConstraint</span>
+<span class="s2">from </span><span class="s1">..sql.schema </span><span class="s2">import </span><span class="s1">Index</span>
+
+
+<span class="s1">_OnConflictConstraintT = Union[str</span><span class="s3">, </span><span class="s1">ColumnCollectionConstraint</span><span class="s3">, </span><span class="s1">Index</span><span class="s3">, </span><span class="s2">None</span><span class="s1">]</span>
+<span class="s1">_OnConflictIndexElementsT = Optional[Iterable[_DDLColumnArgument]]</span>
+<span class="s1">_OnConflictIndexWhereT = Optional[DQLDMLClauseElement]</span>
+<span class="s1">_OnConflictSetT = Optional[Mapping[Any</span><span class="s3">, </span><span class="s1">Any]]</span>
+<span class="s1">_OnConflictWhereT = Union[DQLDMLClauseElement</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, </span><span class="s2">None</span><span class="s1">]</span>
+</pre>
+</body>
+</html>

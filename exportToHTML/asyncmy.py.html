@@ -1,0 +1,359 @@
+<html>
+<head>
+<title>asyncmy.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+asyncmy.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/mysql/asyncmy.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors &lt;see AUTHORS</span>
+<span class="s0"># file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">r&quot;&quot;&quot; 
+.. dialect:: mysql+asyncmy 
+    :name: asyncmy 
+    :dbapi: asyncmy 
+    :connectstring: mysql+asyncmy://user:password@host:port/dbname[?key=value&amp;key=value...] 
+    :url: https://github.com/long2ice/asyncmy 
+ 
+Using a special asyncio mediation layer, the asyncmy dialect is usable 
+as the backend for the :ref:`SQLAlchemy asyncio &lt;asyncio_toplevel&gt;` 
+extension package. 
+ 
+This dialect should normally be used only with the 
+:func:`_asyncio.create_async_engine` engine creation function:: 
+ 
+    from sqlalchemy.ext.asyncio import create_async_engine 
+    engine = create_async_engine(&quot;mysql+asyncmy://user:pass@hostname/dbname?charset=utf8mb4&quot;) 
+ 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+<span class="s3">from </span><span class="s1">collections </span><span class="s3">import </span><span class="s1">deque</span>
+<span class="s3">from </span><span class="s1">contextlib </span><span class="s3">import </span><span class="s1">asynccontextmanager</span>
+
+<span class="s3">from </span><span class="s1">.pymysql </span><span class="s3">import </span><span class="s1">MySQLDialect_pymysql</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">pool</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">AdaptedConnection</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">asyncio</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">await_fallback</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">await_only</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_asyncmy_cursor:</span>
+    <span class="s0"># TODO: base on connectors/asyncio.py</span>
+    <span class="s0"># see #10415</span>
+    <span class="s1">server_side = </span><span class="s3">False</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s2">&quot;_adapt_connection&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_connection&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;await_&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_cursor&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_rows&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">adapt_connection):</span>
+        <span class="s1">self._adapt_connection = adapt_connection</span>
+        <span class="s1">self._connection = adapt_connection._connection</span>
+        <span class="s1">self.await_ = adapt_connection.await_</span>
+
+        <span class="s1">cursor = self._connection.cursor()</span>
+
+        <span class="s1">self._cursor = self.await_(cursor.__aenter__())</span>
+        <span class="s1">self._rows = deque()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">description(self):</span>
+        <span class="s3">return </span><span class="s1">self._cursor.description</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">rowcount(self):</span>
+        <span class="s3">return </span><span class="s1">self._cursor.rowcount</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">arraysize(self):</span>
+        <span class="s3">return </span><span class="s1">self._cursor.arraysize</span>
+
+    <span class="s1">@arraysize.setter</span>
+    <span class="s3">def </span><span class="s1">arraysize(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">self._cursor.arraysize = value</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">lastrowid(self):</span>
+        <span class="s3">return </span><span class="s1">self._cursor.lastrowid</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s0"># note we aren't actually closing the cursor here,</span>
+        <span class="s0"># we are just letting GC do it.   to allow this to be async</span>
+        <span class="s0"># we would need the Result to change how it does &quot;Safe close cursor&quot;.</span>
+        <span class="s0"># MySQL &quot;cursors&quot; don't actually have state to be &quot;closed&quot; besides</span>
+        <span class="s0"># exhausting rows, which we already have done for sync cursor.</span>
+        <span class="s0"># another option would be to emulate aiosqlite dialect and assign</span>
+        <span class="s0"># cursor only if we are doing server side cursor operation.</span>
+        <span class="s1">self._rows.clear()</span>
+
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">parameters=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._execute_async(operation</span><span class="s4">, </span><span class="s1">parameters))</span>
+
+    <span class="s3">def </span><span class="s1">executemany(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">seq_of_parameters):</span>
+        <span class="s3">return </span><span class="s1">self.await_(</span>
+            <span class="s1">self._executemany_async(operation</span><span class="s4">, </span><span class="s1">seq_of_parameters)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">async def </span><span class="s1">_execute_async(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">parameters):</span>
+        <span class="s3">async with </span><span class="s1">self._adapt_connection._mutex_and_adapt_errors():</span>
+            <span class="s3">if </span><span class="s1">parameters </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">result = </span><span class="s3">await </span><span class="s1">self._cursor.execute(operation)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">result = </span><span class="s3">await </span><span class="s1">self._cursor.execute(operation</span><span class="s4">, </span><span class="s1">parameters)</span>
+
+            <span class="s3">if not </span><span class="s1">self.server_side:</span>
+                <span class="s0"># asyncmy has a &quot;fake&quot; async result, so we have to pull it out</span>
+                <span class="s0"># of that here since our default result is not async.</span>
+                <span class="s0"># we could just as easily grab &quot;_rows&quot; here and be done with it</span>
+                <span class="s0"># but this is safer.</span>
+                <span class="s1">self._rows = deque(</span><span class="s3">await </span><span class="s1">self._cursor.fetchall())</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">async def </span><span class="s1">_executemany_async(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">seq_of_parameters):</span>
+        <span class="s3">async with </span><span class="s1">self._adapt_connection._mutex_and_adapt_errors():</span>
+            <span class="s3">return await </span><span class="s1">self._cursor.executemany(operation</span><span class="s4">, </span><span class="s1">seq_of_parameters)</span>
+
+    <span class="s3">def </span><span class="s1">setinputsizes(self</span><span class="s4">, </span><span class="s1">*inputsizes):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self):</span>
+        <span class="s3">while </span><span class="s1">self._rows:</span>
+            <span class="s3">yield </span><span class="s1">self._rows.popleft()</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self):</span>
+        <span class="s3">if </span><span class="s1">self._rows:</span>
+            <span class="s3">return </span><span class="s1">self._rows.popleft()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s4">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">size </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">size = self.arraysize</span>
+
+        <span class="s1">rr = self._rows</span>
+        <span class="s3">return </span><span class="s1">[rr.popleft() </span><span class="s3">for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">range(min(size</span><span class="s4">, </span><span class="s1">len(rr)))]</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self):</span>
+        <span class="s1">retval = list(self._rows)</span>
+        <span class="s1">self._rows.clear()</span>
+        <span class="s3">return </span><span class="s1">retval</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_asyncmy_ss_cursor(AsyncAdapt_asyncmy_cursor):</span>
+    <span class="s0"># TODO: base on connectors/asyncio.py</span>
+    <span class="s0"># see #10415</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">server_side = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">adapt_connection):</span>
+        <span class="s1">self._adapt_connection = adapt_connection</span>
+        <span class="s1">self._connection = adapt_connection._connection</span>
+        <span class="s1">self.await_ = adapt_connection.await_</span>
+
+        <span class="s1">cursor = self._connection.cursor(</span>
+            <span class="s1">adapt_connection.dbapi.asyncmy.cursors.SSCursor</span>
+        <span class="s1">)</span>
+
+        <span class="s1">self._cursor = self.await_(cursor.__aenter__())</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s3">if </span><span class="s1">self._cursor </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.await_(self._cursor.close())</span>
+            <span class="s1">self._cursor = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.fetchone())</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s4">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.fetchmany(size=size))</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.fetchall())</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_asyncmy_connection(AdaptedConnection):</span>
+    <span class="s0"># TODO: base on connectors/asyncio.py</span>
+    <span class="s0"># see #10415</span>
+    <span class="s1">await_ = staticmethod(await_only)</span>
+    <span class="s1">__slots__ = (</span><span class="s2">&quot;dbapi&quot;</span><span class="s4">, </span><span class="s2">&quot;_execute_mutex&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">dbapi</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">self.dbapi = dbapi</span>
+        <span class="s1">self._connection = connection</span>
+        <span class="s1">self._execute_mutex = asyncio.Lock()</span>
+
+    <span class="s1">@asynccontextmanager</span>
+    <span class="s3">async def </span><span class="s1">_mutex_and_adapt_errors(self):</span>
+        <span class="s3">async with </span><span class="s1">self._execute_mutex:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s3">yield</span>
+            <span class="s3">except </span><span class="s1">AttributeError:</span>
+                <span class="s3">raise </span><span class="s1">self.dbapi.InternalError(</span>
+                    <span class="s2">&quot;network operation failed due to asyncmy attribute error&quot;</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">ping(self</span><span class="s4">, </span><span class="s1">reconnect):</span>
+        <span class="s3">assert not </span><span class="s1">reconnect</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._do_ping())</span>
+
+    <span class="s3">async def </span><span class="s1">_do_ping(self):</span>
+        <span class="s3">async with </span><span class="s1">self._mutex_and_adapt_errors():</span>
+            <span class="s3">return await </span><span class="s1">self._connection.ping(</span><span class="s3">False</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">character_set_name(self):</span>
+        <span class="s3">return </span><span class="s1">self._connection.character_set_name()</span>
+
+    <span class="s3">def </span><span class="s1">autocommit(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">self.await_(self._connection.autocommit(value))</span>
+
+    <span class="s3">def </span><span class="s1">cursor(self</span><span class="s4">, </span><span class="s1">server_side=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">server_side:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_asyncmy_ss_cursor(self)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_asyncmy_cursor(self)</span>
+
+    <span class="s3">def </span><span class="s1">rollback(self):</span>
+        <span class="s1">self.await_(self._connection.rollback())</span>
+
+    <span class="s3">def </span><span class="s1">commit(self):</span>
+        <span class="s1">self.await_(self._connection.commit())</span>
+
+    <span class="s3">def </span><span class="s1">terminate(self):</span>
+        <span class="s0"># it's not awaitable.</span>
+        <span class="s1">self._connection.close()</span>
+
+    <span class="s3">def </span><span class="s1">close(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.await_(self._connection.ensure_closed())</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdaptFallback_asyncmy_connection(AsyncAdapt_asyncmy_connection):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">await_ = staticmethod(await_fallback)</span>
+
+
+<span class="s3">def </span><span class="s1">_Binary(x):</span>
+    <span class="s5">&quot;&quot;&quot;Return x as a binary type.&quot;&quot;&quot;</span>
+    <span class="s3">return </span><span class="s1">bytes(x)</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_asyncmy_dbapi:</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">asyncmy):</span>
+        <span class="s1">self.asyncmy = asyncmy</span>
+        <span class="s1">self.paramstyle = </span><span class="s2">&quot;format&quot;</span>
+        <span class="s1">self._init_dbapi_attributes()</span>
+
+    <span class="s3">def </span><span class="s1">_init_dbapi_attributes(self):</span>
+        <span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">(</span>
+            <span class="s2">&quot;Warning&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;Error&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;InterfaceError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;DataError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;DatabaseError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;OperationalError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;InterfaceError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;IntegrityError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;ProgrammingError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;InternalError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;NotSupportedError&quot;</span><span class="s4">,</span>
+        <span class="s1">):</span>
+            <span class="s1">setattr(self</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">getattr(self.asyncmy.errors</span><span class="s4">, </span><span class="s1">name))</span>
+
+    <span class="s1">STRING = util.symbol(</span><span class="s2">&quot;STRING&quot;</span><span class="s1">)</span>
+    <span class="s1">NUMBER = util.symbol(</span><span class="s2">&quot;NUMBER&quot;</span><span class="s1">)</span>
+    <span class="s1">BINARY = util.symbol(</span><span class="s2">&quot;BINARY&quot;</span><span class="s1">)</span>
+    <span class="s1">DATETIME = util.symbol(</span><span class="s2">&quot;DATETIME&quot;</span><span class="s1">)</span>
+    <span class="s1">TIMESTAMP = util.symbol(</span><span class="s2">&quot;TIMESTAMP&quot;</span><span class="s1">)</span>
+    <span class="s1">Binary = staticmethod(_Binary)</span>
+
+    <span class="s3">def </span><span class="s1">connect(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">async_fallback = kw.pop(</span><span class="s2">&quot;async_fallback&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">creator_fn = kw.pop(</span><span class="s2">&quot;async_creator_fn&quot;</span><span class="s4">, </span><span class="s1">self.asyncmy.connect)</span>
+
+        <span class="s3">if </span><span class="s1">util.asbool(async_fallback):</span>
+            <span class="s3">return </span><span class="s1">AsyncAdaptFallback_asyncmy_connection(</span>
+                <span class="s1">self</span><span class="s4">,</span>
+                <span class="s1">await_fallback(creator_fn(*arg</span><span class="s4">, </span><span class="s1">**kw))</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_asyncmy_connection(</span>
+                <span class="s1">self</span><span class="s4">,</span>
+                <span class="s1">await_only(creator_fn(*arg</span><span class="s4">, </span><span class="s1">**kw))</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">MySQLDialect_asyncmy(MySQLDialect_pymysql):</span>
+    <span class="s1">driver = </span><span class="s2">&quot;asyncmy&quot;</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s1">supports_server_side_cursors = </span><span class="s3">True</span>
+    <span class="s1">_sscursor = AsyncAdapt_asyncmy_ss_cursor</span>
+
+    <span class="s1">is_async = </span><span class="s3">True</span>
+    <span class="s1">has_terminate = </span><span class="s3">True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">return </span><span class="s1">AsyncAdapt_asyncmy_dbapi(__import__(</span><span class="s2">&quot;asyncmy&quot;</span><span class="s1">))</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_pool_class(cls</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s1">async_fallback = url.query.get(</span><span class="s2">&quot;async_fallback&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">util.asbool(async_fallback):</span>
+            <span class="s3">return </span><span class="s1">pool.FallbackAsyncAdaptedQueuePool</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">pool.AsyncAdaptedQueuePool</span>
+
+    <span class="s3">def </span><span class="s1">do_terminate(self</span><span class="s4">, </span><span class="s1">dbapi_connection) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">dbapi_connection.terminate()</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s3">return </span><span class="s1">super().create_connect_args(</span>
+            <span class="s1">url</span><span class="s4">, </span><span class="s1">_translate_args=dict(username=</span><span class="s2">&quot;user&quot;</span><span class="s4">, </span><span class="s1">database=</span><span class="s2">&quot;db&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s4">, </span><span class="s1">e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+        <span class="s3">if </span><span class="s1">super().is_disconnect(e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+            <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">str_e = str(e).lower()</span>
+            <span class="s3">return </span><span class="s1">(</span>
+                <span class="s2">&quot;not connected&quot; </span><span class="s3">in </span><span class="s1">str_e </span><span class="s3">or </span><span class="s2">&quot;network operation failed&quot; </span><span class="s3">in </span><span class="s1">str_e</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_found_rows_client_flag(self):</span>
+        <span class="s3">from </span><span class="s1">asyncmy.constants </span><span class="s3">import </span><span class="s1">CLIENT</span>
+
+        <span class="s3">return </span><span class="s1">CLIENT.FOUND_ROWS</span>
+
+    <span class="s3">def </span><span class="s1">get_driver_connection(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection._connection</span>
+
+
+<span class="s1">dialect = MySQLDialect_asyncmy</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,348 @@
+<html>
+<head>
+<title>profiling.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+profiling.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/profiling.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">&quot;&quot;&quot;Profiling support for unit and performance tests. 
+ 
+These are special purpose profiling methods which operate 
+in a more fine-grained way than nose's profiling plugin. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">collections</span>
+<span class="s3">import </span><span class="s1">contextlib</span>
+<span class="s3">import </span><span class="s1">os</span>
+<span class="s3">import </span><span class="s1">platform</span>
+<span class="s3">import </span><span class="s1">pstats</span>
+<span class="s3">import </span><span class="s1">re</span>
+<span class="s3">import </span><span class="s1">sys</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">config</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">gc_collect</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">has_compiled_ext</span>
+
+
+<span class="s3">try</span><span class="s1">:</span>
+    <span class="s3">import </span><span class="s1">cProfile</span>
+<span class="s3">except </span><span class="s1">ImportError:</span>
+    <span class="s1">cProfile = </span><span class="s3">None</span>
+
+<span class="s1">_profile_stats = </span><span class="s3">None</span>
+<span class="s4">&quot;&quot;&quot;global ProfileStatsFileInstance. 
+ 
+plugin_base assigns this at the start of all tests. 
+ 
+&quot;&quot;&quot;</span>
+
+
+<span class="s1">_current_test = </span><span class="s3">None</span>
+<span class="s4">&quot;&quot;&quot;String id of current test. 
+ 
+plugin_base assigns this at the start of each test using 
+_start_current_test. 
+ 
+&quot;&quot;&quot;</span>
+
+
+<span class="s3">def </span><span class="s1">_start_current_test(id_):</span>
+    <span class="s3">global </span><span class="s1">_current_test</span>
+    <span class="s1">_current_test = id_</span>
+
+    <span class="s3">if </span><span class="s1">_profile_stats.force_write:</span>
+        <span class="s1">_profile_stats.reset_count()</span>
+
+
+<span class="s3">class </span><span class="s1">ProfileStatsFile:</span>
+    <span class="s2">&quot;&quot;&quot;Store per-platform/fn profiling results in a file. 
+ 
+    There was no json module available when this was written, but now 
+    the file format which is very deterministically line oriented is kind of 
+    handy in any case for diffs and merges. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">filename</span><span class="s5">, </span><span class="s1">sort=</span><span class="s4">&quot;cumulative&quot;</span><span class="s5">, </span><span class="s1">dump=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">self.force_write = (</span>
+            <span class="s1">config.options </span><span class="s3">is not None and </span><span class="s1">config.options.force_write_profiles</span>
+        <span class="s1">)</span>
+        <span class="s1">self.write = self.force_write </span><span class="s3">or </span><span class="s1">(</span>
+            <span class="s1">config.options </span><span class="s3">is not None and </span><span class="s1">config.options.write_profiles</span>
+        <span class="s1">)</span>
+        <span class="s1">self.fname = os.path.abspath(filename)</span>
+        <span class="s1">self.short_fname = os.path.split(self.fname)[-</span><span class="s6">1</span><span class="s1">]</span>
+        <span class="s1">self.data = collections.defaultdict(</span>
+            <span class="s3">lambda</span><span class="s1">: collections.defaultdict(dict)</span>
+        <span class="s1">)</span>
+        <span class="s1">self.dump = dump</span>
+        <span class="s1">self.sort = sort</span>
+        <span class="s1">self._read()</span>
+        <span class="s3">if </span><span class="s1">self.write:</span>
+            <span class="s0"># rewrite for the case where features changed,</span>
+            <span class="s0"># etc.</span>
+            <span class="s1">self._write()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">platform_key(self):</span>
+        <span class="s1">dbapi_key = config.db.name + </span><span class="s4">&quot;_&quot; </span><span class="s1">+ config.db.driver</span>
+
+        <span class="s3">if </span><span class="s1">config.db.name == </span><span class="s4">&quot;sqlite&quot; </span><span class="s3">and </span><span class="s1">config.db.dialect._is_url_file_db(</span>
+            <span class="s1">config.db.url</span>
+        <span class="s1">):</span>
+            <span class="s1">dbapi_key += </span><span class="s4">&quot;_file&quot;</span>
+
+        <span class="s0"># keep it at 2.7, 3.1, 3.2, etc. for now.</span>
+        <span class="s1">py_version = </span><span class="s4">&quot;.&quot;</span><span class="s1">.join([str(v) </span><span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">sys.version_info[</span><span class="s6">0</span><span class="s1">:</span><span class="s6">2</span><span class="s1">]])</span>
+
+        <span class="s1">platform_tokens = [</span>
+            <span class="s1">platform.machine()</span><span class="s5">,</span>
+            <span class="s1">platform.system().lower()</span><span class="s5">,</span>
+            <span class="s1">platform.python_implementation().lower()</span><span class="s5">,</span>
+            <span class="s1">py_version</span><span class="s5">,</span>
+            <span class="s1">dbapi_key</span><span class="s5">,</span>
+        <span class="s1">]</span>
+
+        <span class="s1">platform_tokens.append(</span><span class="s4">&quot;dbapiunicode&quot;</span><span class="s1">)</span>
+        <span class="s1">_has_cext = has_compiled_ext()</span>
+        <span class="s1">platform_tokens.append(_has_cext </span><span class="s3">and </span><span class="s4">&quot;cextensions&quot; </span><span class="s3">or </span><span class="s4">&quot;nocextensions&quot;</span><span class="s1">)</span>
+        <span class="s3">return </span><span class="s4">&quot;_&quot;</span><span class="s1">.join(platform_tokens)</span>
+
+    <span class="s3">def </span><span class="s1">has_stats(self):</span>
+        <span class="s1">test_key = _current_test</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">test_key </span><span class="s3">in </span><span class="s1">self.data </span><span class="s3">and </span><span class="s1">self.platform_key </span><span class="s3">in </span><span class="s1">self.data[test_key]</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">result(self</span><span class="s5">, </span><span class="s1">callcount):</span>
+        <span class="s1">test_key = _current_test</span>
+        <span class="s1">per_fn = self.data[test_key]</span>
+        <span class="s1">per_platform = per_fn[self.platform_key]</span>
+
+        <span class="s3">if </span><span class="s4">&quot;counts&quot; </span><span class="s3">not in </span><span class="s1">per_platform:</span>
+            <span class="s1">per_platform[</span><span class="s4">&quot;counts&quot;</span><span class="s1">] = counts = []</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">counts = per_platform[</span><span class="s4">&quot;counts&quot;</span><span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s4">&quot;current_count&quot; </span><span class="s3">not in </span><span class="s1">per_platform:</span>
+            <span class="s1">per_platform[</span><span class="s4">&quot;current_count&quot;</span><span class="s1">] = current_count = </span><span class="s6">0</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">current_count = per_platform[</span><span class="s4">&quot;current_count&quot;</span><span class="s1">]</span>
+
+        <span class="s1">has_count = len(counts) &gt; current_count</span>
+
+        <span class="s3">if not </span><span class="s1">has_count:</span>
+            <span class="s1">counts.append(callcount)</span>
+            <span class="s3">if </span><span class="s1">self.write:</span>
+                <span class="s1">self._write()</span>
+            <span class="s1">result = </span><span class="s3">None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">result = per_platform[</span><span class="s4">&quot;lineno&quot;</span><span class="s1">]</span><span class="s5">, </span><span class="s1">counts[current_count]</span>
+        <span class="s1">per_platform[</span><span class="s4">&quot;current_count&quot;</span><span class="s1">] += </span><span class="s6">1</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">reset_count(self):</span>
+        <span class="s1">test_key = _current_test</span>
+        <span class="s0"># since self.data is a defaultdict, don't access a key</span>
+        <span class="s0"># if we don't know it's there first.</span>
+        <span class="s3">if </span><span class="s1">test_key </span><span class="s3">not in </span><span class="s1">self.data:</span>
+            <span class="s3">return</span>
+        <span class="s1">per_fn = self.data[test_key]</span>
+        <span class="s3">if </span><span class="s1">self.platform_key </span><span class="s3">not in </span><span class="s1">per_fn:</span>
+            <span class="s3">return</span>
+        <span class="s1">per_platform = per_fn[self.platform_key]</span>
+        <span class="s3">if </span><span class="s4">&quot;counts&quot; </span><span class="s3">in </span><span class="s1">per_platform:</span>
+            <span class="s1">per_platform[</span><span class="s4">&quot;counts&quot;</span><span class="s1">][:] = []</span>
+
+    <span class="s3">def </span><span class="s1">replace(self</span><span class="s5">, </span><span class="s1">callcount):</span>
+        <span class="s1">test_key = _current_test</span>
+        <span class="s1">per_fn = self.data[test_key]</span>
+        <span class="s1">per_platform = per_fn[self.platform_key]</span>
+        <span class="s1">counts = per_platform[</span><span class="s4">&quot;counts&quot;</span><span class="s1">]</span>
+        <span class="s1">current_count = per_platform[</span><span class="s4">&quot;current_count&quot;</span><span class="s1">]</span>
+        <span class="s3">if </span><span class="s1">current_count &lt; len(counts):</span>
+            <span class="s1">counts[current_count - </span><span class="s6">1</span><span class="s1">] = callcount</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">counts[-</span><span class="s6">1</span><span class="s1">] = callcount</span>
+        <span class="s3">if </span><span class="s1">self.write:</span>
+            <span class="s1">self._write()</span>
+
+    <span class="s3">def </span><span class="s1">_header(self):</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s4">&quot;# %s</span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# This file is written out on a per-environment basis.</span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# For each test in aaa_profiling, the corresponding &quot;</span>
+            <span class="s4">&quot;function and </span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# environment is located within this file.  &quot;</span>
+            <span class="s4">&quot;If it doesn't exist,</span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# the test is skipped.</span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# If a callcount does exist, it is compared &quot;</span>
+            <span class="s4">&quot;to what we received. </span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# assertions are raised if the counts do not match.</span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# </span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# To add a new callcount test, apply the function_call_count </span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# decorator and re-run the tests using the --write-profiles </span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# option - this file will be rewritten including the new count.</span><span class="s7">\n</span><span class="s4">&quot;</span>
+            <span class="s4">&quot;# </span><span class="s7">\n</span><span class="s4">&quot;</span>
+        <span class="s1">) % (self.fname)</span>
+
+    <span class="s3">def </span><span class="s1">_read(self):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">profile_f = open(self.fname)</span>
+        <span class="s3">except </span><span class="s1">OSError:</span>
+            <span class="s3">return</span>
+        <span class="s3">for </span><span class="s1">lineno</span><span class="s5">, </span><span class="s1">line </span><span class="s3">in </span><span class="s1">enumerate(profile_f):</span>
+            <span class="s1">line = line.strip()</span>
+            <span class="s3">if not </span><span class="s1">line </span><span class="s3">or </span><span class="s1">line.startswith(</span><span class="s4">&quot;#&quot;</span><span class="s1">):</span>
+                <span class="s3">continue</span>
+
+            <span class="s1">test_key</span><span class="s5">, </span><span class="s1">platform_key</span><span class="s5">, </span><span class="s1">counts = line.split()</span>
+            <span class="s1">per_fn = self.data[test_key]</span>
+            <span class="s1">per_platform = per_fn[platform_key]</span>
+            <span class="s1">c = [int(count) </span><span class="s3">for </span><span class="s1">count </span><span class="s3">in </span><span class="s1">counts.split(</span><span class="s4">&quot;,&quot;</span><span class="s1">)]</span>
+            <span class="s1">per_platform[</span><span class="s4">&quot;counts&quot;</span><span class="s1">] = c</span>
+            <span class="s1">per_platform[</span><span class="s4">&quot;lineno&quot;</span><span class="s1">] = lineno + </span><span class="s6">1</span>
+            <span class="s1">per_platform[</span><span class="s4">&quot;current_count&quot;</span><span class="s1">] = </span><span class="s6">0</span>
+        <span class="s1">profile_f.close()</span>
+
+    <span class="s3">def </span><span class="s1">_write(self):</span>
+        <span class="s1">print(</span><span class="s4">&quot;Writing profile file %s&quot; </span><span class="s1">% self.fname)</span>
+        <span class="s1">profile_f = open(self.fname</span><span class="s5">, </span><span class="s4">&quot;w&quot;</span><span class="s1">)</span>
+        <span class="s1">profile_f.write(self._header())</span>
+        <span class="s3">for </span><span class="s1">test_key </span><span class="s3">in </span><span class="s1">sorted(self.data):</span>
+            <span class="s1">per_fn = self.data[test_key]</span>
+            <span class="s1">profile_f.write(</span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4"># TEST: %s</span><span class="s7">\n\n</span><span class="s4">&quot; </span><span class="s1">% test_key)</span>
+            <span class="s3">for </span><span class="s1">platform_key </span><span class="s3">in </span><span class="s1">sorted(per_fn):</span>
+                <span class="s1">per_platform = per_fn[platform_key]</span>
+                <span class="s1">c = </span><span class="s4">&quot;,&quot;</span><span class="s1">.join(str(count) </span><span class="s3">for </span><span class="s1">count </span><span class="s3">in </span><span class="s1">per_platform[</span><span class="s4">&quot;counts&quot;</span><span class="s1">])</span>
+                <span class="s1">profile_f.write(</span><span class="s4">&quot;%s %s %s</span><span class="s7">\n</span><span class="s4">&quot; </span><span class="s1">% (test_key</span><span class="s5">, </span><span class="s1">platform_key</span><span class="s5">, </span><span class="s1">c))</span>
+        <span class="s1">profile_f.close()</span>
+
+
+<span class="s3">def </span><span class="s1">function_call_count(variance=</span><span class="s6">0.05</span><span class="s5">, </span><span class="s1">times=</span><span class="s6">1</span><span class="s5">, </span><span class="s1">warmup=</span><span class="s6">0</span><span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Assert a target for a test case's function call count. 
+ 
+    The main purpose of this assertion is to detect changes in 
+    callcounts for various functions - the actual number is not as important. 
+    Callcounts are stored in a file keyed to Python version and OS platform 
+    information.  This file is generated automatically for new tests, 
+    and versioned so that unexpected changes in callcounts will be detected. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># use signature-rewriting decorator function so that pytest fixtures</span>
+    <span class="s0"># still work on py27.  In Py3, update_wrapper() alone is good enough,</span>
+    <span class="s0"># likely due to the introduction of __signature__.</span>
+
+    <span class="s3">from </span><span class="s1">sqlalchemy.util </span><span class="s3">import </span><span class="s1">decorator</span>
+
+    <span class="s1">@decorator</span>
+    <span class="s3">def </span><span class="s1">wrap(fn</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">for </span><span class="s1">warm </span><span class="s3">in </span><span class="s1">range(warmup):</span>
+            <span class="s1">fn(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+        <span class="s1">timerange = range(times)</span>
+        <span class="s3">with </span><span class="s1">count_functions(variance=variance):</span>
+            <span class="s3">for </span><span class="s1">time </span><span class="s3">in </span><span class="s1">timerange:</span>
+                <span class="s1">rv = fn(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+            <span class="s3">return </span><span class="s1">rv</span>
+
+    <span class="s3">return </span><span class="s1">wrap</span>
+
+
+<span class="s1">@contextlib.contextmanager</span>
+<span class="s3">def </span><span class="s1">count_functions(variance=</span><span class="s6">0.05</span><span class="s1">):</span>
+    <span class="s3">if </span><span class="s1">cProfile </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">config._skip_test_exception(</span><span class="s4">&quot;cProfile is not installed&quot;</span><span class="s1">)</span>
+
+    <span class="s3">if not </span><span class="s1">_profile_stats.has_stats() </span><span class="s3">and not </span><span class="s1">_profile_stats.write:</span>
+        <span class="s1">config.skip_test(</span>
+            <span class="s4">&quot;No profiling stats available on this &quot;</span>
+            <span class="s4">&quot;platform for this function.  Run tests with &quot;</span>
+            <span class="s4">&quot;--write-profiles to add statistics to %s for &quot;</span>
+            <span class="s4">&quot;this platform.&quot; </span><span class="s1">% _profile_stats.short_fname</span>
+        <span class="s1">)</span>
+
+    <span class="s1">gc_collect()</span>
+
+    <span class="s1">pr = cProfile.Profile()</span>
+    <span class="s1">pr.enable()</span>
+    <span class="s0"># began = time.time()</span>
+    <span class="s3">yield</span>
+    <span class="s0"># ended = time.time()</span>
+    <span class="s1">pr.disable()</span>
+
+    <span class="s0"># s = StringIO()</span>
+    <span class="s1">stats = pstats.Stats(pr</span><span class="s5">, </span><span class="s1">stream=sys.stdout)</span>
+
+    <span class="s0"># timespent = ended - began</span>
+    <span class="s1">callcount = stats.total_calls</span>
+
+    <span class="s1">expected = _profile_stats.result(callcount)</span>
+
+    <span class="s3">if </span><span class="s1">expected </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">expected_count = </span><span class="s3">None</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">line_no</span><span class="s5">, </span><span class="s1">expected_count = expected</span>
+
+    <span class="s1">print(</span><span class="s4">&quot;Pstats calls: %d Expected %s&quot; </span><span class="s1">% (callcount</span><span class="s5">, </span><span class="s1">expected_count))</span>
+    <span class="s1">stats.sort_stats(*re.split(</span><span class="s4">r&quot;[, ]&quot;</span><span class="s5">, </span><span class="s1">_profile_stats.sort))</span>
+    <span class="s1">stats.print_stats()</span>
+    <span class="s3">if </span><span class="s1">_profile_stats.dump:</span>
+        <span class="s1">base</span><span class="s5">, </span><span class="s1">ext = os.path.splitext(_profile_stats.dump)</span>
+        <span class="s1">test_name = _current_test.split(</span><span class="s4">&quot;.&quot;</span><span class="s1">)[-</span><span class="s6">1</span><span class="s1">]</span>
+        <span class="s1">dumpfile = </span><span class="s4">&quot;%s_%s%s&quot; </span><span class="s1">% (base</span><span class="s5">, </span><span class="s1">test_name</span><span class="s5">, </span><span class="s1">ext </span><span class="s3">or </span><span class="s4">&quot;.profile&quot;</span><span class="s1">)</span>
+        <span class="s1">stats.dump_stats(dumpfile)</span>
+        <span class="s1">print(</span><span class="s4">&quot;Dumped stats to file %s&quot; </span><span class="s1">% dumpfile)</span>
+    <span class="s0"># stats.print_callers()</span>
+    <span class="s3">if </span><span class="s1">_profile_stats.force_write:</span>
+        <span class="s1">_profile_stats.replace(callcount)</span>
+    <span class="s3">elif </span><span class="s1">expected_count:</span>
+        <span class="s1">deviance = int(callcount * variance)</span>
+        <span class="s1">failed = abs(callcount - expected_count) &gt; deviance</span>
+
+        <span class="s3">if </span><span class="s1">failed:</span>
+            <span class="s3">if </span><span class="s1">_profile_stats.write:</span>
+                <span class="s1">_profile_stats.replace(callcount)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">AssertionError(</span>
+                    <span class="s4">&quot;Adjusted function call count %s not within %s%% &quot;</span>
+                    <span class="s4">&quot;of expected %s, platform %s. Rerun with &quot;</span>
+                    <span class="s4">&quot;--write-profiles to &quot;</span>
+                    <span class="s4">&quot;regenerate this callcount.&quot;</span>
+                    <span class="s1">% (</span>
+                        <span class="s1">callcount</span><span class="s5">,</span>
+                        <span class="s1">(variance * </span><span class="s6">100</span><span class="s1">)</span><span class="s5">,</span>
+                        <span class="s1">expected_count</span><span class="s5">,</span>
+                        <span class="s1">_profile_stats.platform_key</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+</pre>
+</body>
+</html>

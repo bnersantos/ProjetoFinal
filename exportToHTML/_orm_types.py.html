@@ -1,0 +1,42 @@
+<html>
+<head>
+<title>_orm_types.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_orm_types.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/_orm_types.py</span>
+<span class="s0"># Copyright (C) 2022-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;ORM types that need to present specifically for **documentation only** of 
+the Executable.execution_options() method, which includes options that 
+are meaningful to the ORM. 
+ 
+&quot;&quot;&quot;</span>
+
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+
+<span class="s1">SynchronizeSessionArgument = Literal[</span><span class="s3">False</span><span class="s4">, </span><span class="s5">&quot;auto&quot;</span><span class="s4">, </span><span class="s5">&quot;evaluate&quot;</span><span class="s4">, </span><span class="s5">&quot;fetch&quot;</span><span class="s1">]</span>
+<span class="s1">DMLStrategyArgument = Literal[</span><span class="s5">&quot;bulk&quot;</span><span class="s4">, </span><span class="s5">&quot;raw&quot;</span><span class="s4">, </span><span class="s5">&quot;orm&quot;</span><span class="s4">, </span><span class="s5">&quot;auto&quot;</span><span class="s1">]</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,83 @@
+<html>
+<head>
+<title>signals.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #5d69bb;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+signals.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">flask.signals </span><span class="s0">import </span><span class="s1">Namespace</span>
+
+<span class="s1">_signals = Namespace()</span>
+
+<span class="s2">#: Sent when a user is logged in. In addition to the app (which is the</span>
+<span class="s2">#: sender), it is passed `user`, which is the user being logged in.</span>
+<span class="s1">user_logged_in = _signals.signal(</span><span class="s3">&quot;logged-in&quot;</span><span class="s1">)</span>
+
+<span class="s2">#: Sent when a user is logged out. In addition to the app (which is the</span>
+<span class="s2">#: sender), it is passed `user`, which is the user being logged out.</span>
+<span class="s1">user_logged_out = _signals.signal(</span><span class="s3">&quot;logged-out&quot;</span><span class="s1">)</span>
+
+<span class="s2">#: Sent when the user is loaded from the cookie. In addition to the app (which</span>
+<span class="s2">#: is the sender), it is passed `user`, which is the user being reloaded.</span>
+<span class="s1">user_loaded_from_cookie = _signals.signal(</span><span class="s3">&quot;loaded-from-cookie&quot;</span><span class="s1">)</span>
+
+<span class="s2">#: Sent when the user is loaded from the header. In addition to the app (which</span>
+<span class="s2">#: is the #: sender), it is passed `user`, which is the user being reloaded.</span>
+<span class="s1">_user_loaded_from_header = _signals.signal(</span><span class="s3">&quot;loaded-from-header&quot;</span><span class="s1">)</span>
+
+<span class="s2">#: Sent when the user is loaded from the request. In addition to the app (which</span>
+<span class="s2">#: is the #: sender), it is passed `user`, which is the user being reloaded.</span>
+<span class="s1">user_loaded_from_request = _signals.signal(</span><span class="s3">&quot;loaded-from-request&quot;</span><span class="s1">)</span>
+
+<span class="s2">#: Sent when a user's login is confirmed, marking it as fresh. (It is not</span>
+<span class="s2">#: called for a normal login.)</span>
+<span class="s2">#: It receives no additional arguments besides the app.</span>
+<span class="s1">user_login_confirmed = _signals.signal(</span><span class="s3">&quot;login-confirmed&quot;</span><span class="s1">)</span>
+
+<span class="s2">#: Sent when the `unauthorized` method is called on a `LoginManager`. It</span>
+<span class="s2">#: receives no additional arguments besides the app.</span>
+<span class="s1">user_unauthorized = _signals.signal(</span><span class="s3">&quot;unauthorized&quot;</span><span class="s1">)</span>
+
+<span class="s2">#: Sent when the `needs_refresh` method is called on a `LoginManager`. It</span>
+<span class="s2">#: receives no additional arguments besides the app.</span>
+<span class="s1">user_needs_refresh = _signals.signal(</span><span class="s3">&quot;needs-refresh&quot;</span><span class="s1">)</span>
+
+<span class="s2">#: Sent whenever the user is accessed/loaded</span>
+<span class="s2">#: receives no additional arguments besides the app.</span>
+<span class="s1">user_accessed = _signals.signal(</span><span class="s3">&quot;accessed&quot;</span><span class="s1">)</span>
+
+<span class="s2">#: Sent whenever session protection takes effect, and a session is either</span>
+<span class="s2">#: marked non-fresh or deleted. It receives no additional arguments besides</span>
+<span class="s2">#: the app.</span>
+<span class="s1">session_protected = _signals.signal(</span><span class="s3">&quot;session-protected&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">__getattr__(name):</span>
+    <span class="s0">if </span><span class="s1">name == </span><span class="s3">&quot;user_loaded_from_header&quot;</span><span class="s1">:</span>
+        <span class="s0">import </span><span class="s1">warnings</span>
+
+        <span class="s1">warnings.warn(</span>
+            <span class="s3">&quot;'user_loaded_from_header' is deprecated and will be&quot;</span>
+            <span class="s3">&quot; removed in Flask-Login 0.7. Use&quot;</span>
+            <span class="s3">&quot; 'user_loaded_from_request' instead.&quot;</span><span class="s4">,</span>
+            <span class="s1">DeprecationWarning</span><span class="s4">,</span>
+            <span class="s1">stacklevel=</span><span class="s5">2</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">_user_loaded_from_header</span>
+
+    <span class="s0">raise </span><span class="s1">AttributeError(name)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,72 @@
+<html>
+<head>
+<title>index.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+.s1 { color: #5d69bb;}
+.s2 { color: #e8bf6a;}
+.s3 { color: #bababa;}
+.s4 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+index.html</font>
+</center></td></tr></table>
+<pre><span class="s0">{% extends 'modelo_base.html' %}</span>
+
+<span class="s0">{% block conteudoNav %}</span>
+<span class="s1">&lt;!-- Aqui teremos o conteúdo da navegação --&gt;</span>
+<span class="s0">{% endblock %}</span>
+
+<span class="s0">{% block conteudo %}</span>
+<span class="s1">&lt;!-- Aqui teremos o conteúdo da main --&gt;</span>
+<span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;content&quot;</span><span class="s2">&gt;</span>
+    <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;box&quot;</span><span class="s2">&gt;</span>
+        <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;icon-container&quot;</span><span class="s2">&gt;</span>
+            <span class="s2">&lt;img </span><span class="s3">src</span><span class="s4">=&quot;{{ url_for('static', filename='mouse.jpg') }}&quot; </span><span class="s3">alt</span><span class="s4">=&quot;mouse&quot; </span><span class="s3">class</span><span class="s4">=&quot;icon&quot;</span><span class="s2">&gt;</span>
+            <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;hover-info&quot;</span><span class="s2">&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Quantidade: 10</span><span class="s2">&lt;/p&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Já saíram: 5</span><span class="s2">&lt;/p&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Detalhes: Blá blá blá</span><span class="s2">&lt;/p&gt;</span>
+            <span class="s2">&lt;/div&gt;</span>
+        <span class="s2">&lt;/div&gt;</span>
+    <span class="s2">&lt;/div&gt;</span>
+    <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;box&quot;</span><span class="s2">&gt;</span>
+        <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;icon-container&quot;</span><span class="s2">&gt;</span>
+            <span class="s2">&lt;img </span><span class="s3">src</span><span class="s4">=&quot;{{ url_for('static', filename='teclado.jpg') }}&quot; </span><span class="s3">alt</span><span class="s4">=&quot;Hardware&quot; </span><span class="s3">class</span><span class="s4">=&quot;icon&quot;</span><span class="s2">&gt;</span>
+            <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;hover-info&quot;</span><span class="s2">&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Quantidade: 20</span><span class="s2">&lt;/p&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Já saíram: 15</span><span class="s2">&lt;/p&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Detalhes: Blá blá blá</span><span class="s2">&lt;/p&gt;</span>
+            <span class="s2">&lt;/div&gt;</span>
+        <span class="s2">&lt;/div&gt;</span>
+    <span class="s2">&lt;/div&gt;</span>
+    <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;box&quot;</span><span class="s2">&gt;</span>
+        <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;icon-container&quot;</span><span class="s2">&gt;</span>
+            <span class="s2">&lt;img </span><span class="s3">src</span><span class="s4">=&quot;{{ url_for('static', filename='hardware.png') }}&quot; </span><span class="s3">alt</span><span class="s4">=&quot;Hardware&quot; </span><span class="s3">class</span><span class="s4">=&quot;icon&quot;</span><span class="s2">&gt;</span>
+            <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;hover-info&quot;</span><span class="s2">&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Quantidade: 30</span><span class="s2">&lt;/p&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Já saíram: 25</span><span class="s2">&lt;/p&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Detalhes: Blá blá blá</span><span class="s2">&lt;/p&gt;</span>
+            <span class="s2">&lt;/div&gt;</span>
+        <span class="s2">&lt;/div&gt;</span>
+    <span class="s2">&lt;/div&gt;</span>
+    <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;box&quot;</span><span class="s2">&gt;</span>
+        <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;icon-container&quot;</span><span class="s2">&gt;</span>
+            <span class="s2">&lt;img </span><span class="s3">src</span><span class="s4">=&quot;{{ url_for('static', filename='mouse.png') }}&quot; </span><span class="s3">alt</span><span class="s4">=&quot;Hardware&quot; </span><span class="s3">class</span><span class="s4">=&quot;icon&quot;</span><span class="s2">&gt;</span>
+            <span class="s2">&lt;div </span><span class="s3">class</span><span class="s4">=&quot;hover-info&quot;</span><span class="s2">&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Quantidade: 50</span><span class="s2">&lt;/p&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Já saíram: 40</span><span class="s2">&lt;/p&gt;</span>
+                <span class="s2">&lt;p&gt;</span><span class="s0">Detalhes: Blá blá blá</span><span class="s2">&lt;/p&gt;</span>
+            <span class="s2">&lt;/div&gt;</span>
+        <span class="s2">&lt;/div&gt;</span>
+    <span class="s2">&lt;/div&gt;</span>
+<span class="s2">&lt;/div&gt;</span>
+<span class="s0">{% endblock %}</span>
+</pre>
+</body>
+</html>

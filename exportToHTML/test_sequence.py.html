@@ -1,0 +1,339 @@
+<html>
+<head>
+<title>test_sequence.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+test_sequence.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/suite/test_sequence.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">config</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">fixtures</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">eq_</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">is_true</span>
+<span class="s2">from </span><span class="s1">..config </span><span class="s2">import </span><span class="s1">requirements</span>
+<span class="s2">from </span><span class="s1">..provision </span><span class="s2">import </span><span class="s1">normalize_sequence</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">Column</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">Table</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">inspect</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Integer</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">MetaData</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Sequence</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">String</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">testing</span>
+
+
+<span class="s2">class </span><span class="s1">SequenceTest(fixtures.TablesTest):</span>
+    <span class="s1">__requires__ = (</span><span class="s3">&quot;sequences&quot;</span><span class="s4">,</span><span class="s1">)</span>
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s1">run_create_tables = </span><span class="s3">&quot;each&quot;</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s4">, </span><span class="s1">metadata):</span>
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;seq_pk&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;id&quot;</span><span class="s4">,</span>
+                <span class="s1">Integer</span><span class="s4">,</span>
+                <span class="s1">normalize_sequence(config</span><span class="s4">, </span><span class="s1">Sequence(</span><span class="s3">&quot;tab_id_seq&quot;</span><span class="s1">))</span><span class="s4">,</span>
+                <span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;seq_opt_pk&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;id&quot;</span><span class="s4">,</span>
+                <span class="s1">Integer</span><span class="s4">,</span>
+                <span class="s1">normalize_sequence(</span>
+                    <span class="s1">config</span><span class="s4">,</span>
+                    <span class="s1">Sequence(</span><span class="s3">&quot;tab_id_seq&quot;</span><span class="s4">, </span><span class="s1">data_type=Integer</span><span class="s4">, </span><span class="s1">optional=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;seq_no_returning&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;id&quot;</span><span class="s4">,</span>
+                <span class="s1">Integer</span><span class="s4">,</span>
+                <span class="s1">normalize_sequence(config</span><span class="s4">, </span><span class="s1">Sequence(</span><span class="s3">&quot;noret_id_seq&quot;</span><span class="s1">))</span><span class="s4">,</span>
+                <span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+            <span class="s1">implicit_returning=</span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">testing.requires.schemas.enabled:</span>
+            <span class="s1">Table(</span>
+                <span class="s3">&quot;seq_no_returning_sch&quot;</span><span class="s4">,</span>
+                <span class="s1">metadata</span><span class="s4">,</span>
+                <span class="s1">Column(</span>
+                    <span class="s3">&quot;id&quot;</span><span class="s4">,</span>
+                    <span class="s1">Integer</span><span class="s4">,</span>
+                    <span class="s1">normalize_sequence(</span>
+                        <span class="s1">config</span><span class="s4">,</span>
+                        <span class="s1">Sequence(</span>
+                            <span class="s3">&quot;noret_sch_id_seq&quot;</span><span class="s4">, </span><span class="s1">schema=config.test_schema</span>
+                        <span class="s1">)</span><span class="s4">,</span>
+                    <span class="s1">)</span><span class="s4">,</span>
+                    <span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">,</span>
+                <span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+                <span class="s1">implicit_returning=</span><span class="s2">False</span><span class="s4">,</span>
+                <span class="s1">schema=config.test_schema</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_insert_roundtrip(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">connection.execute(self.tables.seq_pk.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">))</span>
+        <span class="s1">self._assert_round_trip(self.tables.seq_pk</span><span class="s4">, </span><span class="s1">connection)</span>
+
+    <span class="s2">def </span><span class="s1">test_insert_lastrowid(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">self.tables.seq_pk.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">r.inserted_primary_key</span><span class="s4">, </span><span class="s1">(testing.db.dialect.default_sequence_base</span><span class="s4">,</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_nextval_direct(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.scalar(self.tables.seq_pk.c.id.default)</span>
+        <span class="s1">eq_(r</span><span class="s4">, </span><span class="s1">testing.db.dialect.default_sequence_base)</span>
+
+    <span class="s1">@requirements.sequences_optional</span>
+    <span class="s2">def </span><span class="s1">test_optional_seq(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">self.tables.seq_opt_pk.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(r.inserted_primary_key</span><span class="s4">, </span><span class="s1">(</span><span class="s5">1</span><span class="s4">,</span><span class="s1">))</span>
+
+    <span class="s2">def </span><span class="s1">_assert_round_trip(self</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">conn):</span>
+        <span class="s1">row = conn.execute(table.select()).first()</span>
+        <span class="s1">eq_(row</span><span class="s4">, </span><span class="s1">(testing.db.dialect.default_sequence_base</span><span class="s4">, </span><span class="s3">&quot;some data&quot;</span><span class="s1">))</span>
+
+    <span class="s2">def </span><span class="s1">test_insert_roundtrip_no_implicit_returning(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">self.tables.seq_no_returning.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">self._assert_round_trip(self.tables.seq_no_returning</span><span class="s4">, </span><span class="s1">connection)</span>
+
+    <span class="s1">@testing.combinations((</span><span class="s2">True</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s2">False</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">argnames=</span><span class="s3">&quot;implicit_returning&quot;</span><span class="s1">)</span>
+    <span class="s1">@testing.requires.schemas</span>
+    <span class="s2">def </span><span class="s1">test_insert_roundtrip_translate(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">implicit_returning):</span>
+        <span class="s1">seq_no_returning = Table(</span>
+            <span class="s3">&quot;seq_no_returning_sch&quot;</span><span class="s4">,</span>
+            <span class="s1">MetaData()</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;id&quot;</span><span class="s4">,</span>
+                <span class="s1">Integer</span><span class="s4">,</span>
+                <span class="s1">normalize_sequence(</span>
+                    <span class="s1">config</span><span class="s4">, </span><span class="s1">Sequence(</span><span class="s3">&quot;noret_sch_id_seq&quot;</span><span class="s4">, </span><span class="s1">schema=</span><span class="s3">&quot;alt_schema&quot;</span><span class="s1">)</span>
+                <span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+            <span class="s1">implicit_returning=implicit_returning</span><span class="s4">,</span>
+            <span class="s1">schema=</span><span class="s3">&quot;alt_schema&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">connection = connection.execution_options(</span>
+            <span class="s1">schema_translate_map={</span><span class="s3">&quot;alt_schema&quot;</span><span class="s1">: config.test_schema}</span>
+        <span class="s1">)</span>
+        <span class="s1">connection.execute(seq_no_returning.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">))</span>
+        <span class="s1">self._assert_round_trip(seq_no_returning</span><span class="s4">, </span><span class="s1">connection)</span>
+
+    <span class="s1">@testing.requires.schemas</span>
+    <span class="s2">def </span><span class="s1">test_nextval_direct_schema_translate(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">seq = normalize_sequence(</span>
+            <span class="s1">config</span><span class="s4">, </span><span class="s1">Sequence(</span><span class="s3">&quot;noret_sch_id_seq&quot;</span><span class="s4">, </span><span class="s1">schema=</span><span class="s3">&quot;alt_schema&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">connection = connection.execution_options(</span>
+            <span class="s1">schema_translate_map={</span><span class="s3">&quot;alt_schema&quot;</span><span class="s1">: config.test_schema}</span>
+        <span class="s1">)</span>
+
+        <span class="s1">r = connection.scalar(seq)</span>
+        <span class="s1">eq_(r</span><span class="s4">, </span><span class="s1">testing.db.dialect.default_sequence_base)</span>
+
+
+<span class="s2">class </span><span class="s1">SequenceCompilerTest(testing.AssertsCompiledSQL</span><span class="s4">, </span><span class="s1">fixtures.TestBase):</span>
+    <span class="s1">__requires__ = (</span><span class="s3">&quot;sequences&quot;</span><span class="s4">,</span><span class="s1">)</span>
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">test_literal_binds_inline_compile(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">table = Table(</span>
+            <span class="s3">&quot;x&quot;</span><span class="s4">,</span>
+            <span class="s1">MetaData()</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;y&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">normalize_sequence(config</span><span class="s4">, </span><span class="s1">Sequence(</span><span class="s3">&quot;y_seq&quot;</span><span class="s1">))</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;q&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">stmt = table.insert().values(q=</span><span class="s5">5</span><span class="s1">)</span>
+
+        <span class="s1">seq_nextval = connection.dialect.statement_compiler(</span>
+            <span class="s1">statement=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">dialect=connection.dialect</span>
+        <span class="s1">).visit_sequence(normalize_sequence(config</span><span class="s4">, </span><span class="s1">Sequence(</span><span class="s3">&quot;y_seq&quot;</span><span class="s1">)))</span>
+        <span class="s1">self.assert_compile(</span>
+            <span class="s1">stmt</span><span class="s4">,</span>
+            <span class="s3">&quot;INSERT INTO x (y, q) VALUES (%s, 5)&quot; </span><span class="s1">% (seq_nextval</span><span class="s4">,</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">literal_binds=</span><span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">dialect=connection.dialect</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">HasSequenceTest(fixtures.TablesTest):</span>
+    <span class="s1">run_deletes = </span><span class="s2">None</span>
+
+    <span class="s1">__requires__ = (</span><span class="s3">&quot;sequences&quot;</span><span class="s4">,</span><span class="s1">)</span>
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s4">, </span><span class="s1">metadata):</span>
+        <span class="s1">normalize_sequence(config</span><span class="s4">, </span><span class="s1">Sequence(</span><span class="s3">&quot;user_id_seq&quot;</span><span class="s4">, </span><span class="s1">metadata=metadata))</span>
+        <span class="s1">normalize_sequence(</span>
+            <span class="s1">config</span><span class="s4">,</span>
+            <span class="s1">Sequence(</span>
+                <span class="s3">&quot;other_seq&quot;</span><span class="s4">,</span>
+                <span class="s1">metadata=metadata</span><span class="s4">,</span>
+                <span class="s1">nomaxvalue=</span><span class="s2">True</span><span class="s4">,</span>
+                <span class="s1">nominvalue=</span><span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">testing.requires.schemas.enabled:</span>
+            <span class="s1">normalize_sequence(</span>
+                <span class="s1">config</span><span class="s4">,</span>
+                <span class="s1">Sequence(</span>
+                    <span class="s3">&quot;user_id_seq&quot;</span><span class="s4">, </span><span class="s1">schema=config.test_schema</span><span class="s4">, </span><span class="s1">metadata=metadata</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s1">normalize_sequence(</span>
+                <span class="s1">config</span><span class="s4">,</span>
+                <span class="s1">Sequence(</span>
+                    <span class="s3">&quot;schema_seq&quot;</span><span class="s4">, </span><span class="s1">schema=config.test_schema</span><span class="s4">, </span><span class="s1">metadata=metadata</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;user_id_table&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_has_sequence(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(inspect(connection).has_sequence(</span><span class="s3">&quot;user_id_seq&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s2">True</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_has_sequence_cache(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">metadata):</span>
+        <span class="s1">insp = inspect(connection)</span>
+        <span class="s1">eq_(insp.has_sequence(</span><span class="s3">&quot;user_id_seq&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s1">ss = normalize_sequence(config</span><span class="s4">, </span><span class="s1">Sequence(</span><span class="s3">&quot;new_seq&quot;</span><span class="s4">, </span><span class="s1">metadata=metadata))</span>
+        <span class="s1">eq_(insp.has_sequence(</span><span class="s3">&quot;new_seq&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">ss.create(connection)</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">eq_(insp.has_sequence(</span><span class="s3">&quot;new_seq&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+            <span class="s1">insp.clear_cache()</span>
+            <span class="s1">eq_(insp.has_sequence(</span><span class="s3">&quot;new_seq&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s2">finally</span><span class="s1">:</span>
+            <span class="s1">ss.drop(connection)</span>
+
+    <span class="s2">def </span><span class="s1">test_has_sequence_other_object(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(inspect(connection).has_sequence(</span><span class="s3">&quot;user_id_table&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+
+    <span class="s1">@testing.requires.schemas</span>
+    <span class="s2">def </span><span class="s1">test_has_sequence_schema(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">inspect(connection).has_sequence(</span>
+                <span class="s3">&quot;user_id_seq&quot;</span><span class="s4">, </span><span class="s1">schema=config.test_schema</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s2">True</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_has_sequence_neg(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(inspect(connection).has_sequence(</span><span class="s3">&quot;some_sequence&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+
+    <span class="s1">@testing.requires.schemas</span>
+    <span class="s2">def </span><span class="s1">test_has_sequence_schemas_neg(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">inspect(connection).has_sequence(</span>
+                <span class="s3">&quot;some_sequence&quot;</span><span class="s4">, </span><span class="s1">schema=config.test_schema</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@testing.requires.schemas</span>
+    <span class="s2">def </span><span class="s1">test_has_sequence_default_not_in_remote(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">inspect(connection).has_sequence(</span>
+                <span class="s3">&quot;other_sequence&quot;</span><span class="s4">, </span><span class="s1">schema=config.test_schema</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@testing.requires.schemas</span>
+    <span class="s2">def </span><span class="s1">test_has_sequence_remote_not_in_default(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(inspect(connection).has_sequence(</span><span class="s3">&quot;schema_seq&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_get_sequence_names(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">exp = {</span><span class="s3">&quot;other_seq&quot;</span><span class="s4">, </span><span class="s3">&quot;user_id_seq&quot;</span><span class="s1">}</span>
+
+        <span class="s1">res = set(inspect(connection).get_sequence_names())</span>
+        <span class="s1">is_true(res.intersection(exp) == exp)</span>
+        <span class="s1">is_true(</span><span class="s3">&quot;schema_seq&quot; </span><span class="s2">not in </span><span class="s1">res)</span>
+
+    <span class="s1">@testing.requires.schemas</span>
+    <span class="s2">def </span><span class="s1">test_get_sequence_names_no_sequence_schema(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">inspect(connection).get_sequence_names(</span>
+                <span class="s1">schema=config.test_schema_2</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">[]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@testing.requires.schemas</span>
+    <span class="s2">def </span><span class="s1">test_get_sequence_names_sequences_schema(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">sorted(</span>
+                <span class="s1">inspect(connection).get_sequence_names(</span>
+                    <span class="s1">schema=config.test_schema</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">[</span><span class="s3">&quot;schema_seq&quot;</span><span class="s4">, </span><span class="s3">&quot;user_id_seq&quot;</span><span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">HasSequenceTestEmpty(fixtures.TestBase):</span>
+    <span class="s1">__requires__ = (</span><span class="s3">&quot;sequences&quot;</span><span class="s4">,</span><span class="s1">)</span>
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">test_get_sequence_names_no_sequence(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">inspect(connection).get_sequence_names()</span><span class="s4">,</span>
+            <span class="s1">[]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+</pre>
+</body>
+</html>

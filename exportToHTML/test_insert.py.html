@@ -1,0 +1,655 @@
+<html>
+<head>
+<title>test_insert.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+.s6 { color: #717ed3; font-style: italic;}
+.s7 { color: #a5c261;}
+.s8 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+test_insert.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/suite/test_insert.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">decimal </span><span class="s2">import </span><span class="s1">Decimal</span>
+<span class="s2">import </span><span class="s1">uuid</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">testing</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">fixtures</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">eq_</span>
+<span class="s2">from </span><span class="s1">..config </span><span class="s2">import </span><span class="s1">requirements</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">Column</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">Table</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Double</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Float</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Identity</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Integer</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">literal</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">literal_column</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Numeric</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">select</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">String</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">LargeBinary</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">UUID</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">Uuid</span>
+
+
+<span class="s2">class </span><span class="s1">LastrowidTest(fixtures.TablesTest):</span>
+    <span class="s1">run_deletes = </span><span class="s3">&quot;each&quot;</span>
+
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s1">__requires__ = </span><span class="s3">&quot;implements_get_lastrowid&quot;</span><span class="s4">, </span><span class="s3">&quot;autoincrement_insert&quot;</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s4">, </span><span class="s1">metadata):</span>
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;autoinc_pk&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">test_needs_autoincrement=</span><span class="s2">True</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+            <span class="s1">implicit_returning=</span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;manual_pk&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">autoincrement=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+            <span class="s1">implicit_returning=</span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_assert_round_trip(self</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">conn):</span>
+        <span class="s1">row = conn.execute(table.select()).first()</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">row</span><span class="s4">,</span>
+            <span class="s1">(</span>
+                <span class="s1">conn.dialect.default_sequence_base</span><span class="s4">,</span>
+                <span class="s3">&quot;some data&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_autoincrement_on_insert(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">self.tables.autoinc_pk.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">self._assert_round_trip(self.tables.autoinc_pk</span><span class="s4">, </span><span class="s1">connection)</span>
+
+    <span class="s2">def </span><span class="s1">test_last_inserted_id(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">self.tables.autoinc_pk.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">pk = connection.scalar(select(self.tables.autoinc_pk.c.id))</span>
+        <span class="s1">eq_(r.inserted_primary_key</span><span class="s4">, </span><span class="s1">(pk</span><span class="s4">,</span><span class="s1">))</span>
+
+    <span class="s1">@requirements.dbapi_lastrowid</span>
+    <span class="s2">def </span><span class="s1">test_native_lastrowid_autoinc(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">self.tables.autoinc_pk.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">lastrowid = r.lastrowid</span>
+        <span class="s1">pk = connection.scalar(select(self.tables.autoinc_pk.c.id))</span>
+        <span class="s1">eq_(lastrowid</span><span class="s4">, </span><span class="s1">pk)</span>
+
+
+<span class="s2">class </span><span class="s1">InsertBehaviorTest(fixtures.TablesTest):</span>
+    <span class="s1">run_deletes = </span><span class="s3">&quot;each&quot;</span>
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s4">, </span><span class="s1">metadata):</span>
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;autoinc_pk&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">test_needs_autoincrement=</span><span class="s2">True</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;manual_pk&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">autoincrement=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;no_implicit_returning&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">test_needs_autoincrement=</span><span class="s2">True</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+            <span class="s1">implicit_returning=</span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;includes_defaults&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">test_needs_autoincrement=</span><span class="s2">True</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;x&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">default=</span><span class="s5">5</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;y&quot;</span><span class="s4">,</span>
+                <span class="s1">Integer</span><span class="s4">,</span>
+                <span class="s1">default=literal_column(</span><span class="s3">&quot;2&quot;</span><span class="s4">, </span><span class="s1">type_=Integer) + literal(</span><span class="s5">2</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@testing.variation(</span><span class="s3">&quot;style&quot;</span><span class="s4">, </span><span class="s1">[</span><span class="s3">&quot;plain&quot;</span><span class="s4">, </span><span class="s3">&quot;return_defaults&quot;</span><span class="s1">])</span>
+    <span class="s1">@testing.variation(</span><span class="s3">&quot;executemany&quot;</span><span class="s4">, </span><span class="s1">[</span><span class="s2">True</span><span class="s4">, </span><span class="s2">False</span><span class="s1">])</span>
+    <span class="s2">def </span><span class="s1">test_no_results_for_non_returning_insert(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">style</span><span class="s4">, </span><span class="s1">executemany</span>
+    <span class="s1">):</span>
+        <span class="s6">&quot;&quot;&quot;test another INSERT issue found during #10453&quot;&quot;&quot;</span>
+
+        <span class="s1">table = self.tables.no_implicit_returning</span>
+
+        <span class="s1">stmt = table.insert()</span>
+        <span class="s2">if </span><span class="s1">style.return_defaults:</span>
+            <span class="s1">stmt = stmt.return_defaults()</span>
+
+        <span class="s2">if </span><span class="s1">executemany:</span>
+            <span class="s1">data = [</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d1&quot;</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d2&quot;</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d3&quot;</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d4&quot;</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d5&quot;</span><span class="s1">}</span><span class="s4">,</span>
+            <span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">data = {</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d1&quot;</span><span class="s1">}</span>
+
+        <span class="s1">r = connection.execute(stmt</span><span class="s4">, </span><span class="s1">data)</span>
+        <span class="s2">assert not </span><span class="s1">r.returns_rows</span>
+
+    <span class="s1">@requirements.autoincrement_insert</span>
+    <span class="s2">def </span><span class="s1">test_autoclose_on_insert(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">self.tables.autoinc_pk.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s2">assert </span><span class="s1">r._soft_closed</span>
+        <span class="s2">assert not </span><span class="s1">r.closed</span>
+        <span class="s2">assert </span><span class="s1">r.is_insert</span>
+
+        <span class="s0"># new as of I8091919d45421e3f53029b8660427f844fee0228; for the moment</span>
+        <span class="s0"># an insert where the PK was taken from a row that the dialect</span>
+        <span class="s0"># selected, as is the case for mssql/pyodbc, will still report</span>
+        <span class="s0"># returns_rows as true because there's a cursor description.  in that</span>
+        <span class="s0"># case, the row had to have been consumed at least.</span>
+        <span class="s2">assert not </span><span class="s1">r.returns_rows </span><span class="s2">or </span><span class="s1">r.fetchone() </span><span class="s2">is None</span>
+
+    <span class="s1">@requirements.insert_returning</span>
+    <span class="s2">def </span><span class="s1">test_autoclose_on_insert_implicit_returning(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s0"># return_defaults() ensures RETURNING will be used,</span>
+            <span class="s0"># new in 2.0 as sqlite/mariadb offer both RETURNING and</span>
+            <span class="s0"># cursor.lastrowid</span>
+            <span class="s1">self.tables.autoinc_pk.insert().return_defaults()</span><span class="s4">,</span>
+            <span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s2">assert </span><span class="s1">r._soft_closed</span>
+        <span class="s2">assert not </span><span class="s1">r.closed</span>
+        <span class="s2">assert </span><span class="s1">r.is_insert</span>
+
+        <span class="s0"># note we are experimenting with having this be True</span>
+        <span class="s0"># as of I8091919d45421e3f53029b8660427f844fee0228 .</span>
+        <span class="s0"># implicit returning has fetched the row, but it still is a</span>
+        <span class="s0"># &quot;returns rows&quot;</span>
+        <span class="s2">assert </span><span class="s1">r.returns_rows</span>
+
+        <span class="s0"># and we should be able to fetchone() on it, we just get no row</span>
+        <span class="s1">eq_(r.fetchone()</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+
+        <span class="s0"># and the keys, etc.</span>
+        <span class="s1">eq_(r.keys()</span><span class="s4">, </span><span class="s1">[</span><span class="s3">&quot;id&quot;</span><span class="s1">])</span>
+
+        <span class="s0"># but the dialect took in the row already.   not really sure</span>
+        <span class="s0"># what the best behavior is.</span>
+
+    <span class="s1">@requirements.empty_inserts</span>
+    <span class="s2">def </span><span class="s1">test_empty_insert(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(self.tables.autoinc_pk.insert())</span>
+        <span class="s2">assert </span><span class="s1">r._soft_closed</span>
+        <span class="s2">assert not </span><span class="s1">r.closed</span>
+
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">self.tables.autoinc_pk.select().where(</span>
+                <span class="s1">self.tables.autoinc_pk.c.id != </span><span class="s2">None</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(len(r.all())</span><span class="s4">, </span><span class="s5">1</span><span class="s1">)</span>
+
+    <span class="s1">@requirements.empty_inserts_executemany</span>
+    <span class="s2">def </span><span class="s1">test_empty_insert_multiple(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(self.tables.autoinc_pk.insert()</span><span class="s4">, </span><span class="s1">[{}</span><span class="s4">, </span><span class="s1">{}</span><span class="s4">, </span><span class="s1">{}])</span>
+        <span class="s2">assert </span><span class="s1">r._soft_closed</span>
+        <span class="s2">assert not </span><span class="s1">r.closed</span>
+
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">self.tables.autoinc_pk.select().where(</span>
+                <span class="s1">self.tables.autoinc_pk.c.id != </span><span class="s2">None</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">eq_(len(r.all())</span><span class="s4">, </span><span class="s5">3</span><span class="s1">)</span>
+
+    <span class="s1">@requirements.insert_from_select</span>
+    <span class="s2">def </span><span class="s1">test_insert_from_select_autoinc(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">src_table = self.tables.manual_pk</span>
+        <span class="s1">dest_table = self.tables.autoinc_pk</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">src_table.insert()</span><span class="s4">,</span>
+            <span class="s1">[</span>
+                <span class="s1">dict(id=</span><span class="s5">1</span><span class="s4">, </span><span class="s1">data=</span><span class="s3">&quot;data1&quot;</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">dict(id=</span><span class="s5">2</span><span class="s4">, </span><span class="s1">data=</span><span class="s3">&quot;data2&quot;</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">dict(id=</span><span class="s5">3</span><span class="s4">, </span><span class="s1">data=</span><span class="s3">&quot;data3&quot;</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">dest_table.insert().from_select(</span>
+                <span class="s1">(</span><span class="s3">&quot;data&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">select(src_table.c.data).where(</span>
+                    <span class="s1">src_table.c.data.in_([</span><span class="s3">&quot;data2&quot;</span><span class="s4">, </span><span class="s3">&quot;data3&quot;</span><span class="s1">])</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">eq_(result.inserted_primary_key</span><span class="s4">, </span><span class="s1">(</span><span class="s2">None</span><span class="s4">,</span><span class="s1">))</span>
+
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">select(dest_table.c.data).order_by(dest_table.c.data)</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(result.fetchall()</span><span class="s4">, </span><span class="s1">[(</span><span class="s3">&quot;data2&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;data3&quot;</span><span class="s4">,</span><span class="s1">)])</span>
+
+    <span class="s1">@requirements.insert_from_select</span>
+    <span class="s2">def </span><span class="s1">test_insert_from_select_autoinc_no_rows(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">src_table = self.tables.manual_pk</span>
+        <span class="s1">dest_table = self.tables.autoinc_pk</span>
+
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">dest_table.insert().from_select(</span>
+                <span class="s1">(</span><span class="s3">&quot;data&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">select(src_table.c.data).where(</span>
+                    <span class="s1">src_table.c.data.in_([</span><span class="s3">&quot;data2&quot;</span><span class="s4">, </span><span class="s3">&quot;data3&quot;</span><span class="s1">])</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(result.inserted_primary_key</span><span class="s4">, </span><span class="s1">(</span><span class="s2">None</span><span class="s4">,</span><span class="s1">))</span>
+
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">select(dest_table.c.data).order_by(dest_table.c.data)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">eq_(result.fetchall()</span><span class="s4">, </span><span class="s1">[])</span>
+
+    <span class="s1">@requirements.insert_from_select</span>
+    <span class="s2">def </span><span class="s1">test_insert_from_select(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">table = self.tables.manual_pk</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">table.insert()</span><span class="s4">,</span>
+            <span class="s1">[</span>
+                <span class="s1">dict(id=</span><span class="s5">1</span><span class="s4">, </span><span class="s1">data=</span><span class="s3">&quot;data1&quot;</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">dict(id=</span><span class="s5">2</span><span class="s4">, </span><span class="s1">data=</span><span class="s3">&quot;data2&quot;</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">dict(id=</span><span class="s5">3</span><span class="s4">, </span><span class="s1">data=</span><span class="s3">&quot;data3&quot;</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">connection.execute(</span>
+            <span class="s1">table.insert()</span>
+            <span class="s1">.inline()</span>
+            <span class="s1">.from_select(</span>
+                <span class="s1">(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">select(table.c.id + </span><span class="s5">5</span><span class="s4">, </span><span class="s1">table.c.data).where(</span>
+                    <span class="s1">table.c.data.in_([</span><span class="s3">&quot;data2&quot;</span><span class="s4">, </span><span class="s3">&quot;data3&quot;</span><span class="s1">])</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">eq_(</span>
+            <span class="s1">connection.execute(</span>
+                <span class="s1">select(table.c.data).order_by(table.c.data)</span>
+            <span class="s1">).fetchall()</span><span class="s4">,</span>
+            <span class="s1">[(</span><span class="s3">&quot;data1&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;data2&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;data2&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;data3&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;data3&quot;</span><span class="s4">,</span><span class="s1">)]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@requirements.insert_from_select</span>
+    <span class="s2">def </span><span class="s1">test_insert_from_select_with_defaults(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">table = self.tables.includes_defaults</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">table.insert()</span><span class="s4">,</span>
+            <span class="s1">[</span>
+                <span class="s1">dict(id=</span><span class="s5">1</span><span class="s4">, </span><span class="s1">data=</span><span class="s3">&quot;data1&quot;</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">dict(id=</span><span class="s5">2</span><span class="s4">, </span><span class="s1">data=</span><span class="s3">&quot;data2&quot;</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">dict(id=</span><span class="s5">3</span><span class="s4">, </span><span class="s1">data=</span><span class="s3">&quot;data3&quot;</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">connection.execute(</span>
+            <span class="s1">table.insert()</span>
+            <span class="s1">.inline()</span>
+            <span class="s1">.from_select(</span>
+                <span class="s1">(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">select(table.c.id + </span><span class="s5">5</span><span class="s4">, </span><span class="s1">table.c.data).where(</span>
+                    <span class="s1">table.c.data.in_([</span><span class="s3">&quot;data2&quot;</span><span class="s4">, </span><span class="s3">&quot;data3&quot;</span><span class="s1">])</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">eq_(</span>
+            <span class="s1">connection.execute(</span>
+                <span class="s1">select(table).order_by(table.c.data</span><span class="s4">, </span><span class="s1">table.c.id)</span>
+            <span class="s1">).fetchall()</span><span class="s4">,</span>
+            <span class="s1">[</span>
+                <span class="s1">(</span><span class="s5">1</span><span class="s4">, </span><span class="s3">&quot;data1&quot;</span><span class="s4">, </span><span class="s5">5</span><span class="s4">, </span><span class="s5">4</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">(</span><span class="s5">2</span><span class="s4">, </span><span class="s3">&quot;data2&quot;</span><span class="s4">, </span><span class="s5">5</span><span class="s4">, </span><span class="s5">4</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">(</span><span class="s5">7</span><span class="s4">, </span><span class="s3">&quot;data2&quot;</span><span class="s4">, </span><span class="s5">5</span><span class="s4">, </span><span class="s5">4</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">(</span><span class="s5">3</span><span class="s4">, </span><span class="s3">&quot;data3&quot;</span><span class="s4">, </span><span class="s5">5</span><span class="s4">, </span><span class="s5">4</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">(</span><span class="s5">8</span><span class="s4">, </span><span class="s3">&quot;data3&quot;</span><span class="s4">, </span><span class="s5">5</span><span class="s4">, </span><span class="s5">4</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">ReturningTest(fixtures.TablesTest):</span>
+    <span class="s1">run_create_tables = </span><span class="s3">&quot;each&quot;</span>
+    <span class="s1">__requires__ = </span><span class="s3">&quot;insert_returning&quot;</span><span class="s4">, </span><span class="s3">&quot;autoincrement_insert&quot;</span>
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_assert_round_trip(self</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">conn):</span>
+        <span class="s1">row = conn.execute(table.select()).first()</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">row</span><span class="s4">,</span>
+            <span class="s1">(</span>
+                <span class="s1">conn.dialect.default_sequence_base</span><span class="s4">,</span>
+                <span class="s3">&quot;some data&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s4">, </span><span class="s1">metadata):</span>
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;autoinc_pk&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span>
+                <span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">test_needs_autoincrement=</span><span class="s2">True</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@requirements.fetch_rows_post_commit</span>
+    <span class="s2">def </span><span class="s1">test_explicit_returning_pk_autocommit(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">table = self.tables.autoinc_pk</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">table.insert().returning(table.c.id)</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">pk = r.first()[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s1">fetched_pk = connection.scalar(select(table.c.id))</span>
+        <span class="s1">eq_(fetched_pk</span><span class="s4">, </span><span class="s1">pk)</span>
+
+    <span class="s2">def </span><span class="s1">test_explicit_returning_pk_no_autocommit(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">table = self.tables.autoinc_pk</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">table.insert().returning(table.c.id)</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">pk = r.first()[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s1">fetched_pk = connection.scalar(select(table.c.id))</span>
+        <span class="s1">eq_(fetched_pk</span><span class="s4">, </span><span class="s1">pk)</span>
+
+    <span class="s2">def </span><span class="s1">test_autoincrement_on_insert_implicit_returning(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">self.tables.autoinc_pk.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">self._assert_round_trip(self.tables.autoinc_pk</span><span class="s4">, </span><span class="s1">connection)</span>
+
+    <span class="s2">def </span><span class="s1">test_last_inserted_id_implicit_returning(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">self.tables.autoinc_pk.insert()</span><span class="s4">, </span><span class="s1">dict(data=</span><span class="s3">&quot;some data&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">pk = connection.scalar(select(self.tables.autoinc_pk.c.id))</span>
+        <span class="s1">eq_(r.inserted_primary_key</span><span class="s4">, </span><span class="s1">(pk</span><span class="s4">,</span><span class="s1">))</span>
+
+    <span class="s1">@requirements.insert_executemany_returning</span>
+    <span class="s2">def </span><span class="s1">test_insertmanyvalues_returning(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">r = connection.execute(</span>
+            <span class="s1">self.tables.autoinc_pk.insert().returning(</span>
+                <span class="s1">self.tables.autoinc_pk.c.id</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">[</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d1&quot;</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d2&quot;</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d3&quot;</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d4&quot;</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d5&quot;</span><span class="s1">}</span><span class="s4">,</span>
+            <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">rall = r.all()</span>
+
+        <span class="s1">pks = connection.execute(select(self.tables.autoinc_pk.c.id))</span>
+
+        <span class="s1">eq_(rall</span><span class="s4">, </span><span class="s1">pks.all())</span>
+
+    <span class="s1">@testing.combinations(</span>
+        <span class="s1">(Double()</span><span class="s4">, </span><span class="s5">8.5514716</span><span class="s4">, </span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s1">Double(</span><span class="s5">53</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s5">8.5514716</span><span class="s4">,</span>
+            <span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">testing.requires.float_or_double_precision_behaves_generically</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(Float()</span><span class="s4">, </span><span class="s5">8.5514</span><span class="s4">, </span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s1">Float(</span><span class="s5">8</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s5">8.5514</span><span class="s4">,</span>
+            <span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">testing.requires.float_or_double_precision_behaves_generically</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s1">Numeric(precision=</span><span class="s5">15</span><span class="s4">, </span><span class="s1">scale=</span><span class="s5">12</span><span class="s4">, </span><span class="s1">asdecimal=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s5">8.5514716</span><span class="s4">,</span>
+            <span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">testing.requires.literal_float_coercion</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s1">Numeric(precision=</span><span class="s5">15</span><span class="s4">, </span><span class="s1">scale=</span><span class="s5">12</span><span class="s4">, </span><span class="s1">asdecimal=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Decimal(</span><span class="s3">&quot;8.5514716&quot;</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">argnames=</span><span class="s3">&quot;type_,value,do_rounding&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">@testing.variation(</span><span class="s3">&quot;sort_by_parameter_order&quot;</span><span class="s4">, </span><span class="s1">[</span><span class="s2">True</span><span class="s4">, </span><span class="s2">False</span><span class="s1">])</span>
+    <span class="s1">@testing.variation(</span><span class="s3">&quot;multiple_rows&quot;</span><span class="s4">, </span><span class="s1">[</span><span class="s2">True</span><span class="s4">, </span><span class="s2">False</span><span class="s1">])</span>
+    <span class="s2">def </span><span class="s1">test_insert_w_floats(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">connection</span><span class="s4">,</span>
+        <span class="s1">metadata</span><span class="s4">,</span>
+        <span class="s1">sort_by_parameter_order</span><span class="s4">,</span>
+        <span class="s1">type_</span><span class="s4">,</span>
+        <span class="s1">value</span><span class="s4">,</span>
+        <span class="s1">do_rounding</span><span class="s4">,</span>
+        <span class="s1">multiple_rows</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s6">&quot;&quot;&quot;test #9701. 
+ 
+        this tests insertmanyvalues as well as decimal / floating point 
+        RETURNING types 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">t = Table(</span>
+            <span class="s0"># Oracle backends seems to be getting confused if</span>
+            <span class="s0"># this table is named the same as the one</span>
+            <span class="s0"># in test_imv_returning_datatypes.  use a different name</span>
+            <span class="s3">&quot;f_t&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">Identity()</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;value&quot;</span><span class="s4">, </span><span class="s1">type_)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">t.create(connection)</span>
+
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">t.insert().returning(</span>
+                <span class="s1">t.c.id</span><span class="s4">,</span>
+                <span class="s1">t.c.value</span><span class="s4">,</span>
+                <span class="s1">sort_by_parameter_order=bool(sort_by_parameter_order)</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">(</span>
+                <span class="s1">[{</span><span class="s3">&quot;value&quot;</span><span class="s1">: value} </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">10</span><span class="s1">)]</span>
+                <span class="s2">if </span><span class="s1">multiple_rows</span>
+                <span class="s2">else </span><span class="s1">{</span><span class="s3">&quot;value&quot;</span><span class="s1">: value}</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">multiple_rows:</span>
+            <span class="s1">i_range = range(</span><span class="s5">1</span><span class="s4">, </span><span class="s5">11</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">i_range = range(</span><span class="s5">1</span><span class="s4">, </span><span class="s5">2</span><span class="s1">)</span>
+
+        <span class="s0"># we want to test only that we are getting floating points back</span>
+        <span class="s0"># with some degree of the original value maintained, that it is not</span>
+        <span class="s0"># being truncated to an integer.  there's too much variation in how</span>
+        <span class="s0"># drivers return floats, which should not be relied upon to be</span>
+        <span class="s0"># exact, for us to just compare as is (works for PG drivers but not</span>
+        <span class="s0"># others) so we use rounding here.  There's precedent for this</span>
+        <span class="s0"># in suite/test_types.py::NumericTest as well</span>
+
+        <span class="s2">if </span><span class="s1">do_rounding:</span>
+            <span class="s1">eq_(</span>
+                <span class="s1">{(id_</span><span class="s4">, </span><span class="s1">round(val_</span><span class="s4">, </span><span class="s5">5</span><span class="s1">)) </span><span class="s2">for </span><span class="s1">id_</span><span class="s4">, </span><span class="s1">val_ </span><span class="s2">in </span><span class="s1">result}</span><span class="s4">,</span>
+                <span class="s1">{(id_</span><span class="s4">, </span><span class="s1">round(value</span><span class="s4">, </span><span class="s5">5</span><span class="s1">)) </span><span class="s2">for </span><span class="s1">id_ </span><span class="s2">in </span><span class="s1">i_range}</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">eq_(</span>
+                <span class="s1">{</span>
+                    <span class="s1">round(val_</span><span class="s4">, </span><span class="s5">5</span><span class="s1">)</span>
+                    <span class="s2">for </span><span class="s1">val_ </span><span class="s2">in </span><span class="s1">connection.scalars(select(t.c.value))</span>
+                <span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{round(value</span><span class="s4">, </span><span class="s5">5</span><span class="s1">)}</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">eq_(</span>
+                <span class="s1">set(result)</span><span class="s4">,</span>
+                <span class="s1">{(id_</span><span class="s4">, </span><span class="s1">value) </span><span class="s2">for </span><span class="s1">id_ </span><span class="s2">in </span><span class="s1">i_range}</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">eq_(</span>
+                <span class="s1">set(connection.scalars(select(t.c.value)))</span><span class="s4">,</span>
+                <span class="s1">{value}</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@testing.combinations(</span>
+        <span class="s1">(</span>
+            <span class="s3">&quot;non_native_uuid&quot;</span><span class="s4">,</span>
+            <span class="s1">Uuid(native_uuid=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">uuid.uuid4()</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s3">&quot;non_native_uuid_str&quot;</span><span class="s4">,</span>
+            <span class="s1">Uuid(as_uuid=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">native_uuid=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">str(uuid.uuid4())</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s3">&quot;generic_native_uuid&quot;</span><span class="s4">,</span>
+            <span class="s1">Uuid(native_uuid=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">uuid.uuid4()</span><span class="s4">,</span>
+            <span class="s1">testing.requires.uuid_data_type</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s3">&quot;generic_native_uuid_str&quot;</span><span class="s4">,</span>
+            <span class="s1">Uuid(as_uuid=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">native_uuid=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">str(uuid.uuid4())</span><span class="s4">,</span>
+            <span class="s1">testing.requires.uuid_data_type</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(</span><span class="s3">&quot;UUID&quot;</span><span class="s4">, </span><span class="s1">UUID()</span><span class="s4">, </span><span class="s1">uuid.uuid4()</span><span class="s4">, </span><span class="s1">testing.requires.uuid_data_type)</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s3">&quot;LargeBinary1&quot;</span><span class="s4">,</span>
+            <span class="s1">LargeBinary()</span><span class="s4">,</span>
+            <span class="s7">b&quot;this is binary&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">(</span><span class="s3">&quot;LargeBinary2&quot;</span><span class="s4">, </span><span class="s1">LargeBinary()</span><span class="s4">, </span><span class="s7">b&quot;7</span><span class="s8">\xe7\x9f</span><span class="s7">&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">argnames=</span><span class="s3">&quot;type_,value&quot;</span><span class="s4">,</span>
+        <span class="s1">id_=</span><span class="s3">&quot;iaa&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">@testing.variation(</span><span class="s3">&quot;sort_by_parameter_order&quot;</span><span class="s4">, </span><span class="s1">[</span><span class="s2">True</span><span class="s4">, </span><span class="s2">False</span><span class="s1">])</span>
+    <span class="s1">@testing.variation(</span><span class="s3">&quot;multiple_rows&quot;</span><span class="s4">, </span><span class="s1">[</span><span class="s2">True</span><span class="s4">, </span><span class="s2">False</span><span class="s1">])</span>
+    <span class="s1">@testing.requires.insert_returning</span>
+    <span class="s2">def </span><span class="s1">test_imv_returning_datatypes(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">connection</span><span class="s4">,</span>
+        <span class="s1">metadata</span><span class="s4">,</span>
+        <span class="s1">sort_by_parameter_order</span><span class="s4">,</span>
+        <span class="s1">type_</span><span class="s4">,</span>
+        <span class="s1">value</span><span class="s4">,</span>
+        <span class="s1">multiple_rows</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s6">&quot;&quot;&quot;test #9739, #9808 (similar to #9701). 
+ 
+        this tests insertmanyvalues in conjunction with various datatypes. 
+ 
+        These tests are particularly for the asyncpg driver which needs 
+        most types to be explicitly cast for the new IMV format 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">t = Table(</span>
+            <span class="s3">&quot;d_t&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">Identity()</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;value&quot;</span><span class="s4">, </span><span class="s1">type_)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">t.create(connection)</span>
+
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">t.insert().returning(</span>
+                <span class="s1">t.c.id</span><span class="s4">,</span>
+                <span class="s1">t.c.value</span><span class="s4">,</span>
+                <span class="s1">sort_by_parameter_order=bool(sort_by_parameter_order)</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">(</span>
+                <span class="s1">[{</span><span class="s3">&quot;value&quot;</span><span class="s1">: value} </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">10</span><span class="s1">)]</span>
+                <span class="s2">if </span><span class="s1">multiple_rows</span>
+                <span class="s2">else </span><span class="s1">{</span><span class="s3">&quot;value&quot;</span><span class="s1">: value}</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">multiple_rows:</span>
+            <span class="s1">i_range = range(</span><span class="s5">1</span><span class="s4">, </span><span class="s5">11</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">i_range = range(</span><span class="s5">1</span><span class="s4">, </span><span class="s5">2</span><span class="s1">)</span>
+
+        <span class="s1">eq_(</span>
+            <span class="s1">set(result)</span><span class="s4">,</span>
+            <span class="s1">{(id_</span><span class="s4">, </span><span class="s1">value) </span><span class="s2">for </span><span class="s1">id_ </span><span class="s2">in </span><span class="s1">i_range}</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">eq_(</span>
+            <span class="s1">set(connection.scalars(select(t.c.value)))</span><span class="s4">,</span>
+            <span class="s1">{value}</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s1">__all__ = (</span><span class="s3">&quot;LastrowidTest&quot;</span><span class="s4">, </span><span class="s3">&quot;InsertBehaviorTest&quot;</span><span class="s4">, </span><span class="s3">&quot;ReturningTest&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

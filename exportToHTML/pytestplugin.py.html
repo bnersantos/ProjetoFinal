@@ -1,0 +1,892 @@
+<html>
+<head>
+<title>pytestplugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pytestplugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/plugin/pytestplugin.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">argparse</span>
+<span class="s2">import </span><span class="s1">collections</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">update_wrapper</span>
+<span class="s2">import </span><span class="s1">inspect</span>
+<span class="s2">import </span><span class="s1">itertools</span>
+<span class="s2">import </span><span class="s1">operator</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">import </span><span class="s1">uuid</span>
+
+<span class="s2">import </span><span class="s1">pytest</span>
+
+<span class="s2">try</span><span class="s1">:</span>
+    <span class="s0"># installed by bootstrap.py</span>
+    <span class="s2">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s2">import </span><span class="s1">sqla_plugin_base </span><span class="s2">as </span><span class="s1">plugin_base</span>
+<span class="s2">except </span><span class="s1">ImportError:</span>
+    <span class="s0"># assume we're a package, use traditional import</span>
+    <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">plugin_base</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_addoption(parser):</span>
+    <span class="s1">group = parser.getgroup(</span><span class="s3">&quot;sqlalchemy&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">make_option(name</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">callback_ = kw.pop(</span><span class="s3">&quot;callback&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">callback_:</span>
+
+            <span class="s2">class </span><span class="s1">CallableAction(argparse.Action):</span>
+                <span class="s2">def </span><span class="s1">__call__(</span>
+                    <span class="s1">self</span><span class="s4">, </span><span class="s1">parser</span><span class="s4">, </span><span class="s1">namespace</span><span class="s4">, </span><span class="s1">values</span><span class="s4">, </span><span class="s1">option_string=</span><span class="s2">None</span>
+                <span class="s1">):</span>
+                    <span class="s1">callback_(option_string</span><span class="s4">, </span><span class="s1">values</span><span class="s4">, </span><span class="s1">parser)</span>
+
+            <span class="s1">kw[</span><span class="s3">&quot;action&quot;</span><span class="s1">] = CallableAction</span>
+
+        <span class="s1">zeroarg_callback = kw.pop(</span><span class="s3">&quot;zeroarg_callback&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">zeroarg_callback:</span>
+
+            <span class="s2">class </span><span class="s1">CallableAction(argparse.Action):</span>
+                <span class="s2">def </span><span class="s1">__init__(</span>
+                    <span class="s1">self</span><span class="s4">,</span>
+                    <span class="s1">option_strings</span><span class="s4">,</span>
+                    <span class="s1">dest</span><span class="s4">,</span>
+                    <span class="s1">default=</span><span class="s2">False</span><span class="s4">,</span>
+                    <span class="s1">required=</span><span class="s2">False</span><span class="s4">,</span>
+                    <span class="s1">help=</span><span class="s2">None</span><span class="s4">,  </span><span class="s0"># noqa</span>
+                <span class="s1">):</span>
+                    <span class="s1">super().__init__(</span>
+                        <span class="s1">option_strings=option_strings</span><span class="s4">,</span>
+                        <span class="s1">dest=dest</span><span class="s4">,</span>
+                        <span class="s1">nargs=</span><span class="s5">0</span><span class="s4">,</span>
+                        <span class="s1">const=</span><span class="s2">True</span><span class="s4">,</span>
+                        <span class="s1">default=default</span><span class="s4">,</span>
+                        <span class="s1">required=required</span><span class="s4">,</span>
+                        <span class="s1">help=help</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+
+                <span class="s2">def </span><span class="s1">__call__(</span>
+                    <span class="s1">self</span><span class="s4">, </span><span class="s1">parser</span><span class="s4">, </span><span class="s1">namespace</span><span class="s4">, </span><span class="s1">values</span><span class="s4">, </span><span class="s1">option_string=</span><span class="s2">None</span>
+                <span class="s1">):</span>
+                    <span class="s1">zeroarg_callback(option_string</span><span class="s4">, </span><span class="s1">values</span><span class="s4">, </span><span class="s1">parser)</span>
+
+            <span class="s1">kw[</span><span class="s3">&quot;action&quot;</span><span class="s1">] = CallableAction</span>
+
+        <span class="s1">group.addoption(name</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s1">plugin_base.setup_options(make_option)</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_configure(config: pytest.Config):</span>
+    <span class="s1">plugin_base.read_config(config.rootpath)</span>
+    <span class="s2">if </span><span class="s1">plugin_base.exclude_tags </span><span class="s2">or </span><span class="s1">plugin_base.include_tags:</span>
+        <span class="s1">new_expr = </span><span class="s3">&quot; and &quot;</span><span class="s1">.join(</span>
+            <span class="s1">list(plugin_base.include_tags)</span>
+            <span class="s1">+ [</span><span class="s3">f&quot;not </span><span class="s6">{</span><span class="s1">tag</span><span class="s6">}</span><span class="s3">&quot; </span><span class="s2">for </span><span class="s1">tag </span><span class="s2">in </span><span class="s1">plugin_base.exclude_tags]</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">config.option.markexpr:</span>
+            <span class="s1">config.option.markexpr += </span><span class="s3">f&quot; and </span><span class="s6">{</span><span class="s1">new_expr</span><span class="s6">}</span><span class="s3">&quot;</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">config.option.markexpr = new_expr</span>
+
+    <span class="s2">if </span><span class="s1">config.pluginmanager.hasplugin(</span><span class="s3">&quot;xdist&quot;</span><span class="s1">):</span>
+        <span class="s1">config.pluginmanager.register(XDistHooks())</span>
+
+    <span class="s2">if </span><span class="s1">hasattr(config</span><span class="s4">, </span><span class="s3">&quot;workerinput&quot;</span><span class="s1">):</span>
+        <span class="s1">plugin_base.restore_important_follower_config(config.workerinput)</span>
+        <span class="s1">plugin_base.configure_follower(config.workerinput[</span><span class="s3">&quot;follower_ident&quot;</span><span class="s1">])</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">config.option.write_idents </span><span class="s2">and </span><span class="s1">os.path.exists(</span>
+            <span class="s1">config.option.write_idents</span>
+        <span class="s1">):</span>
+            <span class="s1">os.remove(config.option.write_idents)</span>
+
+    <span class="s1">plugin_base.pre_begin(config.option)</span>
+
+    <span class="s1">plugin_base.set_coverage_flag(</span>
+        <span class="s1">bool(getattr(config.option</span><span class="s4">, </span><span class="s3">&quot;cov_source&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">))</span>
+    <span class="s1">)</span>
+
+    <span class="s1">plugin_base.set_fixture_functions(PytestFixtureFunctions)</span>
+
+    <span class="s2">if </span><span class="s1">config.option.dump_pyannotate:</span>
+        <span class="s2">global </span><span class="s1">DUMP_PYANNOTATE</span>
+        <span class="s1">DUMP_PYANNOTATE = </span><span class="s2">True</span>
+
+
+<span class="s1">DUMP_PYANNOTATE = </span><span class="s2">False</span>
+
+
+<span class="s1">@pytest.fixture(autouse=</span><span class="s2">True</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">collect_types_fixture():</span>
+    <span class="s2">if </span><span class="s1">DUMP_PYANNOTATE:</span>
+        <span class="s2">from </span><span class="s1">pyannotate_runtime </span><span class="s2">import </span><span class="s1">collect_types</span>
+
+        <span class="s1">collect_types.start()</span>
+    <span class="s2">yield</span>
+    <span class="s2">if </span><span class="s1">DUMP_PYANNOTATE:</span>
+        <span class="s1">collect_types.stop()</span>
+
+
+<span class="s2">def </span><span class="s1">_log_sqlalchemy_info(session):</span>
+    <span class="s2">import </span><span class="s1">sqlalchemy</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy </span><span class="s2">import </span><span class="s1">__version__</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.util </span><span class="s2">import </span><span class="s1">has_compiled_ext</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.util._has_cy </span><span class="s2">import </span><span class="s1">_CYEXTENSION_MSG</span>
+
+    <span class="s1">greet = </span><span class="s3">&quot;sqlalchemy installation&quot;</span>
+    <span class="s1">site = </span><span class="s3">&quot;no user site&quot; </span><span class="s2">if </span><span class="s1">sys.flags.no_user_site </span><span class="s2">else </span><span class="s3">&quot;user site loaded&quot;</span>
+    <span class="s1">msgs = [</span>
+        <span class="s3">f&quot;SQLAlchemy </span><span class="s6">{</span><span class="s1">__version__</span><span class="s6">} </span><span class="s3">(</span><span class="s6">{</span><span class="s1">site</span><span class="s6">}</span><span class="s3">)&quot;</span><span class="s4">,</span>
+        <span class="s3">f&quot;Path: </span><span class="s6">{</span><span class="s1">sqlalchemy.__file__</span><span class="s6">}</span><span class="s3">&quot;</span><span class="s4">,</span>
+    <span class="s1">]</span>
+
+    <span class="s2">if </span><span class="s1">has_compiled_ext():</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.cyextension </span><span class="s2">import </span><span class="s1">util</span>
+
+        <span class="s1">msgs.append(</span><span class="s3">f&quot;compiled extension enabled, e.g. </span><span class="s6">{</span><span class="s1">util.__file__</span><span class="s6">} </span><span class="s3">&quot;</span><span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">msgs.append(</span><span class="s3">f&quot;compiled extension not enabled; </span><span class="s6">{</span><span class="s1">_CYEXTENSION_MSG</span><span class="s6">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+
+    <span class="s1">pm = session.config.pluginmanager.get_plugin(</span><span class="s3">&quot;terminalreporter&quot;</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">pm:</span>
+        <span class="s1">pm.write_sep(</span><span class="s3">&quot;=&quot;</span><span class="s4">, </span><span class="s1">greet)</span>
+        <span class="s2">for </span><span class="s1">m </span><span class="s2">in </span><span class="s1">msgs:</span>
+            <span class="s1">pm.write_line(m)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s0"># fancy pants reporter not found, fallback to plain print</span>
+        <span class="s1">print(</span><span class="s3">&quot;=&quot; </span><span class="s1">* </span><span class="s5">25</span><span class="s4">, </span><span class="s1">greet</span><span class="s4">, </span><span class="s3">&quot;=&quot; </span><span class="s1">* </span><span class="s5">25</span><span class="s1">)</span>
+        <span class="s2">for </span><span class="s1">m </span><span class="s2">in </span><span class="s1">msgs:</span>
+            <span class="s1">print(m)</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_sessionstart(session):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s1">_log_sqlalchemy_info(session)</span>
+    <span class="s1">asyncio._assume_async(plugin_base.post_begin)</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_sessionfinish(session):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s1">asyncio._maybe_async_provisioning(plugin_base.final_process_cleanup)</span>
+
+    <span class="s2">if </span><span class="s1">session.config.option.dump_pyannotate:</span>
+        <span class="s2">from </span><span class="s1">pyannotate_runtime </span><span class="s2">import </span><span class="s1">collect_types</span>
+
+        <span class="s1">collect_types.dump_stats(session.config.option.dump_pyannotate)</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_unconfigure(config):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s1">asyncio._shutdown()</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_collection_finish(session):</span>
+    <span class="s2">if </span><span class="s1">session.config.option.dump_pyannotate:</span>
+        <span class="s2">from </span><span class="s1">pyannotate_runtime </span><span class="s2">import </span><span class="s1">collect_types</span>
+
+        <span class="s1">lib_sqlalchemy = os.path.abspath(</span><span class="s3">&quot;lib/sqlalchemy&quot;</span><span class="s1">)</span>
+
+        <span class="s2">def </span><span class="s1">_filter(filename):</span>
+            <span class="s1">filename = os.path.normpath(os.path.abspath(filename))</span>
+            <span class="s2">if </span><span class="s3">&quot;lib/sqlalchemy&quot; </span><span class="s2">not in </span><span class="s1">os.path.commonpath(</span>
+                <span class="s1">[filename</span><span class="s4">, </span><span class="s1">lib_sqlalchemy]</span>
+            <span class="s1">):</span>
+                <span class="s2">return None</span>
+            <span class="s2">if </span><span class="s3">&quot;testing&quot; </span><span class="s2">in </span><span class="s1">filename:</span>
+                <span class="s2">return None</span>
+
+            <span class="s2">return </span><span class="s1">filename</span>
+
+        <span class="s1">collect_types.init_types_collection(filter_filename=_filter)</span>
+
+
+<span class="s2">class </span><span class="s1">XDistHooks:</span>
+    <span class="s2">def </span><span class="s1">pytest_configure_node(self</span><span class="s4">, </span><span class="s1">node):</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">provision</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+        <span class="s0"># the master for each node fills workerinput dictionary</span>
+        <span class="s0"># which pytest-xdist will transfer to the subprocess</span>
+
+        <span class="s1">plugin_base.memoize_important_follower_config(node.workerinput)</span>
+
+        <span class="s1">node.workerinput[</span><span class="s3">&quot;follower_ident&quot;</span><span class="s1">] = </span><span class="s3">&quot;test_%s&quot; </span><span class="s1">% uuid.uuid4().hex[</span><span class="s5">0</span><span class="s1">:</span><span class="s5">12</span><span class="s1">]</span>
+
+        <span class="s1">asyncio._maybe_async_provisioning(</span>
+            <span class="s1">provision.create_follower_db</span><span class="s4">, </span><span class="s1">node.workerinput[</span><span class="s3">&quot;follower_ident&quot;</span><span class="s1">]</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">pytest_testnodedown(self</span><span class="s4">, </span><span class="s1">node</span><span class="s4">, </span><span class="s1">error):</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">provision</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+        <span class="s1">asyncio._maybe_async_provisioning(</span>
+            <span class="s1">provision.drop_follower_db</span><span class="s4">, </span><span class="s1">node.workerinput[</span><span class="s3">&quot;follower_ident&quot;</span><span class="s1">]</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_collection_modifyitems(session</span><span class="s4">, </span><span class="s1">config</span><span class="s4">, </span><span class="s1">items):</span>
+    <span class="s0"># look for all those classes that specify __backend__ and</span>
+    <span class="s0"># expand them out into per-database test cases.</span>
+
+    <span class="s0"># this is much easier to do within pytest_pycollect_makeitem, however</span>
+    <span class="s0"># pytest is iterating through cls.__dict__ as makeitem is</span>
+    <span class="s0"># called which causes a &quot;dictionary changed size&quot; error on py3k.</span>
+    <span class="s0"># I'd submit a pullreq for them to turn it into a list first, but</span>
+    <span class="s0"># it's to suit the rather odd use case here which is that we are adding</span>
+    <span class="s0"># new classes to a module on the fly.</span>
+
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s1">rebuilt_items = collections.defaultdict(</span>
+        <span class="s2">lambda</span><span class="s1">: collections.defaultdict(list)</span>
+    <span class="s1">)</span>
+
+    <span class="s1">items[:] = [</span>
+        <span class="s1">item</span>
+        <span class="s2">for </span><span class="s1">item </span><span class="s2">in </span><span class="s1">items</span>
+        <span class="s2">if </span><span class="s1">item.getparent(pytest.Class) </span><span class="s2">is not None</span>
+        <span class="s2">and not </span><span class="s1">item.getparent(pytest.Class).name.startswith(</span><span class="s3">&quot;_&quot;</span><span class="s1">)</span>
+    <span class="s1">]</span>
+
+    <span class="s1">test_classes = {item.getparent(pytest.Class) </span><span class="s2">for </span><span class="s1">item </span><span class="s2">in </span><span class="s1">items}</span>
+
+    <span class="s2">def </span><span class="s1">collect(element):</span>
+        <span class="s2">for </span><span class="s1">inst_or_fn </span><span class="s2">in </span><span class="s1">element.collect():</span>
+            <span class="s2">if </span><span class="s1">isinstance(inst_or_fn</span><span class="s4">, </span><span class="s1">pytest.Collector):</span>
+                <span class="s2">yield from </span><span class="s1">collect(inst_or_fn)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">yield </span><span class="s1">inst_or_fn</span>
+
+    <span class="s2">def </span><span class="s1">setup_test_classes():</span>
+        <span class="s2">for </span><span class="s1">test_class </span><span class="s2">in </span><span class="s1">test_classes:</span>
+            <span class="s0"># transfer legacy __backend__ and __sparse_backend__ symbols</span>
+            <span class="s0"># to be markers</span>
+            <span class="s1">add_markers = set()</span>
+            <span class="s2">if </span><span class="s1">getattr(test_class.cls</span><span class="s4">, </span><span class="s3">&quot;__backend__&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">) </span><span class="s2">or </span><span class="s1">getattr(</span>
+                <span class="s1">test_class.cls</span><span class="s4">, </span><span class="s3">&quot;__only_on__&quot;</span><span class="s4">, </span><span class="s2">False</span>
+            <span class="s1">):</span>
+                <span class="s1">add_markers = {</span><span class="s3">&quot;backend&quot;</span><span class="s1">}</span>
+            <span class="s2">elif </span><span class="s1">getattr(test_class.cls</span><span class="s4">, </span><span class="s3">&quot;__sparse_backend__&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">):</span>
+                <span class="s1">add_markers = {</span><span class="s3">&quot;sparse_backend&quot;</span><span class="s1">}</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">add_markers = frozenset()</span>
+
+            <span class="s1">existing_markers = {</span>
+                <span class="s1">mark.name </span><span class="s2">for </span><span class="s1">mark </span><span class="s2">in </span><span class="s1">test_class.iter_markers()</span>
+            <span class="s1">}</span>
+            <span class="s1">add_markers = add_markers - existing_markers</span>
+            <span class="s1">all_markers = existing_markers.union(add_markers)</span>
+
+            <span class="s2">for </span><span class="s1">marker </span><span class="s2">in </span><span class="s1">add_markers:</span>
+                <span class="s1">test_class.add_marker(marker)</span>
+
+            <span class="s2">for </span><span class="s1">sub_cls </span><span class="s2">in </span><span class="s1">plugin_base.generate_sub_tests(</span>
+                <span class="s1">test_class.cls</span><span class="s4">, </span><span class="s1">test_class.module</span><span class="s4">, </span><span class="s1">all_markers</span>
+            <span class="s1">):</span>
+                <span class="s2">if </span><span class="s1">sub_cls </span><span class="s2">is not </span><span class="s1">test_class.cls:</span>
+                    <span class="s1">per_cls_dict = rebuilt_items[test_class.cls]</span>
+
+                    <span class="s1">module = test_class.getparent(pytest.Module)</span>
+
+                    <span class="s1">new_cls = pytest.Class.from_parent(</span>
+                        <span class="s1">name=sub_cls.__name__</span><span class="s4">, </span><span class="s1">parent=module</span>
+                    <span class="s1">)</span>
+                    <span class="s2">for </span><span class="s1">marker </span><span class="s2">in </span><span class="s1">add_markers:</span>
+                        <span class="s1">new_cls.add_marker(marker)</span>
+
+                    <span class="s2">for </span><span class="s1">fn </span><span class="s2">in </span><span class="s1">collect(new_cls):</span>
+                        <span class="s1">per_cls_dict[fn.name].append(fn)</span>
+
+    <span class="s0"># class requirements will sometimes need to access the DB to check</span>
+    <span class="s0"># capabilities, so need to do this for async</span>
+    <span class="s1">asyncio._maybe_async_provisioning(setup_test_classes)</span>
+
+    <span class="s1">newitems = []</span>
+    <span class="s2">for </span><span class="s1">item </span><span class="s2">in </span><span class="s1">items:</span>
+        <span class="s1">cls_ = item.cls</span>
+        <span class="s2">if </span><span class="s1">cls_ </span><span class="s2">in </span><span class="s1">rebuilt_items:</span>
+            <span class="s1">newitems.extend(rebuilt_items[cls_][item.name])</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">newitems.append(item)</span>
+
+    <span class="s0"># seems like the functions attached to a test class aren't sorted already?</span>
+    <span class="s0"># is that true and why's that? (when using unittest, they're sorted)</span>
+    <span class="s1">items[:] = sorted(</span>
+        <span class="s1">newitems</span><span class="s4">,</span>
+        <span class="s1">key=</span><span class="s2">lambda </span><span class="s1">item: (</span>
+            <span class="s1">item.getparent(pytest.Module).name</span><span class="s4">,</span>
+            <span class="s1">item.getparent(pytest.Class).name</span><span class="s4">,</span>
+            <span class="s1">item.name</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_pycollect_makeitem(collector</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">obj):</span>
+    <span class="s2">if </span><span class="s1">inspect.isclass(obj) </span><span class="s2">and </span><span class="s1">plugin_base.want_class(name</span><span class="s4">, </span><span class="s1">obj):</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">config</span>
+
+        <span class="s2">if </span><span class="s1">config.any_async:</span>
+            <span class="s1">obj = _apply_maybe_async(obj)</span>
+
+        <span class="s2">return </span><span class="s1">[</span>
+            <span class="s1">pytest.Class.from_parent(</span>
+                <span class="s1">name=parametrize_cls.__name__</span><span class="s4">, </span><span class="s1">parent=collector</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">parametrize_cls </span><span class="s2">in </span><span class="s1">_parametrize_cls(collector.module</span><span class="s4">, </span><span class="s1">obj)</span>
+        <span class="s1">]</span>
+    <span class="s2">elif </span><span class="s1">(</span>
+        <span class="s1">inspect.isfunction(obj)</span>
+        <span class="s2">and </span><span class="s1">collector.cls </span><span class="s2">is not None</span>
+        <span class="s2">and </span><span class="s1">plugin_base.want_method(collector.cls</span><span class="s4">, </span><span class="s1">obj)</span>
+    <span class="s1">):</span>
+        <span class="s0"># None means, fall back to default logic, which includes</span>
+        <span class="s0"># method-level parametrize</span>
+        <span class="s2">return None</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s0"># empty list means skip this item</span>
+        <span class="s2">return </span><span class="s1">[]</span>
+
+
+<span class="s2">def </span><span class="s1">_is_wrapped_coroutine_function(fn):</span>
+    <span class="s2">while </span><span class="s1">hasattr(fn</span><span class="s4">, </span><span class="s3">&quot;__wrapped__&quot;</span><span class="s1">):</span>
+        <span class="s1">fn = fn.__wrapped__</span>
+
+    <span class="s2">return </span><span class="s1">inspect.iscoroutinefunction(fn)</span>
+
+
+<span class="s2">def </span><span class="s1">_apply_maybe_async(obj</span><span class="s4">, </span><span class="s1">recurse=</span><span class="s2">True</span><span class="s1">):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s2">for </span><span class="s1">name</span><span class="s4">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">vars(obj).items():</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">(callable(value) </span><span class="s2">or </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">classmethod))</span>
+            <span class="s2">and not </span><span class="s1">getattr(value</span><span class="s4">, </span><span class="s3">&quot;_maybe_async_applied&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+            <span class="s2">and </span><span class="s1">(name.startswith(</span><span class="s3">&quot;test_&quot;</span><span class="s1">))</span>
+            <span class="s2">and not </span><span class="s1">_is_wrapped_coroutine_function(value)</span>
+        <span class="s1">):</span>
+            <span class="s1">is_classmethod = </span><span class="s2">False</span>
+            <span class="s2">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">classmethod):</span>
+                <span class="s1">value = value.__func__</span>
+                <span class="s1">is_classmethod = </span><span class="s2">True</span>
+
+            <span class="s1">@_pytest_fn_decorator</span>
+            <span class="s2">def </span><span class="s1">make_async(fn</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+                <span class="s2">return </span><span class="s1">asyncio._maybe_async(fn</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+
+            <span class="s1">do_async = make_async(value)</span>
+            <span class="s2">if </span><span class="s1">is_classmethod:</span>
+                <span class="s1">do_async = classmethod(do_async)</span>
+            <span class="s1">do_async._maybe_async_applied = </span><span class="s2">True</span>
+
+            <span class="s1">setattr(obj</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">do_async)</span>
+    <span class="s2">if </span><span class="s1">recurse:</span>
+        <span class="s2">for </span><span class="s1">cls </span><span class="s2">in </span><span class="s1">obj.mro()[</span><span class="s5">1</span><span class="s1">:]:</span>
+            <span class="s2">if </span><span class="s1">cls != object:</span>
+                <span class="s1">_apply_maybe_async(cls</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">obj</span>
+
+
+<span class="s2">def </span><span class="s1">_parametrize_cls(module</span><span class="s4">, </span><span class="s1">cls):</span>
+    <span class="s7">&quot;&quot;&quot;implement a class-based version of pytest parametrize.&quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s3">&quot;_sa_parametrize&quot; </span><span class="s2">not in </span><span class="s1">cls.__dict__:</span>
+        <span class="s2">return </span><span class="s1">[cls]</span>
+
+    <span class="s1">_sa_parametrize = cls._sa_parametrize</span>
+    <span class="s1">classes = []</span>
+    <span class="s2">for </span><span class="s1">full_param_set </span><span class="s2">in </span><span class="s1">itertools.product(</span>
+        <span class="s1">*[params </span><span class="s2">for </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">params </span><span class="s2">in </span><span class="s1">_sa_parametrize]</span>
+    <span class="s1">):</span>
+        <span class="s1">cls_variables = {}</span>
+
+        <span class="s2">for </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">param </span><span class="s2">in </span><span class="s1">zip(</span>
+            <span class="s1">[_sa_param[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">for </span><span class="s1">_sa_param </span><span class="s2">in </span><span class="s1">_sa_parametrize]</span><span class="s4">, </span><span class="s1">full_param_set</span>
+        <span class="s1">):</span>
+            <span class="s2">if not </span><span class="s1">argname:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;need argnames for class-based combinations&quot;</span><span class="s1">)</span>
+            <span class="s1">argname_split = re.split(</span><span class="s3">r&quot;,\s*&quot;</span><span class="s4">, </span><span class="s1">argname)</span>
+            <span class="s2">for </span><span class="s1">arg</span><span class="s4">, </span><span class="s1">val </span><span class="s2">in </span><span class="s1">zip(argname_split</span><span class="s4">, </span><span class="s1">param.values):</span>
+                <span class="s1">cls_variables[arg] = val</span>
+        <span class="s1">parametrized_name = </span><span class="s3">&quot;_&quot;</span><span class="s1">.join(</span>
+            <span class="s1">re.sub(</span><span class="s3">r&quot;\W&quot;</span><span class="s4">, </span><span class="s3">&quot;&quot;</span><span class="s4">, </span><span class="s1">token)</span>
+            <span class="s2">for </span><span class="s1">param </span><span class="s2">in </span><span class="s1">full_param_set</span>
+            <span class="s2">for </span><span class="s1">token </span><span class="s2">in </span><span class="s1">param.id.split(</span><span class="s3">&quot;-&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">name = </span><span class="s3">&quot;%s_%s&quot; </span><span class="s1">% (cls.__name__</span><span class="s4">, </span><span class="s1">parametrized_name)</span>
+        <span class="s1">newcls = type.__new__(type</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">(cls</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">cls_variables)</span>
+        <span class="s1">setattr(module</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">newcls)</span>
+        <span class="s1">classes.append(newcls)</span>
+    <span class="s2">return </span><span class="s1">classes</span>
+
+
+<span class="s1">_current_class = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_runtest_setup(item):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s0"># pytest_runtest_setup runs *before* pytest fixtures with scope=&quot;class&quot;.</span>
+    <span class="s0"># plugin_base.start_test_class_outside_fixtures may opt to raise SkipTest</span>
+    <span class="s0"># for the whole class and has to run things that are across all current</span>
+    <span class="s0"># databases, so we run this outside of the pytest fixture system altogether</span>
+    <span class="s0"># and ensure asyncio greenlet if any engines are async</span>
+
+    <span class="s2">global </span><span class="s1">_current_class</span>
+
+    <span class="s2">if </span><span class="s1">isinstance(item</span><span class="s4">, </span><span class="s1">pytest.Function) </span><span class="s2">and </span><span class="s1">_current_class </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s1">asyncio._maybe_async_provisioning(</span>
+            <span class="s1">plugin_base.start_test_class_outside_fixtures</span><span class="s4">,</span>
+            <span class="s1">item.cls</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">_current_class = item.getparent(pytest.Class)</span>
+
+
+<span class="s1">@pytest.hookimpl(hookwrapper=</span><span class="s2">True</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">pytest_runtest_teardown(item</span><span class="s4">, </span><span class="s1">nextitem):</span>
+    <span class="s0"># runs inside of pytest function fixture scope</span>
+    <span class="s0"># after test function runs</span>
+
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s1">asyncio._maybe_async(plugin_base.after_test</span><span class="s4">, </span><span class="s1">item)</span>
+
+    <span class="s2">yield</span>
+    <span class="s0"># this is now after all the fixture teardown have run, the class can be</span>
+    <span class="s0"># finalized. Since pytest v7 this finalizer can no longer be added in</span>
+    <span class="s0"># pytest_runtest_setup since the class has not yet been setup at that</span>
+    <span class="s0"># time.</span>
+    <span class="s0"># See https://github.com/pytest-dev/pytest/issues/9343</span>
+    <span class="s2">global </span><span class="s1">_current_class</span><span class="s4">, </span><span class="s1">_current_report</span>
+
+    <span class="s2">if </span><span class="s1">_current_class </span><span class="s2">is not None and </span><span class="s1">(</span>
+        <span class="s0"># last test or a new class</span>
+        <span class="s1">nextitem </span><span class="s2">is None</span>
+        <span class="s2">or </span><span class="s1">nextitem.getparent(pytest.Class) </span><span class="s2">is not </span><span class="s1">_current_class</span>
+    <span class="s1">):</span>
+        <span class="s1">_current_class = </span><span class="s2">None</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">asyncio._maybe_async_provisioning(</span>
+                <span class="s1">plugin_base.stop_test_class_outside_fixtures</span><span class="s4">, </span><span class="s1">item.cls</span>
+            <span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s0"># in case of an exception during teardown attach the original</span>
+            <span class="s0"># error to the exception message, otherwise it will get lost</span>
+            <span class="s2">if </span><span class="s1">_current_report.failed:</span>
+                <span class="s2">if not </span><span class="s1">e.args:</span>
+                    <span class="s1">e.args = (</span>
+                        <span class="s3">&quot;__Original test failure__:</span><span class="s6">\n</span><span class="s3">&quot;</span>
+                        <span class="s1">+ _current_report.longreprtext</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                <span class="s2">elif </span><span class="s1">e.args[-</span><span class="s5">1</span><span class="s1">] </span><span class="s2">and </span><span class="s1">isinstance(e.args[-</span><span class="s5">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">str):</span>
+                    <span class="s1">args = list(e.args)</span>
+                    <span class="s1">args[-</span><span class="s5">1</span><span class="s1">] += (</span>
+                        <span class="s3">&quot;</span><span class="s6">\n</span><span class="s3">__Original test failure__:</span><span class="s6">\n</span><span class="s3">&quot;</span>
+                        <span class="s1">+ _current_report.longreprtext</span>
+                    <span class="s1">)</span>
+                    <span class="s1">e.args = tuple(args)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">e.args += (</span>
+                        <span class="s3">&quot;__Original test failure__&quot;</span><span class="s4">,</span>
+                        <span class="s1">_current_report.longreprtext</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+            <span class="s2">raise</span>
+        <span class="s2">finally</span><span class="s1">:</span>
+            <span class="s1">_current_report = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_runtest_call(item):</span>
+    <span class="s0"># runs inside of pytest function fixture scope</span>
+    <span class="s0"># before test function runs</span>
+
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s1">asyncio._maybe_async(</span>
+        <span class="s1">plugin_base.before_test</span><span class="s4">,</span>
+        <span class="s1">item</span><span class="s4">,</span>
+        <span class="s1">item.module.__name__</span><span class="s4">,</span>
+        <span class="s1">item.cls</span><span class="s4">,</span>
+        <span class="s1">item.name</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s1">_current_report = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">pytest_runtest_logreport(report):</span>
+    <span class="s2">global </span><span class="s1">_current_report</span>
+    <span class="s2">if </span><span class="s1">report.when == </span><span class="s3">&quot;call&quot;</span><span class="s1">:</span>
+        <span class="s1">_current_report = report</span>
+
+
+<span class="s1">@pytest.fixture(scope=</span><span class="s3">&quot;class&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">setup_class_methods(request):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s1">cls = request.cls</span>
+
+    <span class="s2">if </span><span class="s1">hasattr(cls</span><span class="s4">, </span><span class="s3">&quot;setup_test_class&quot;</span><span class="s1">):</span>
+        <span class="s1">asyncio._maybe_async(cls.setup_test_class)</span>
+
+    <span class="s2">yield</span>
+
+    <span class="s2">if </span><span class="s1">hasattr(cls</span><span class="s4">, </span><span class="s3">&quot;teardown_test_class&quot;</span><span class="s1">):</span>
+        <span class="s1">asyncio._maybe_async(cls.teardown_test_class)</span>
+
+    <span class="s1">asyncio._maybe_async(plugin_base.stop_test_class</span><span class="s4">, </span><span class="s1">cls)</span>
+
+
+<span class="s1">@pytest.fixture(scope=</span><span class="s3">&quot;function&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">setup_test_methods(request):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+    <span class="s0"># called for each test</span>
+
+    <span class="s1">self = request.instance</span>
+
+    <span class="s0"># before this fixture runs:</span>
+
+    <span class="s0"># 1. function level &quot;autouse&quot; fixtures under py3k (examples: TablesTest</span>
+    <span class="s0">#    define tables / data, MappedTest define tables / mappers / data)</span>
+
+    <span class="s0"># 2. was for p2k. no longer applies</span>
+
+    <span class="s0"># 3. run outer xdist-style setup</span>
+    <span class="s2">if </span><span class="s1">hasattr(self</span><span class="s4">, </span><span class="s3">&quot;setup_test&quot;</span><span class="s1">):</span>
+        <span class="s1">asyncio._maybe_async(self.setup_test)</span>
+
+    <span class="s0"># alembic test suite is using setUp and tearDown</span>
+    <span class="s0"># xdist methods; support these in the test suite</span>
+    <span class="s0"># for the near term</span>
+    <span class="s2">if </span><span class="s1">hasattr(self</span><span class="s4">, </span><span class="s3">&quot;setUp&quot;</span><span class="s1">):</span>
+        <span class="s1">asyncio._maybe_async(self.setUp)</span>
+
+    <span class="s0"># inside the yield:</span>
+    <span class="s0"># 4. function level fixtures defined on test functions themselves,</span>
+    <span class="s0">#    e.g. &quot;connection&quot;, &quot;metadata&quot; run next</span>
+
+    <span class="s0"># 5. pytest hook pytest_runtest_call then runs</span>
+
+    <span class="s0"># 6. test itself runs</span>
+
+    <span class="s2">yield</span>
+
+    <span class="s0"># yield finishes:</span>
+
+    <span class="s0"># 7. function level fixtures defined on test functions</span>
+    <span class="s0">#    themselves, e.g. &quot;connection&quot; rolls back the transaction, &quot;metadata&quot;</span>
+    <span class="s0">#    emits drop all</span>
+
+    <span class="s0"># 8. pytest hook pytest_runtest_teardown hook runs, this is associated</span>
+    <span class="s0">#    with fixtures close all sessions, provisioning.stop_test_class(),</span>
+    <span class="s0">#    engines.testing_reaper -&gt; ensure all connection pool connections</span>
+    <span class="s0">#    are returned, engines created by testing_engine that aren't the</span>
+    <span class="s0">#    config engine are disposed</span>
+
+    <span class="s1">asyncio._maybe_async(plugin_base.after_test_fixtures</span><span class="s4">, </span><span class="s1">self)</span>
+
+    <span class="s0"># 10. run xdist-style teardown</span>
+    <span class="s2">if </span><span class="s1">hasattr(self</span><span class="s4">, </span><span class="s3">&quot;tearDown&quot;</span><span class="s1">):</span>
+        <span class="s1">asyncio._maybe_async(self.tearDown)</span>
+
+    <span class="s2">if </span><span class="s1">hasattr(self</span><span class="s4">, </span><span class="s3">&quot;teardown_test&quot;</span><span class="s1">):</span>
+        <span class="s1">asyncio._maybe_async(self.teardown_test)</span>
+
+    <span class="s0"># 11. was for p2k. no longer applies</span>
+
+    <span class="s0"># 12. function level &quot;autouse&quot; fixtures under py3k (examples: TablesTest /</span>
+    <span class="s0">#    MappedTest delete table data, possibly drop tables and clear mappers</span>
+    <span class="s0">#    depending on the flags defined by the test class)</span>
+
+
+<span class="s2">def </span><span class="s1">_pytest_fn_decorator(target):</span>
+    <span class="s7">&quot;&quot;&quot;Port of langhelpers.decorator with pytest-specific tricks.&quot;&quot;&quot;</span>
+
+    <span class="s2">from </span><span class="s1">sqlalchemy.util.langhelpers </span><span class="s2">import </span><span class="s1">format_argspec_plus</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.util.compat </span><span class="s2">import </span><span class="s1">inspect_getfullargspec</span>
+
+    <span class="s2">def </span><span class="s1">_exec_code_in_env(code</span><span class="s4">, </span><span class="s1">env</span><span class="s4">, </span><span class="s1">fn_name):</span>
+        <span class="s0"># note this is affected by &quot;from __future__ import annotations&quot; at</span>
+        <span class="s0"># the top; exec'ed code will use non-evaluated annotations</span>
+        <span class="s0"># which allows us to be more flexible with code rendering</span>
+        <span class="s0"># in format_argpsec_plus()</span>
+        <span class="s1">exec(code</span><span class="s4">, </span><span class="s1">env)</span>
+        <span class="s2">return </span><span class="s1">env[fn_name]</span>
+
+    <span class="s2">def </span><span class="s1">decorate(fn</span><span class="s4">, </span><span class="s1">add_positional_parameters=()):</span>
+        <span class="s1">spec = inspect_getfullargspec(fn)</span>
+        <span class="s2">if </span><span class="s1">add_positional_parameters:</span>
+            <span class="s1">spec.args.extend(add_positional_parameters)</span>
+
+        <span class="s1">metadata = dict(</span>
+            <span class="s1">__target_fn=</span><span class="s3">&quot;__target_fn&quot;</span><span class="s4">, </span><span class="s1">__orig_fn=</span><span class="s3">&quot;__orig_fn&quot;</span><span class="s4">, </span><span class="s1">name=fn.__name__</span>
+        <span class="s1">)</span>
+        <span class="s1">metadata.update(format_argspec_plus(spec</span><span class="s4">, </span><span class="s1">grouped=</span><span class="s2">False</span><span class="s1">))</span>
+        <span class="s1">code = (</span>
+            <span class="s3">&quot;&quot;&quot;</span><span class="s6">\ 
+</span><span class="s3">def %(name)s%(grouped_args)s: 
+    return %(__target_fn)s(%(__orig_fn)s, %(apply_kw)s) 
+&quot;&quot;&quot;</span>
+            <span class="s1">% metadata</span>
+        <span class="s1">)</span>
+        <span class="s1">decorated = _exec_code_in_env(</span>
+            <span class="s1">code</span><span class="s4">, </span><span class="s1">{</span><span class="s3">&quot;__target_fn&quot;</span><span class="s1">: target</span><span class="s4">, </span><span class="s3">&quot;__orig_fn&quot;</span><span class="s1">: fn}</span><span class="s4">, </span><span class="s1">fn.__name__</span>
+        <span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">add_positional_parameters:</span>
+            <span class="s1">decorated.__defaults__ = getattr(fn</span><span class="s4">, </span><span class="s3">&quot;__func__&quot;</span><span class="s4">, </span><span class="s1">fn).__defaults__</span>
+            <span class="s1">decorated.__wrapped__ = fn</span>
+            <span class="s2">return </span><span class="s1">update_wrapper(decorated</span><span class="s4">, </span><span class="s1">fn)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># this is the pytest hacky part.  don't do a full update wrapper</span>
+            <span class="s0"># because pytest is really being sneaky about finding the args</span>
+            <span class="s0"># for the wrapped function</span>
+            <span class="s1">decorated.__module__ = fn.__module__</span>
+            <span class="s1">decorated.__name__ = fn.__name__</span>
+            <span class="s2">if </span><span class="s1">hasattr(fn</span><span class="s4">, </span><span class="s3">&quot;pytestmark&quot;</span><span class="s1">):</span>
+                <span class="s1">decorated.pytestmark = fn.pytestmark</span>
+            <span class="s2">return </span><span class="s1">decorated</span>
+
+    <span class="s2">return </span><span class="s1">decorate</span>
+
+
+<span class="s2">class </span><span class="s1">PytestFixtureFunctions(plugin_base.FixtureFunctions):</span>
+    <span class="s2">def </span><span class="s1">skip_test_exception(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">pytest.skip.Exception(*arg</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">add_to_marker(self):</span>
+        <span class="s2">return </span><span class="s1">pytest.mark</span>
+
+    <span class="s2">def </span><span class="s1">mark_base_test_class(self):</span>
+        <span class="s2">return </span><span class="s1">pytest.mark.usefixtures(</span>
+            <span class="s3">&quot;setup_class_methods&quot;</span><span class="s4">, </span><span class="s3">&quot;setup_test_methods&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">_combination_id_fns = {</span>
+        <span class="s3">&quot;i&quot;</span><span class="s1">: </span><span class="s2">lambda </span><span class="s1">obj: obj</span><span class="s4">,</span>
+        <span class="s3">&quot;r&quot;</span><span class="s1">: repr</span><span class="s4">,</span>
+        <span class="s3">&quot;s&quot;</span><span class="s1">: str</span><span class="s4">,</span>
+        <span class="s3">&quot;n&quot;</span><span class="s1">: </span><span class="s2">lambda </span><span class="s1">obj: (</span>
+            <span class="s1">obj.__name__ </span><span class="s2">if </span><span class="s1">hasattr(obj</span><span class="s4">, </span><span class="s3">&quot;__name__&quot;</span><span class="s1">) </span><span class="s2">else </span><span class="s1">type(obj).__name__</span>
+        <span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">}</span>
+
+    <span class="s2">def </span><span class="s1">combinations(self</span><span class="s4">, </span><span class="s1">*arg_sets</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s7">&quot;&quot;&quot;Facade for pytest.mark.parametrize. 
+ 
+        Automatically derives argument names from the callable which in our 
+        case is always a method on a class with positional arguments. 
+ 
+        ids for parameter sets are derived using an optional template. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">exclusions</span>
+
+        <span class="s2">if </span><span class="s1">len(arg_sets) == </span><span class="s5">1 </span><span class="s2">and </span><span class="s1">hasattr(arg_sets[</span><span class="s5">0</span><span class="s1">]</span><span class="s4">, </span><span class="s3">&quot;__next__&quot;</span><span class="s1">):</span>
+            <span class="s1">arg_sets = list(arg_sets[</span><span class="s5">0</span><span class="s1">])</span>
+
+        <span class="s1">argnames = kw.pop(</span><span class="s3">&quot;argnames&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+
+        <span class="s2">def </span><span class="s1">_filter_exclusions(args):</span>
+            <span class="s1">result = []</span>
+            <span class="s1">gathered_exclusions = []</span>
+            <span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">args:</span>
+                <span class="s2">if </span><span class="s1">isinstance(a</span><span class="s4">, </span><span class="s1">exclusions.compound):</span>
+                    <span class="s1">gathered_exclusions.append(a)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">result.append(a)</span>
+
+            <span class="s2">return </span><span class="s1">result</span><span class="s4">, </span><span class="s1">gathered_exclusions</span>
+
+        <span class="s1">id_ = kw.pop(</span><span class="s3">&quot;id_&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+
+        <span class="s1">tobuild_pytest_params = []</span>
+        <span class="s1">has_exclusions = </span><span class="s2">False</span>
+        <span class="s2">if </span><span class="s1">id_:</span>
+            <span class="s1">_combination_id_fns = self._combination_id_fns</span>
+
+            <span class="s0"># because itemgetter is not consistent for one argument vs.</span>
+            <span class="s0"># multiple, make it multiple in all cases and use a slice</span>
+            <span class="s0"># to omit the first argument</span>
+            <span class="s1">_arg_getter = operator.itemgetter(</span>
+                <span class="s5">0</span><span class="s4">,</span>
+                <span class="s1">*[</span>
+                    <span class="s1">idx</span>
+                    <span class="s2">for </span><span class="s1">idx</span><span class="s4">, </span><span class="s1">char </span><span class="s2">in </span><span class="s1">enumerate(id_)</span>
+                    <span class="s2">if </span><span class="s1">char </span><span class="s2">in </span><span class="s1">(</span><span class="s3">&quot;n&quot;</span><span class="s4">, </span><span class="s3">&quot;r&quot;</span><span class="s4">, </span><span class="s3">&quot;s&quot;</span><span class="s4">, </span><span class="s3">&quot;a&quot;</span><span class="s1">)</span>
+                <span class="s1">]</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s1">fns = [</span>
+                <span class="s1">(operator.itemgetter(idx)</span><span class="s4">, </span><span class="s1">_combination_id_fns[char])</span>
+                <span class="s2">for </span><span class="s1">idx</span><span class="s4">, </span><span class="s1">char </span><span class="s2">in </span><span class="s1">enumerate(id_)</span>
+                <span class="s2">if </span><span class="s1">char </span><span class="s2">in </span><span class="s1">_combination_id_fns</span>
+            <span class="s1">]</span>
+
+            <span class="s2">for </span><span class="s1">arg </span><span class="s2">in </span><span class="s1">arg_sets:</span>
+                <span class="s2">if not </span><span class="s1">isinstance(arg</span><span class="s4">, </span><span class="s1">tuple):</span>
+                    <span class="s1">arg = (arg</span><span class="s4">,</span><span class="s1">)</span>
+
+                <span class="s1">fn_params</span><span class="s4">, </span><span class="s1">param_exclusions = _filter_exclusions(arg)</span>
+
+                <span class="s1">parameters = _arg_getter(fn_params)[</span><span class="s5">1</span><span class="s1">:]</span>
+
+                <span class="s2">if </span><span class="s1">param_exclusions:</span>
+                    <span class="s1">has_exclusions = </span><span class="s2">True</span>
+
+                <span class="s1">tobuild_pytest_params.append(</span>
+                    <span class="s1">(</span>
+                        <span class="s1">parameters</span><span class="s4">,</span>
+                        <span class="s1">param_exclusions</span><span class="s4">,</span>
+                        <span class="s3">&quot;-&quot;</span><span class="s1">.join(</span>
+                            <span class="s1">comb_fn(getter(arg)) </span><span class="s2">for </span><span class="s1">getter</span><span class="s4">, </span><span class="s1">comb_fn </span><span class="s2">in </span><span class="s1">fns</span>
+                        <span class="s1">)</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">for </span><span class="s1">arg </span><span class="s2">in </span><span class="s1">arg_sets:</span>
+                <span class="s2">if not </span><span class="s1">isinstance(arg</span><span class="s4">, </span><span class="s1">tuple):</span>
+                    <span class="s1">arg = (arg</span><span class="s4">,</span><span class="s1">)</span>
+
+                <span class="s1">fn_params</span><span class="s4">, </span><span class="s1">param_exclusions = _filter_exclusions(arg)</span>
+
+                <span class="s2">if </span><span class="s1">param_exclusions:</span>
+                    <span class="s1">has_exclusions = </span><span class="s2">True</span>
+
+                <span class="s1">tobuild_pytest_params.append(</span>
+                    <span class="s1">(fn_params</span><span class="s4">, </span><span class="s1">param_exclusions</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+                <span class="s1">)</span>
+
+        <span class="s1">pytest_params = []</span>
+        <span class="s2">for </span><span class="s1">parameters</span><span class="s4">, </span><span class="s1">param_exclusions</span><span class="s4">, </span><span class="s1">id_ </span><span class="s2">in </span><span class="s1">tobuild_pytest_params:</span>
+            <span class="s2">if </span><span class="s1">has_exclusions:</span>
+                <span class="s1">parameters += (param_exclusions</span><span class="s4">,</span><span class="s1">)</span>
+
+            <span class="s1">param = pytest.param(*parameters</span><span class="s4">, </span><span class="s1">id=id_)</span>
+            <span class="s1">pytest_params.append(param)</span>
+
+        <span class="s2">def </span><span class="s1">decorate(fn):</span>
+            <span class="s2">if </span><span class="s1">inspect.isclass(fn):</span>
+                <span class="s2">if </span><span class="s1">has_exclusions:</span>
+                    <span class="s2">raise </span><span class="s1">NotImplementedError(</span>
+                        <span class="s3">&quot;exclusions not supported for class level combinations&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s2">if </span><span class="s3">&quot;_sa_parametrize&quot; </span><span class="s2">not in </span><span class="s1">fn.__dict__:</span>
+                    <span class="s1">fn._sa_parametrize = []</span>
+                <span class="s1">fn._sa_parametrize.append((argnames</span><span class="s4">, </span><span class="s1">pytest_params))</span>
+                <span class="s2">return </span><span class="s1">fn</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">_fn_argnames = inspect.getfullargspec(fn).args[</span><span class="s5">1</span><span class="s1">:]</span>
+                <span class="s2">if </span><span class="s1">argnames </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s1">_argnames = _fn_argnames</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">_argnames = re.split(</span><span class="s3">r&quot;, *&quot;</span><span class="s4">, </span><span class="s1">argnames)</span>
+
+                <span class="s2">if </span><span class="s1">has_exclusions:</span>
+                    <span class="s1">existing_exl = sum(</span>
+                        <span class="s5">1 </span><span class="s2">for </span><span class="s1">n </span><span class="s2">in </span><span class="s1">_fn_argnames </span><span class="s2">if </span><span class="s1">n.startswith(</span><span class="s3">&quot;_exclusions&quot;</span><span class="s1">)</span>
+                    <span class="s1">)</span>
+                    <span class="s1">current_exclusion_name = </span><span class="s3">f&quot;_exclusions_</span><span class="s6">{</span><span class="s1">existing_exl</span><span class="s6">}</span><span class="s3">&quot;</span>
+                    <span class="s1">_argnames += [current_exclusion_name]</span>
+
+                    <span class="s1">@_pytest_fn_decorator</span>
+                    <span class="s2">def </span><span class="s1">check_exclusions(fn</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kw):</span>
+                        <span class="s1">_exclusions = args[-</span><span class="s5">1</span><span class="s1">]</span>
+                        <span class="s2">if </span><span class="s1">_exclusions:</span>
+                            <span class="s1">exlu = exclusions.compound().add(*_exclusions)</span>
+                            <span class="s1">fn = exlu(fn)</span>
+                        <span class="s2">return </span><span class="s1">fn(*args[:-</span><span class="s5">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+                    <span class="s1">fn = check_exclusions(</span>
+                        <span class="s1">fn</span><span class="s4">, </span><span class="s1">add_positional_parameters=(current_exclusion_name</span><span class="s4">,</span><span class="s1">)</span>
+                    <span class="s1">)</span>
+
+                <span class="s2">return </span><span class="s1">pytest.mark.parametrize(_argnames</span><span class="s4">, </span><span class="s1">pytest_params)(fn)</span>
+
+        <span class="s2">return </span><span class="s1">decorate</span>
+
+    <span class="s2">def </span><span class="s1">param_ident(self</span><span class="s4">, </span><span class="s1">*parameters):</span>
+        <span class="s1">ident = parameters[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s2">return </span><span class="s1">pytest.param(*parameters[</span><span class="s5">1</span><span class="s1">:]</span><span class="s4">, </span><span class="s1">id=ident)</span>
+
+    <span class="s2">def </span><span class="s1">fixture(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">config</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+        <span class="s0"># wrapping pytest.fixture function.  determine if</span>
+        <span class="s0"># decorator was called as @fixture or @fixture().</span>
+        <span class="s2">if </span><span class="s1">len(arg) &gt; </span><span class="s5">0 </span><span class="s2">and </span><span class="s1">callable(arg[</span><span class="s5">0</span><span class="s1">]):</span>
+            <span class="s0"># was called as @fixture(), we have the function to wrap.</span>
+            <span class="s1">fn = arg[</span><span class="s5">0</span><span class="s1">]</span>
+            <span class="s1">arg = arg[</span><span class="s5">1</span><span class="s1">:]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># was called as @fixture, don't have the function yet.</span>
+            <span class="s1">fn = </span><span class="s2">None</span>
+
+        <span class="s0"># create a pytest.fixture marker.  because the fn is not being</span>
+        <span class="s0"># passed, this is always a pytest.FixtureFunctionMarker()</span>
+        <span class="s0"># object (or whatever pytest is calling it when you read this)</span>
+        <span class="s0"># that is waiting for a function.</span>
+        <span class="s1">fixture = pytest.fixture(*arg</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+        <span class="s0"># now apply wrappers to the function, including fixture itself</span>
+
+        <span class="s2">def </span><span class="s1">wrap(fn):</span>
+            <span class="s2">if </span><span class="s1">config.any_async:</span>
+                <span class="s1">fn = asyncio._maybe_async_wrapper(fn)</span>
+            <span class="s0"># other wrappers may be added here</span>
+
+            <span class="s0"># now apply FixtureFunctionMarker</span>
+            <span class="s1">fn = fixture(fn)</span>
+
+            <span class="s2">return </span><span class="s1">fn</span>
+
+        <span class="s2">if </span><span class="s1">fn:</span>
+            <span class="s2">return </span><span class="s1">wrap(fn)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">wrap</span>
+
+    <span class="s2">def </span><span class="s1">get_current_test_name(self):</span>
+        <span class="s2">return </span><span class="s1">os.environ.get(</span><span class="s3">&quot;PYTEST_CURRENT_TEST&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">async_test(self</span><span class="s4">, </span><span class="s1">fn):</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+        <span class="s1">@_pytest_fn_decorator</span>
+        <span class="s2">def </span><span class="s1">decorate(fn</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+            <span class="s1">asyncio._run_coroutine_function(fn</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s2">return </span><span class="s1">decorate(fn)</span>
+</pre>
+</body>
+</html>

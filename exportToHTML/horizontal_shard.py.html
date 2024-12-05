@@ -1,0 +1,504 @@
+<html>
+<head>
+<title>horizontal_shard.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+horizontal_shard.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># ext/horizontal_shard.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Horizontal sharding support. 
+ 
+Defines a rudimental 'horizontal sharding' system which allows a Session to 
+distribute queries and persistence operations across multiple databases. 
+ 
+For a usage example, see the :ref:`examples_sharding` example included in 
+the source distribution. 
+ 
+.. deepalchemy:: The horizontal sharding extension is an advanced feature, 
+   involving a complex statement -&gt; database interaction as well as 
+   use of semi-public APIs for non-trivial cases.   Simpler approaches to 
+   refering to multiple database &quot;shards&quot;, most commonly using a distinct 
+   :class:`_orm.Session` per &quot;shard&quot;, should always be considered first 
+   before using this more complex and less-production-tested system. 
+ 
+ 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">event</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">inspect</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..orm </span><span class="s3">import </span><span class="s1">PassiveFlag</span>
+<span class="s3">from </span><span class="s1">..orm._typing </span><span class="s3">import </span><span class="s1">OrmExecuteOptionsParameter</span>
+<span class="s3">from </span><span class="s1">..orm.interfaces </span><span class="s3">import </span><span class="s1">ORMOption</span>
+<span class="s3">from </span><span class="s1">..orm.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+<span class="s3">from </span><span class="s1">..orm.query </span><span class="s3">import </span><span class="s1">Query</span>
+<span class="s3">from </span><span class="s1">..orm.session </span><span class="s3">import </span><span class="s1">_BindArguments</span>
+<span class="s3">from </span><span class="s1">..orm.session </span><span class="s3">import </span><span class="s1">_PKIdentityArgument</span>
+<span class="s3">from </span><span class="s1">..orm.session </span><span class="s3">import </span><span class="s1">Session</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Protocol</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Self</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">..engine.base </span><span class="s3">import </span><span class="s1">Connection</span>
+    <span class="s3">from </span><span class="s1">..engine.base </span><span class="s3">import </span><span class="s1">Engine</span>
+    <span class="s3">from </span><span class="s1">..engine.base </span><span class="s3">import </span><span class="s1">OptionEngine</span>
+    <span class="s3">from </span><span class="s1">..engine.result </span><span class="s3">import </span><span class="s1">IteratorResult</span>
+    <span class="s3">from </span><span class="s1">..engine.result </span><span class="s3">import </span><span class="s1">Result</span>
+    <span class="s3">from </span><span class="s1">..orm </span><span class="s3">import </span><span class="s1">LoaderCallableStatus</span>
+    <span class="s3">from </span><span class="s1">..orm._typing </span><span class="s3">import </span><span class="s1">_O</span>
+    <span class="s3">from </span><span class="s1">..orm.bulk_persistence </span><span class="s3">import </span><span class="s1">BulkUDCompileState</span>
+    <span class="s3">from </span><span class="s1">..orm.context </span><span class="s3">import </span><span class="s1">QueryContext</span>
+    <span class="s3">from </span><span class="s1">..orm.session </span><span class="s3">import </span><span class="s1">_EntityBindKey</span>
+    <span class="s3">from </span><span class="s1">..orm.session </span><span class="s3">import </span><span class="s1">_SessionBind</span>
+    <span class="s3">from </span><span class="s1">..orm.session </span><span class="s3">import </span><span class="s1">ORMExecuteState</span>
+    <span class="s3">from </span><span class="s1">..orm.state </span><span class="s3">import </span><span class="s1">InstanceState</span>
+    <span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">Executable</span>
+    <span class="s3">from </span><span class="s1">..sql._typing </span><span class="s3">import </span><span class="s1">_TP</span>
+    <span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">ClauseElement</span>
+
+<span class="s1">__all__ = [</span><span class="s4">&quot;ShardedSession&quot;</span><span class="s5">, </span><span class="s4">&quot;ShardedQuery&quot;</span><span class="s1">]</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s1">ShardIdentifier = str</span>
+
+
+<span class="s3">class </span><span class="s1">ShardChooser(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">mapper: Optional[Mapper[_T]]</span><span class="s5">,</span>
+        <span class="s1">instance: Any</span><span class="s5">,</span>
+        <span class="s1">clause: Optional[ClauseElement]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any: ...</span>
+
+
+<span class="s3">class </span><span class="s1">IdentityChooser(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">mapper: Mapper[_T]</span><span class="s5">,</span>
+        <span class="s1">primary_key: _PKIdentityArgument</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">lazy_loaded_from: Optional[InstanceState[Any]]</span><span class="s5">,</span>
+        <span class="s1">execution_options: OrmExecuteOptionsParameter</span><span class="s5">,</span>
+        <span class="s1">bind_arguments: _BindArguments</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any: ...</span>
+
+
+<span class="s3">class </span><span class="s1">ShardedQuery(Query[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Query class used with :class:`.ShardedSession`. 
+ 
+    .. legacy:: The :class:`.ShardedQuery` is a subclass of the legacy 
+       :class:`.Query` class.   The :class:`.ShardedSession` now supports 
+       2.0 style execution via the :meth:`.ShardedSession.execute` method. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().__init__(*args</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+        <span class="s3">assert </span><span class="s1">isinstance(self.session</span><span class="s5">, </span><span class="s1">ShardedSession)</span>
+
+        <span class="s1">self.identity_chooser = self.session.identity_chooser</span>
+        <span class="s1">self.execute_chooser = self.session.execute_chooser</span>
+        <span class="s1">self._shard_id = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">set_shard(self</span><span class="s5">, </span><span class="s1">shard_id: ShardIdentifier) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Return a new query, limited to a single shard ID. 
+ 
+        All subsequent operations with the returned query will 
+        be against the single shard regardless of other state. 
+ 
+        The shard_id can be passed for a 2.0 style execution to the 
+        bind_arguments dictionary of :meth:`.Session.execute`:: 
+ 
+            results = session.execute( 
+                stmt, 
+                bind_arguments={&quot;shard_id&quot;: &quot;my_shard&quot;} 
+            ) 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.execution_options(_sa_shard_id=shard_id)</span>
+
+
+<span class="s3">class </span><span class="s1">ShardedSession(Session):</span>
+    <span class="s1">shard_chooser: ShardChooser</span>
+    <span class="s1">identity_chooser: IdentityChooser</span>
+    <span class="s1">execute_chooser: Callable[[ORMExecuteState]</span><span class="s5">, </span><span class="s1">Iterable[Any]]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">shard_chooser: ShardChooser</span><span class="s5">,</span>
+        <span class="s1">identity_chooser: Optional[IdentityChooser] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">execute_chooser: Optional[</span>
+            <span class="s1">Callable[[ORMExecuteState]</span><span class="s5">, </span><span class="s1">Iterable[Any]]</span>
+        <span class="s1">] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">shards: Optional[Dict[str</span><span class="s5">, </span><span class="s1">Any]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">query_cls: Type[Query[_T]] = ShardedQuery</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">id_chooser: Optional[</span>
+            <span class="s1">Callable[[Query[_T]</span><span class="s5">, </span><span class="s1">Iterable[_T]]</span><span class="s5">, </span><span class="s1">Iterable[Any]]</span>
+        <span class="s1">] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">query_chooser: Optional[Callable[[Executable]</span><span class="s5">, </span><span class="s1">Iterable[Any]]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Construct a ShardedSession. 
+ 
+        :param shard_chooser: A callable which, passed a Mapper, a mapped 
+          instance, and possibly a SQL clause, returns a shard ID.  This id 
+          may be based off of the attributes present within the object, or on 
+          some round-robin scheme. If the scheme is based on a selection, it 
+          should set whatever state on the instance to mark it in the future as 
+          participating in that shard. 
+ 
+        :param identity_chooser: A callable, passed a Mapper and primary key 
+         argument, which should return a list of shard ids where this 
+         primary key might reside. 
+ 
+          .. versionchanged:: 2.0  The ``identity_chooser`` parameter 
+             supersedes the ``id_chooser`` parameter. 
+ 
+        :param execute_chooser: For a given :class:`.ORMExecuteState`, 
+          returns the list of shard_ids 
+          where the query should be issued.  Results from all shards returned 
+          will be combined together into a single listing. 
+ 
+          .. versionchanged:: 1.4  The ``execute_chooser`` parameter 
+             supersedes the ``query_chooser`` parameter. 
+ 
+        :param shards: A dictionary of string shard names 
+          to :class:`~sqlalchemy.engine.Engine` objects. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">super().__init__(query_cls=query_cls</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s1">event.listen(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s4">&quot;do_orm_execute&quot;</span><span class="s5">, </span><span class="s1">execute_and_instances</span><span class="s5">, </span><span class="s1">retval=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+        <span class="s1">self.shard_chooser = shard_chooser</span>
+
+        <span class="s3">if </span><span class="s1">id_chooser:</span>
+            <span class="s1">_id_chooser = id_chooser</span>
+            <span class="s1">util.warn_deprecated(</span>
+                <span class="s4">&quot;The ``id_chooser`` parameter is deprecated; &quot;</span>
+                <span class="s4">&quot;please use ``identity_chooser``.&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;2.0&quot;</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s3">def </span><span class="s1">_legacy_identity_chooser(</span>
+                <span class="s1">mapper: Mapper[_T]</span><span class="s5">,</span>
+                <span class="s1">primary_key: _PKIdentityArgument</span><span class="s5">,</span>
+                <span class="s1">*</span><span class="s5">,</span>
+                <span class="s1">lazy_loaded_from: Optional[InstanceState[Any]]</span><span class="s5">,</span>
+                <span class="s1">execution_options: OrmExecuteOptionsParameter</span><span class="s5">,</span>
+                <span class="s1">bind_arguments: _BindArguments</span><span class="s5">,</span>
+                <span class="s1">**kw: Any</span><span class="s5">,</span>
+            <span class="s1">) -&gt; Any:</span>
+                <span class="s1">q = self.query(mapper)</span>
+                <span class="s3">if </span><span class="s1">lazy_loaded_from:</span>
+                    <span class="s1">q = q._set_lazyload_from(lazy_loaded_from)</span>
+                <span class="s3">return </span><span class="s1">_id_chooser(q</span><span class="s5">, </span><span class="s1">primary_key)</span>
+
+            <span class="s1">self.identity_chooser = _legacy_identity_chooser</span>
+        <span class="s3">elif </span><span class="s1">identity_chooser:</span>
+            <span class="s1">self.identity_chooser = identity_chooser</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;identity_chooser or id_chooser is required&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">query_chooser:</span>
+            <span class="s1">_query_chooser = query_chooser</span>
+            <span class="s1">util.warn_deprecated(</span>
+                <span class="s4">&quot;The ``query_chooser`` parameter is deprecated; &quot;</span>
+                <span class="s4">&quot;please use ``execute_chooser``.&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;1.4&quot;</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">execute_chooser:</span>
+                <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                    <span class="s4">&quot;Can't pass query_chooser and execute_chooser &quot;</span>
+                    <span class="s4">&quot;at the same time.&quot;</span>
+                <span class="s1">)</span>
+
+            <span class="s3">def </span><span class="s1">_default_execute_chooser(</span>
+                <span class="s1">orm_context: ORMExecuteState</span><span class="s5">,</span>
+            <span class="s1">) -&gt; Iterable[Any]:</span>
+                <span class="s3">return </span><span class="s1">_query_chooser(orm_context.statement)</span>
+
+            <span class="s3">if </span><span class="s1">execute_chooser </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">execute_chooser = _default_execute_chooser</span>
+
+        <span class="s3">if </span><span class="s1">execute_chooser </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;execute_chooser or query_chooser is required&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">self.execute_chooser = execute_chooser</span>
+        <span class="s1">self.__shards: Dict[ShardIdentifier</span><span class="s5">, </span><span class="s1">_SessionBind] = {}</span>
+        <span class="s3">if </span><span class="s1">shards </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">shards:</span>
+                <span class="s1">self.bind_shard(k</span><span class="s5">, </span><span class="s1">shards[k])</span>
+
+    <span class="s3">def </span><span class="s1">_identity_lookup(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">mapper: Mapper[_O]</span><span class="s5">,</span>
+        <span class="s1">primary_key_identity: Union[Any</span><span class="s5">, </span><span class="s1">Tuple[Any</span><span class="s5">, </span><span class="s1">...]]</span><span class="s5">,</span>
+        <span class="s1">identity_token: Optional[Any] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_OFF</span><span class="s5">,</span>
+        <span class="s1">lazy_loaded_from: Optional[InstanceState[Any]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">execution_options: OrmExecuteOptionsParameter = util.EMPTY_DICT</span><span class="s5">,</span>
+        <span class="s1">bind_arguments: Optional[_BindArguments] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Union[Optional[_O]</span><span class="s5">, </span><span class="s1">LoaderCallableStatus]:</span>
+        <span class="s2">&quot;&quot;&quot;override the default :meth:`.Session._identity_lookup` method so 
+        that we search for a given non-token primary key identity across all 
+        possible identity tokens (e.g. shard ids). 
+ 
+        .. versionchanged:: 1.4  Moved :meth:`.Session._identity_lookup` from 
+           the :class:`_query.Query` object to the :class:`.Session`. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">identity_token </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">obj = super()._identity_lookup(</span>
+                <span class="s1">mapper</span><span class="s5">,</span>
+                <span class="s1">primary_key_identity</span><span class="s5">,</span>
+                <span class="s1">identity_token=identity_token</span><span class="s5">,</span>
+                <span class="s1">**kw</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s3">return </span><span class="s1">obj</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">for </span><span class="s1">shard_id </span><span class="s3">in </span><span class="s1">self.identity_chooser(</span>
+                <span class="s1">mapper</span><span class="s5">,</span>
+                <span class="s1">primary_key_identity</span><span class="s5">,</span>
+                <span class="s1">lazy_loaded_from=lazy_loaded_from</span><span class="s5">,</span>
+                <span class="s1">execution_options=execution_options</span><span class="s5">,</span>
+                <span class="s1">bind_arguments=dict(bind_arguments) </span><span class="s3">if </span><span class="s1">bind_arguments </span><span class="s3">else </span><span class="s1">{}</span><span class="s5">,</span>
+            <span class="s1">):</span>
+                <span class="s1">obj2 = super()._identity_lookup(</span>
+                    <span class="s1">mapper</span><span class="s5">,</span>
+                    <span class="s1">primary_key_identity</span><span class="s5">,</span>
+                    <span class="s1">identity_token=shard_id</span><span class="s5">,</span>
+                    <span class="s1">lazy_loaded_from=lazy_loaded_from</span><span class="s5">,</span>
+                    <span class="s1">**kw</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">obj2 </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s3">return </span><span class="s1">obj2</span>
+
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">_choose_shard_and_assign(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">mapper: Optional[_EntityBindKey[_O]]</span><span class="s5">,</span>
+        <span class="s1">instance: Any</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s3">if </span><span class="s1">instance </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">state = inspect(instance)</span>
+            <span class="s3">if </span><span class="s1">state.key:</span>
+                <span class="s1">token = state.key[</span><span class="s6">2</span><span class="s1">]</span>
+                <span class="s3">assert </span><span class="s1">token </span><span class="s3">is not None</span>
+                <span class="s3">return </span><span class="s1">token</span>
+            <span class="s3">elif </span><span class="s1">state.identity_token:</span>
+                <span class="s3">return </span><span class="s1">state.identity_token</span>
+
+        <span class="s3">assert </span><span class="s1">isinstance(mapper</span><span class="s5">, </span><span class="s1">Mapper)</span>
+        <span class="s1">shard_id = self.shard_chooser(mapper</span><span class="s5">, </span><span class="s1">instance</span><span class="s5">, </span><span class="s1">**kw)</span>
+        <span class="s3">if </span><span class="s1">instance </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">state.identity_token = shard_id</span>
+        <span class="s3">return </span><span class="s1">shard_id</span>
+
+    <span class="s3">def </span><span class="s1">connection_callable(  </span><span class="s0"># type: ignore [override]</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">mapper: Optional[Mapper[_T]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">instance: Optional[Any] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">shard_id: Optional[ShardIdentifier] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Connection:</span>
+        <span class="s2">&quot;&quot;&quot;Provide a :class:`_engine.Connection` to use in the unit of work 
+        flush process. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">shard_id </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">shard_id = self._choose_shard_and_assign(mapper</span><span class="s5">, </span><span class="s1">instance)</span>
+
+        <span class="s3">if </span><span class="s1">self.in_transaction():</span>
+            <span class="s1">trans = self.get_transaction()</span>
+            <span class="s3">assert </span><span class="s1">trans </span><span class="s3">is not None</span>
+            <span class="s3">return </span><span class="s1">trans.connection(mapper</span><span class="s5">, </span><span class="s1">shard_id=shard_id)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">bind = self.get_bind(</span>
+                <span class="s1">mapper=mapper</span><span class="s5">, </span><span class="s1">shard_id=shard_id</span><span class="s5">, </span><span class="s1">instance=instance</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">isinstance(bind</span><span class="s5">, </span><span class="s1">Engine):</span>
+                <span class="s3">return </span><span class="s1">bind.connect(**kw)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">assert </span><span class="s1">isinstance(bind</span><span class="s5">, </span><span class="s1">Connection)</span>
+                <span class="s3">return </span><span class="s1">bind</span>
+
+    <span class="s3">def </span><span class="s1">get_bind(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">mapper: Optional[_EntityBindKey[_O]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">shard_id: Optional[ShardIdentifier] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">instance: Optional[Any] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">clause: Optional[ClauseElement] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; _SessionBind:</span>
+        <span class="s3">if </span><span class="s1">shard_id </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">shard_id = self._choose_shard_and_assign(</span>
+                <span class="s1">mapper</span><span class="s5">, </span><span class="s1">instance=instance</span><span class="s5">, </span><span class="s1">clause=clause</span>
+            <span class="s1">)</span>
+            <span class="s3">assert </span><span class="s1">shard_id </span><span class="s3">is not None</span>
+        <span class="s3">return </span><span class="s1">self.__shards[shard_id]</span>
+
+    <span class="s3">def </span><span class="s1">bind_shard(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">shard_id: ShardIdentifier</span><span class="s5">, </span><span class="s1">bind: Union[Engine</span><span class="s5">, </span><span class="s1">OptionEngine]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.__shards[shard_id] = bind</span>
+
+
+<span class="s3">class </span><span class="s1">set_shard_id(ORMOption):</span>
+    <span class="s2">&quot;&quot;&quot;a loader option for statements to apply a specific shard id to the 
+    primary query as well as for additional relationship and column 
+    loaders. 
+ 
+    The :class:`_horizontal.set_shard_id` option may be applied using 
+    the :meth:`_sql.Executable.options` method of any executable statement:: 
+ 
+        stmt = ( 
+            select(MyObject). 
+            where(MyObject.name == 'some name'). 
+            options(set_shard_id(&quot;shard1&quot;)) 
+        ) 
+ 
+    Above, the statement when invoked will limit to the &quot;shard1&quot; shard 
+    identifier for the primary query as well as for all relationship and 
+    column loading strategies, including eager loaders such as 
+    :func:`_orm.selectinload`, deferred column loaders like :func:`_orm.defer`, 
+    and the lazy relationship loader :func:`_orm.lazyload`. 
+ 
+    In this way, the :class:`_horizontal.set_shard_id` option has much wider 
+    scope than using the &quot;shard_id&quot; argument within the 
+    :paramref:`_orm.Session.execute.bind_arguments` dictionary. 
+ 
+ 
+    .. versionadded:: 2.0.0 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;shard_id&quot;</span><span class="s5">, </span><span class="s4">&quot;propagate_to_loaders&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">shard_id: ShardIdentifier</span><span class="s5">, </span><span class="s1">propagate_to_loaders: bool = </span><span class="s3">True</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Construct a :class:`_horizontal.set_shard_id` option. 
+ 
+        :param shard_id: shard identifier 
+        :param propagate_to_loaders: if left at its default of ``True``, the 
+         shard option will take place for lazy loaders such as 
+         :func:`_orm.lazyload` and :func:`_orm.defer`; if False, the option 
+         will not be propagated to loaded objects. Note that :func:`_orm.defer` 
+         always limits to the shard_id of the parent row in any case, so the 
+         parameter only has a net effect on the behavior of the 
+         :func:`_orm.lazyload` strategy. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.shard_id = shard_id</span>
+        <span class="s1">self.propagate_to_loaders = propagate_to_loaders</span>
+
+
+<span class="s3">def </span><span class="s1">execute_and_instances(</span>
+    <span class="s1">orm_context: ORMExecuteState</span><span class="s5">,</span>
+<span class="s1">) -&gt; Union[Result[_T]</span><span class="s5">, </span><span class="s1">IteratorResult[_TP]]:</span>
+    <span class="s1">active_options: Union[</span>
+        <span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">QueryContext.default_load_options</span><span class="s5">,</span>
+        <span class="s1">Type[QueryContext.default_load_options]</span><span class="s5">,</span>
+        <span class="s1">BulkUDCompileState.default_update_options</span><span class="s5">,</span>
+        <span class="s1">Type[BulkUDCompileState.default_update_options]</span><span class="s5">,</span>
+    <span class="s1">]</span>
+
+    <span class="s3">if </span><span class="s1">orm_context.is_select:</span>
+        <span class="s1">active_options = orm_context.load_options</span>
+
+    <span class="s3">elif </span><span class="s1">orm_context.is_update </span><span class="s3">or </span><span class="s1">orm_context.is_delete:</span>
+        <span class="s1">active_options = orm_context.update_delete_options</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">active_options = </span><span class="s3">None</span>
+
+    <span class="s1">session = orm_context.session</span>
+    <span class="s3">assert </span><span class="s1">isinstance(session</span><span class="s5">, </span><span class="s1">ShardedSession)</span>
+
+    <span class="s3">def </span><span class="s1">iter_for_shard(</span>
+        <span class="s1">shard_id: ShardIdentifier</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Union[Result[_T]</span><span class="s5">, </span><span class="s1">IteratorResult[_TP]]:</span>
+        <span class="s1">bind_arguments = dict(orm_context.bind_arguments)</span>
+        <span class="s1">bind_arguments[</span><span class="s4">&quot;shard_id&quot;</span><span class="s1">] = shard_id</span>
+
+        <span class="s1">orm_context.update_execution_options(identity_token=shard_id)</span>
+        <span class="s3">return </span><span class="s1">orm_context.invoke_statement(bind_arguments=bind_arguments)</span>
+
+    <span class="s3">for </span><span class="s1">orm_opt </span><span class="s3">in </span><span class="s1">orm_context._non_compile_orm_options:</span>
+        <span class="s0"># TODO: if we had an ORMOption that gets applied at ORM statement</span>
+        <span class="s0"># execution time, that would allow this to be more generalized.</span>
+        <span class="s0"># for now just iterate and look for our options</span>
+        <span class="s3">if </span><span class="s1">isinstance(orm_opt</span><span class="s5">, </span><span class="s1">set_shard_id):</span>
+            <span class="s1">shard_id = orm_opt.shard_id</span>
+            <span class="s3">break</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">active_options </span><span class="s3">and </span><span class="s1">active_options._identity_token </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">shard_id = active_options._identity_token</span>
+        <span class="s3">elif </span><span class="s4">&quot;_sa_shard_id&quot; </span><span class="s3">in </span><span class="s1">orm_context.execution_options:</span>
+            <span class="s1">shard_id = orm_context.execution_options[</span><span class="s4">&quot;_sa_shard_id&quot;</span><span class="s1">]</span>
+        <span class="s3">elif </span><span class="s4">&quot;shard_id&quot; </span><span class="s3">in </span><span class="s1">orm_context.bind_arguments:</span>
+            <span class="s1">shard_id = orm_context.bind_arguments[</span><span class="s4">&quot;shard_id&quot;</span><span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">shard_id = </span><span class="s3">None</span>
+
+    <span class="s3">if </span><span class="s1">shard_id </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">iter_for_shard(shard_id)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">partial = []</span>
+        <span class="s3">for </span><span class="s1">shard_id </span><span class="s3">in </span><span class="s1">session.execute_chooser(orm_context):</span>
+            <span class="s1">result_ = iter_for_shard(shard_id)</span>
+            <span class="s1">partial.append(result_)</span>
+        <span class="s3">return </span><span class="s1">partial[</span><span class="s6">0</span><span class="s1">].merge(*partial[</span><span class="s6">1</span><span class="s1">:])</span>
+</pre>
+</body>
+</html>

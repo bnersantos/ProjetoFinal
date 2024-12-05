@@ -1,0 +1,127 @@
+<html>
+<head>
+<title>query.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #5d69bb;}
+.s3 { color: #717ed3; font-style: italic;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+query.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+
+<span class="s0">import </span><span class="s1">sqlalchemy.exc </span><span class="s0">as </span><span class="s1">sa_exc</span>
+<span class="s0">import </span><span class="s1">sqlalchemy.orm </span><span class="s0">as </span><span class="s1">sa_orm</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">abort</span>
+
+<span class="s0">from </span><span class="s1">.pagination </span><span class="s0">import </span><span class="s1">Pagination</span>
+<span class="s0">from </span><span class="s1">.pagination </span><span class="s0">import </span><span class="s1">QueryPagination</span>
+
+
+<span class="s0">class </span><span class="s1">Query(sa_orm.Query):  </span><span class="s2"># type: ignore[type-arg]</span>
+    <span class="s3">&quot;&quot;&quot;SQLAlchemy :class:`~sqlalchemy.orm.query.Query` subclass with some extra methods 
+    useful for querying in a web application. 
+ 
+    This is the default query class for :attr:`.Model.query`. 
+ 
+    .. versionchanged:: 3.0 
+        Renamed to ``Query`` from ``BaseQuery``. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">get_or_404(self</span><span class="s4">, </span><span class="s1">ident: t.Any</span><span class="s4">, </span><span class="s1">description: str | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s1">) -&gt; t.Any:</span>
+        <span class="s3">&quot;&quot;&quot;Like :meth:`~sqlalchemy.orm.Query.get` but aborts with a ``404 Not Found`` 
+        error instead of returning ``None``. 
+ 
+        :param ident: The primary key to query. 
+        :param description: A custom message to show on the error page. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">rv = self.get(ident)</span>
+
+        <span class="s0">if </span><span class="s1">rv </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">abort(</span><span class="s5">404</span><span class="s4">, </span><span class="s1">description=description)</span>
+
+        <span class="s0">return </span><span class="s1">rv</span>
+
+    <span class="s0">def </span><span class="s1">first_or_404(self</span><span class="s4">, </span><span class="s1">description: str | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s1">) -&gt; t.Any:</span>
+        <span class="s3">&quot;&quot;&quot;Like :meth:`~sqlalchemy.orm.Query.first` but aborts with a ``404 Not Found`` 
+        error instead of returning ``None``. 
+ 
+        :param description: A custom message to show on the error page. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">rv = self.first()</span>
+
+        <span class="s0">if </span><span class="s1">rv </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">abort(</span><span class="s5">404</span><span class="s4">, </span><span class="s1">description=description)</span>
+
+        <span class="s0">return </span><span class="s1">rv</span>
+
+    <span class="s0">def </span><span class="s1">one_or_404(self</span><span class="s4">, </span><span class="s1">description: str | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s1">) -&gt; t.Any:</span>
+        <span class="s3">&quot;&quot;&quot;Like :meth:`~sqlalchemy.orm.Query.one` but aborts with a ``404 Not Found`` 
+        error instead of raising ``NoResultFound`` or ``MultipleResultsFound``. 
+ 
+        :param description: A custom message to show on the error page. 
+ 
+        .. versionadded:: 3.0 
+        &quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">self.one()</span>
+        <span class="s0">except </span><span class="s1">(sa_exc.NoResultFound</span><span class="s4">, </span><span class="s1">sa_exc.MultipleResultsFound):</span>
+            <span class="s1">abort(</span><span class="s5">404</span><span class="s4">, </span><span class="s1">description=description)</span>
+
+    <span class="s0">def </span><span class="s1">paginate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">page: int | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s4">,</span>
+        <span class="s1">per_page: int | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s4">,</span>
+        <span class="s1">max_per_page: int | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s4">,</span>
+        <span class="s1">error_out: bool = </span><span class="s0">True</span><span class="s4">,</span>
+        <span class="s1">count: bool = </span><span class="s0">True</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Pagination:</span>
+        <span class="s3">&quot;&quot;&quot;Apply an offset and limit to the query based on the current page and number 
+        of items per page, returning a :class:`.Pagination` object. 
+ 
+        :param page: The current page, used to calculate the offset. Defaults to the 
+            ``page`` query arg during a request, or 1 otherwise. 
+        :param per_page: The maximum number of items on a page, used to calculate the 
+            offset and limit. Defaults to the ``per_page`` query arg during a request, 
+            or 20 otherwise. 
+        :param max_per_page: The maximum allowed value for ``per_page``, to limit a 
+            user-provided value. Use ``None`` for no limit. Defaults to 100. 
+        :param error_out: Abort with a ``404 Not Found`` error if no items are returned 
+            and ``page`` is not 1, or if ``page`` or ``per_page`` is less than 1, or if 
+            either are not ints. 
+        :param count: Calculate the total number of values by issuing an extra count 
+            query. For very complex queries this may be inaccurate or slow, so it can be 
+            disabled and set manually if necessary. 
+ 
+        .. versionchanged:: 3.0 
+            All parameters are keyword-only. 
+ 
+        .. versionchanged:: 3.0 
+            The ``count`` query is more efficient. 
+ 
+        .. versionchanged:: 3.0 
+            ``max_per_page`` defaults to 100. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">QueryPagination(</span>
+            <span class="s1">query=self</span><span class="s4">,</span>
+            <span class="s1">page=page</span><span class="s4">,</span>
+            <span class="s1">per_page=per_page</span><span class="s4">,</span>
+            <span class="s1">max_per_page=max_per_page</span><span class="s4">,</span>
+            <span class="s1">error_out=error_out</span><span class="s4">,</span>
+            <span class="s1">count=count</span><span class="s4">,</span>
+        <span class="s1">)</span>
+</pre>
+</body>
+</html>

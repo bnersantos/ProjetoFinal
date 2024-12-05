@@ -1,0 +1,778 @@
+<html>
+<head>
+<title>instrumentation.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+instrumentation.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/instrumentation.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">&quot;&quot;&quot;Defines SQLAlchemy's system of class instrumentation. 
+ 
+This module is usually not directly visible to user applications, but 
+defines a large part of the ORM's interactivity. 
+ 
+instrumentation.py deals with registration of end-user classes 
+for state tracking.   It interacts closely with state.py 
+and attributes.py which establish per-instance and per-class-attribute 
+instrumentation, respectively. 
+ 
+The class instrumentation system can be customized on a per-class 
+or global basis using the :mod:`sqlalchemy.ext.instrumentation` 
+module, which provides the means to build and specify 
+alternate instrumentation forms. 
+ 
+.. versionchanged: 0.8 
+   The instrumentation extension system was moved out of the 
+   ORM and into the external :mod:`sqlalchemy.ext.instrumentation` 
+   package.  When that package is imported, it installs 
+   itself within sqlalchemy.orm so that its more comprehensive 
+   resolution mechanics take effect. 
+ 
+&quot;&quot;&quot;</span>
+
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Collection</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generic</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">weakref</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">base</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">collections</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">interfaces</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">state</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_O</span>
+<span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">_is_collection_attribute_impl</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..event </span><span class="s3">import </span><span class="s1">EventTarget</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">HasMemoized</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Protocol</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_RegistryType</span>
+    <span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">AttributeImpl</span>
+    <span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">QueryableAttribute</span>
+    <span class="s3">from </span><span class="s1">.collections </span><span class="s3">import </span><span class="s1">_AdaptedCollectionProtocol</span>
+    <span class="s3">from </span><span class="s1">.collections </span><span class="s3">import </span><span class="s1">_CollectionFactoryType</span>
+    <span class="s3">from </span><span class="s1">.decl_base </span><span class="s3">import </span><span class="s1">_MapperConfig</span>
+    <span class="s3">from </span><span class="s1">.events </span><span class="s3">import </span><span class="s1">InstanceEvents</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.state </span><span class="s3">import </span><span class="s1">InstanceState</span>
+    <span class="s3">from </span><span class="s1">..event </span><span class="s3">import </span><span class="s1">dispatcher</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+<span class="s1">DEL_ATTR = util.symbol(</span><span class="s4">&quot;DEL_ATTR&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_ExpiredAttributeLoaderProto(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: state.InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">toload: Set[str]</span><span class="s5">,</span>
+        <span class="s1">passive: base.PassiveFlag</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_ManagerFactory(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">class_: Type[_O]) -&gt; ClassManager[_O]: ...</span>
+
+
+<span class="s3">class </span><span class="s1">ClassManager(</span>
+    <span class="s1">HasMemoized</span><span class="s5">,</span>
+    <span class="s1">Dict[str</span><span class="s5">, </span><span class="s4">&quot;QueryableAttribute[Any]&quot;</span><span class="s1">]</span><span class="s5">,</span>
+    <span class="s1">Generic[_O]</span><span class="s5">,</span>
+    <span class="s1">EventTarget</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Tracks state information at the class level.&quot;&quot;&quot;</span>
+
+    <span class="s1">dispatch: dispatcher[ClassManager[_O]]</span>
+
+    <span class="s1">MANAGER_ATTR = base.DEFAULT_MANAGER_ATTR</span>
+    <span class="s1">STATE_ATTR = base.DEFAULT_STATE_ATTR</span>
+
+    <span class="s1">_state_setter = staticmethod(util.attrsetter(STATE_ATTR))</span>
+
+    <span class="s1">expired_attribute_loader: _ExpiredAttributeLoaderProto</span>
+    <span class="s4">&quot;previously known as deferred_scalar_loader&quot;</span>
+
+    <span class="s1">init_method: Optional[Callable[...</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]]</span>
+    <span class="s1">original_init: Optional[Callable[...</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]] = </span><span class="s3">None</span>
+
+    <span class="s1">factory: Optional[_ManagerFactory]</span>
+
+    <span class="s1">declarative_scan: Optional[weakref.ref[_MapperConfig]] = </span><span class="s3">None</span>
+
+    <span class="s1">registry: _RegistryType</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s0"># starts as None during setup</span>
+        <span class="s1">registry = </span><span class="s3">None</span>
+
+    <span class="s1">class_: Type[_O]</span>
+
+    <span class="s1">_bases: List[ClassManager[Any]]</span>
+
+    <span class="s1">@property</span>
+    <span class="s1">@util.deprecated(</span>
+        <span class="s4">&quot;1.4&quot;</span><span class="s5">,</span>
+        <span class="s1">message=</span><span class="s4">&quot;The ClassManager.deferred_scalar_loader attribute is now &quot;</span>
+        <span class="s4">&quot;named expired_attribute_loader&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">deferred_scalar_loader(self):</span>
+        <span class="s3">return </span><span class="s1">self.expired_attribute_loader</span>
+
+    <span class="s1">@deferred_scalar_loader.setter</span>
+    <span class="s1">@util.deprecated(</span>
+        <span class="s4">&quot;1.4&quot;</span><span class="s5">,</span>
+        <span class="s1">message=</span><span class="s4">&quot;The ClassManager.deferred_scalar_loader attribute is now &quot;</span>
+        <span class="s4">&quot;named expired_attribute_loader&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">deferred_scalar_loader(self</span><span class="s5">, </span><span class="s1">obj):</span>
+        <span class="s1">self.expired_attribute_loader = obj</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">class_):</span>
+        <span class="s1">self.class_ = class_</span>
+        <span class="s1">self.info = {}</span>
+        <span class="s1">self.new_init = </span><span class="s3">None</span>
+        <span class="s1">self.local_attrs = {}</span>
+        <span class="s1">self.originals = {}</span>
+        <span class="s1">self._finalized = </span><span class="s3">False</span>
+        <span class="s1">self.factory = </span><span class="s3">None</span>
+        <span class="s1">self.init_method = </span><span class="s3">None</span>
+
+        <span class="s1">self._bases = [</span>
+            <span class="s1">mgr</span>
+            <span class="s3">for </span><span class="s1">mgr </span><span class="s3">in </span><span class="s1">cast(</span>
+                <span class="s4">&quot;List[Optional[ClassManager[Any]]]&quot;</span><span class="s5">,</span>
+                <span class="s1">[</span>
+                    <span class="s1">opt_manager_of_class(base)</span>
+                    <span class="s3">for </span><span class="s1">base </span><span class="s3">in </span><span class="s1">self.class_.__bases__</span>
+                    <span class="s3">if </span><span class="s1">isinstance(base</span><span class="s5">, </span><span class="s1">type)</span>
+                <span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">mgr </span><span class="s3">is not None</span>
+        <span class="s1">]</span>
+
+        <span class="s3">for </span><span class="s1">base_ </span><span class="s3">in </span><span class="s1">self._bases:</span>
+            <span class="s1">self.update(base_)</span>
+
+        <span class="s1">cast(</span>
+            <span class="s4">&quot;InstanceEvents&quot;</span><span class="s5">, </span><span class="s1">self.dispatch._events</span>
+        <span class="s1">)._new_classmanager_instance(class_</span><span class="s5">, </span><span class="s1">self)</span>
+
+        <span class="s3">for </span><span class="s1">basecls </span><span class="s3">in </span><span class="s1">class_.__mro__:</span>
+            <span class="s1">mgr = opt_manager_of_class(basecls)</span>
+            <span class="s3">if </span><span class="s1">mgr </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">self.dispatch._update(mgr.dispatch)</span>
+
+        <span class="s1">self.manage()</span>
+
+        <span class="s3">if </span><span class="s4">&quot;__del__&quot; </span><span class="s3">in </span><span class="s1">class_.__dict__:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">&quot;__del__() method on class %s will &quot;</span>
+                <span class="s4">&quot;cause unreachable cycles and memory leaks, &quot;</span>
+                <span class="s4">&quot;as SQLAlchemy instrumentation often creates &quot;</span>
+                <span class="s4">&quot;reference cycles.  Please remove this method.&quot; </span><span class="s1">% class_</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_update_state(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">finalize: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">mapper: Optional[Mapper[_O]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">registry: Optional[_RegistryType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">declarative_scan: Optional[_MapperConfig] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">expired_attribute_loader: Optional[</span>
+            <span class="s1">_ExpiredAttributeLoaderProto</span>
+        <span class="s1">] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">init_method: Optional[Callable[...</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">mapper:</span>
+            <span class="s1">self.mapper = mapper  </span><span class="s0">#</span>
+        <span class="s3">if </span><span class="s1">registry:</span>
+            <span class="s1">registry._add_manager(self)</span>
+        <span class="s3">if </span><span class="s1">declarative_scan:</span>
+            <span class="s1">self.declarative_scan = weakref.ref(declarative_scan)</span>
+        <span class="s3">if </span><span class="s1">expired_attribute_loader:</span>
+            <span class="s1">self.expired_attribute_loader = expired_attribute_loader</span>
+
+        <span class="s3">if </span><span class="s1">init_method:</span>
+            <span class="s3">assert not </span><span class="s1">self._finalized</span><span class="s5">, </span><span class="s1">(</span>
+                <span class="s4">&quot;class is already instrumented, &quot;</span>
+                <span class="s4">&quot;init_method %s can't be applied&quot; </span><span class="s1">% init_method</span>
+            <span class="s1">)</span>
+            <span class="s1">self.init_method = init_method</span>
+
+        <span class="s3">if not </span><span class="s1">self._finalized:</span>
+            <span class="s1">self.original_init = (</span>
+                <span class="s1">self.init_method</span>
+                <span class="s3">if </span><span class="s1">self.init_method </span><span class="s3">is not None</span>
+                <span class="s3">and </span><span class="s1">self.class_.__init__ </span><span class="s3">is </span><span class="s1">object.__init__</span>
+                <span class="s3">else </span><span class="s1">self.class_.__init__</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">finalize </span><span class="s3">and not </span><span class="s1">self._finalized:</span>
+            <span class="s1">self._finalize()</span>
+
+    <span class="s3">def </span><span class="s1">_finalize(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">self._finalized:</span>
+            <span class="s3">return</span>
+        <span class="s1">self._finalized = </span><span class="s3">True</span>
+
+        <span class="s1">self._instrument_init()</span>
+
+        <span class="s1">_instrumentation_factory.dispatch.class_instrument(self.class_)</span>
+
+    <span class="s3">def </span><span class="s1">__hash__(self) -&gt; int:  </span><span class="s0"># type: ignore[override]</span>
+        <span class="s3">return </span><span class="s1">id(self)</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">other </span><span class="s3">is </span><span class="s1">self</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">is_mapped(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s4">&quot;mapper&quot; </span><span class="s3">in </span><span class="s1">self.__dict__</span>
+
+    <span class="s1">@HasMemoized.memoized_attribute</span>
+    <span class="s3">def </span><span class="s1">_all_key_set(self):</span>
+        <span class="s3">return </span><span class="s1">frozenset(self)</span>
+
+    <span class="s1">@HasMemoized.memoized_attribute</span>
+    <span class="s3">def </span><span class="s1">_collection_impl_keys(self):</span>
+        <span class="s3">return </span><span class="s1">frozenset(</span>
+            <span class="s1">[attr.key </span><span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">self.values() </span><span class="s3">if </span><span class="s1">attr.impl.collection]</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@HasMemoized.memoized_attribute</span>
+    <span class="s3">def </span><span class="s1">_scalar_loader_impls(self):</span>
+        <span class="s3">return </span><span class="s1">frozenset(</span>
+            <span class="s1">[</span>
+                <span class="s1">attr.impl</span>
+                <span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">self.values()</span>
+                <span class="s3">if </span><span class="s1">attr.impl.accepts_scalar_loader</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@HasMemoized.memoized_attribute</span>
+    <span class="s3">def </span><span class="s1">_loader_impls(self):</span>
+        <span class="s3">return </span><span class="s1">frozenset([attr.impl </span><span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">self.values()])</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">mapper(self) -&gt; Mapper[_O]:</span>
+        <span class="s0"># raises unless self.mapper has been assigned</span>
+        <span class="s3">raise </span><span class="s1">exc.UnmappedClassError(self.class_)</span>
+
+    <span class="s3">def </span><span class="s1">_all_sqla_attributes(self</span><span class="s5">, </span><span class="s1">exclude=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;return an iterator of all classbound attributes that are 
+        implement :class:`.InspectionAttr`. 
+ 
+        This includes :class:`.QueryableAttribute` as well as extension 
+        types such as :class:`.hybrid_property` and 
+        :class:`.AssociationProxy`. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">found: Dict[str</span><span class="s5">, </span><span class="s1">Any] = {}</span>
+
+        <span class="s0"># constraints:</span>
+        <span class="s0"># 1. yield keys in cls.__dict__ order</span>
+        <span class="s0"># 2. if a subclass has the same key as a superclass, include that</span>
+        <span class="s0">#    key as part of the ordering of the superclass, because an</span>
+        <span class="s0">#    overridden key is usually installed by the mapper which is going</span>
+        <span class="s0">#    on a different ordering</span>
+        <span class="s0"># 3. don't use getattr() as this fires off descriptors</span>
+
+        <span class="s3">for </span><span class="s1">supercls </span><span class="s3">in </span><span class="s1">self.class_.__mro__[</span><span class="s6">0</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]:</span>
+            <span class="s1">inherits = supercls.__mro__[</span><span class="s6">1</span><span class="s1">]</span>
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">supercls.__dict__:</span>
+                <span class="s1">found.setdefault(key</span><span class="s5">, </span><span class="s1">supercls)</span>
+                <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">inherits.__dict__:</span>
+                    <span class="s3">continue</span>
+                <span class="s1">val = found[key].__dict__[key]</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s1">isinstance(val</span><span class="s5">, </span><span class="s1">interfaces.InspectionAttr)</span>
+                    <span class="s3">and </span><span class="s1">val.is_attribute</span>
+                <span class="s1">):</span>
+                    <span class="s3">yield </span><span class="s1">key</span><span class="s5">, </span><span class="s1">val</span>
+
+    <span class="s3">def </span><span class="s1">_get_class_attr_mro(self</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">default=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;return an attribute on the class without tripping it.&quot;&quot;&quot;</span>
+
+        <span class="s3">for </span><span class="s1">supercls </span><span class="s3">in </span><span class="s1">self.class_.__mro__:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">supercls.__dict__:</span>
+                <span class="s3">return </span><span class="s1">supercls.__dict__[key]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">default</span>
+
+    <span class="s3">def </span><span class="s1">_attr_has_impl(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return True if the given attribute is fully initialized. 
+ 
+        i.e. has an impl. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self </span><span class="s3">and </span><span class="s1">self[key].impl </span><span class="s3">is not None</span>
+
+    <span class="s3">def </span><span class="s1">_subclass_manager(self</span><span class="s5">, </span><span class="s1">cls: Type[_T]) -&gt; ClassManager[_T]:</span>
+        <span class="s2">&quot;&quot;&quot;Create a new ClassManager for a subclass of this ClassManager's 
+        class. 
+ 
+        This is called automatically when attributes are instrumented so that 
+        the attributes can be propagated to subclasses against their own 
+        class-local manager, without the need for mappers etc. to have already 
+        pre-configured managers for the full class hierarchy.   Mappers 
+        can post-configure the auto-generated ClassManager when needed. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">register_class(cls</span><span class="s5">, </span><span class="s1">finalize=</span><span class="s3">False</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_instrument_init(self):</span>
+        <span class="s1">self.new_init = _generate_init(self.class_</span><span class="s5">, </span><span class="s1">self</span><span class="s5">, </span><span class="s1">self.original_init)</span>
+        <span class="s1">self.install_member(</span><span class="s4">&quot;__init__&quot;</span><span class="s5">, </span><span class="s1">self.new_init)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_state_constructor(self) -&gt; Type[state.InstanceState[_O]]:</span>
+        <span class="s1">self.dispatch.first_init(self</span><span class="s5">, </span><span class="s1">self.class_)</span>
+        <span class="s3">return </span><span class="s1">state.InstanceState</span>
+
+    <span class="s3">def </span><span class="s1">manage(self):</span>
+        <span class="s2">&quot;&quot;&quot;Mark this instance as the manager for its class.&quot;&quot;&quot;</span>
+
+        <span class="s1">setattr(self.class_</span><span class="s5">, </span><span class="s1">self.MANAGER_ATTR</span><span class="s5">, </span><span class="s1">self)</span>
+
+    <span class="s1">@util.hybridmethod</span>
+    <span class="s3">def </span><span class="s1">manager_getter(self):</span>
+        <span class="s3">return </span><span class="s1">_default_manager_getter</span>
+
+    <span class="s1">@util.hybridmethod</span>
+    <span class="s3">def </span><span class="s1">state_getter(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return a (instance) -&gt; InstanceState callable. 
+ 
+        &quot;state getter&quot; callables should raise either KeyError or 
+        AttributeError if no InstanceState could be found for the 
+        instance. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">_default_state_getter</span>
+
+    <span class="s1">@util.hybridmethod</span>
+    <span class="s3">def </span><span class="s1">dict_getter(self):</span>
+        <span class="s3">return </span><span class="s1">_default_dict_getter</span>
+
+    <span class="s3">def </span><span class="s1">instrument_attribute(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">key: str</span><span class="s5">,</span>
+        <span class="s1">inst: QueryableAttribute[Any]</span><span class="s5">,</span>
+        <span class="s1">propagated: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">propagated:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.local_attrs:</span>
+                <span class="s3">return  </span><span class="s0"># don't override local attr with inherited attr</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.local_attrs[key] = inst</span>
+            <span class="s1">self.install_descriptor(key</span><span class="s5">, </span><span class="s1">inst)</span>
+        <span class="s1">self._reset_memoizations()</span>
+        <span class="s1">self[key] = inst</span>
+
+        <span class="s3">for </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">self.class_.__subclasses__():</span>
+            <span class="s1">manager = self._subclass_manager(cls)</span>
+            <span class="s1">manager.instrument_attribute(key</span><span class="s5">, </span><span class="s1">inst</span><span class="s5">, </span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">subclass_managers(self</span><span class="s5">, </span><span class="s1">recursive):</span>
+        <span class="s3">for </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">self.class_.__subclasses__():</span>
+            <span class="s1">mgr = opt_manager_of_class(cls)</span>
+            <span class="s3">if </span><span class="s1">mgr </span><span class="s3">is not None and </span><span class="s1">mgr </span><span class="s3">is not </span><span class="s1">self:</span>
+                <span class="s3">yield </span><span class="s1">mgr</span>
+                <span class="s3">if </span><span class="s1">recursive:</span>
+                    <span class="s3">yield from </span><span class="s1">mgr.subclass_managers(</span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">post_configure_attribute(self</span><span class="s5">, </span><span class="s1">key):</span>
+        <span class="s1">_instrumentation_factory.dispatch.attribute_instrument(</span>
+            <span class="s1">self.class_</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">self[key]</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">uninstrument_attribute(self</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">propagated=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">self:</span>
+            <span class="s3">return</span>
+        <span class="s3">if </span><span class="s1">propagated:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.local_attrs:</span>
+                <span class="s3">return  </span><span class="s0"># don't get rid of local attr</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">del </span><span class="s1">self.local_attrs[key]</span>
+            <span class="s1">self.uninstall_descriptor(key)</span>
+        <span class="s1">self._reset_memoizations()</span>
+        <span class="s3">del </span><span class="s1">self[key]</span>
+        <span class="s3">for </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">self.class_.__subclasses__():</span>
+            <span class="s1">manager = opt_manager_of_class(cls)</span>
+            <span class="s3">if </span><span class="s1">manager:</span>
+                <span class="s1">manager.uninstrument_attribute(key</span><span class="s5">, </span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">unregister(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;remove all instrumentation established by this ClassManager.&quot;&quot;&quot;</span>
+
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">list(self.originals):</span>
+            <span class="s1">self.uninstall_member(key)</span>
+
+        <span class="s1">self.mapper = </span><span class="s3">None</span>
+        <span class="s1">self.dispatch = </span><span class="s3">None  </span><span class="s0"># type: ignore</span>
+        <span class="s1">self.new_init = </span><span class="s3">None</span>
+        <span class="s1">self.info.clear()</span>
+
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">list(self):</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.local_attrs:</span>
+                <span class="s1">self.uninstrument_attribute(key)</span>
+
+        <span class="s3">if </span><span class="s1">self.MANAGER_ATTR </span><span class="s3">in </span><span class="s1">self.class_.__dict__:</span>
+            <span class="s1">delattr(self.class_</span><span class="s5">, </span><span class="s1">self.MANAGER_ATTR)</span>
+
+    <span class="s3">def </span><span class="s1">install_descriptor(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">inst: QueryableAttribute[Any]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">(self.STATE_ATTR</span><span class="s5">, </span><span class="s1">self.MANAGER_ATTR):</span>
+            <span class="s3">raise </span><span class="s1">KeyError(</span>
+                <span class="s4">&quot;%r: requested attribute name conflicts with &quot;</span>
+                <span class="s4">&quot;instrumentation attribute of the same name.&quot; </span><span class="s1">% key</span>
+            <span class="s1">)</span>
+        <span class="s1">setattr(self.class_</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">inst)</span>
+
+    <span class="s3">def </span><span class="s1">uninstall_descriptor(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">delattr(self.class_</span><span class="s5">, </span><span class="s1">key)</span>
+
+    <span class="s3">def </span><span class="s1">install_member(self</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">implementation: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">(self.STATE_ATTR</span><span class="s5">, </span><span class="s1">self.MANAGER_ATTR):</span>
+            <span class="s3">raise </span><span class="s1">KeyError(</span>
+                <span class="s4">&quot;%r: requested attribute name conflicts with &quot;</span>
+                <span class="s4">&quot;instrumentation attribute of the same name.&quot; </span><span class="s1">% key</span>
+            <span class="s1">)</span>
+        <span class="s1">self.originals.setdefault(key</span><span class="s5">, </span><span class="s1">self.class_.__dict__.get(key</span><span class="s5">, </span><span class="s1">DEL_ATTR))</span>
+        <span class="s1">setattr(self.class_</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">implementation)</span>
+
+    <span class="s3">def </span><span class="s1">uninstall_member(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">original = self.originals.pop(key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">original </span><span class="s3">is not </span><span class="s1">DEL_ATTR:</span>
+            <span class="s1">setattr(self.class_</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">original)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">delattr(self.class_</span><span class="s5">, </span><span class="s1">key)</span>
+
+    <span class="s3">def </span><span class="s1">instrument_collection_class(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">collection_class: Type[Collection[Any]]</span>
+    <span class="s1">) -&gt; _CollectionFactoryType:</span>
+        <span class="s3">return </span><span class="s1">collections.prepare_instrumentation(collection_class)</span>
+
+    <span class="s3">def </span><span class="s1">initialize_collection(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">key: str</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[_O]</span><span class="s5">,</span>
+        <span class="s1">factory: _CollectionFactoryType</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Tuple[collections.CollectionAdapter</span><span class="s5">, </span><span class="s1">_AdaptedCollectionProtocol]:</span>
+        <span class="s1">user_data = factory()</span>
+        <span class="s1">impl = self.get_impl(key)</span>
+        <span class="s3">assert </span><span class="s1">_is_collection_attribute_impl(impl)</span>
+        <span class="s1">adapter = collections.CollectionAdapter(impl</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">user_data)</span>
+        <span class="s3">return </span><span class="s1">adapter</span><span class="s5">, </span><span class="s1">user_data</span>
+
+    <span class="s3">def </span><span class="s1">is_instrumented(self</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">search: bool = </span><span class="s3">False</span><span class="s1">) -&gt; bool:</span>
+        <span class="s3">if </span><span class="s1">search:</span>
+            <span class="s3">return </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.local_attrs</span>
+
+    <span class="s3">def </span><span class="s1">get_impl(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; AttributeImpl:</span>
+        <span class="s3">return </span><span class="s1">self[key].impl</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">attributes(self) -&gt; Iterable[Any]:</span>
+        <span class="s3">return </span><span class="s1">iter(self.values())</span>
+
+    <span class="s0"># InstanceState management</span>
+
+    <span class="s3">def </span><span class="s1">new_instance(self</span><span class="s5">, </span><span class="s1">state: Optional[InstanceState[_O]] = </span><span class="s3">None</span><span class="s1">) -&gt; _O:</span>
+        <span class="s0"># here, we would prefer _O to be bound to &quot;object&quot;</span>
+        <span class="s0"># so that mypy sees that __new__ is present.   currently</span>
+        <span class="s0"># it's bound to Any as there were other problems not having</span>
+        <span class="s0"># it that way but these can be revisited</span>
+        <span class="s1">instance = self.class_.__new__(self.class_)</span>
+        <span class="s3">if </span><span class="s1">state </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">state = self._state_constructor(instance</span><span class="s5">, </span><span class="s1">self)</span>
+        <span class="s1">self._state_setter(instance</span><span class="s5">, </span><span class="s1">state)</span>
+        <span class="s3">return </span><span class="s1">instance</span>
+
+    <span class="s3">def </span><span class="s1">setup_instance(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">instance: _O</span><span class="s5">, </span><span class="s1">state: Optional[InstanceState[_O]] = </span><span class="s3">None</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">state </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">state = self._state_constructor(instance</span><span class="s5">, </span><span class="s1">self)</span>
+        <span class="s1">self._state_setter(instance</span><span class="s5">, </span><span class="s1">state)</span>
+
+    <span class="s3">def </span><span class="s1">teardown_instance(self</span><span class="s5">, </span><span class="s1">instance: _O) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">delattr(instance</span><span class="s5">, </span><span class="s1">self.STATE_ATTR)</span>
+
+    <span class="s3">def </span><span class="s1">_serialize(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">state: InstanceState[_O]</span><span class="s5">, </span><span class="s1">state_dict: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span>
+    <span class="s1">) -&gt; _SerializeManager:</span>
+        <span class="s3">return </span><span class="s1">_SerializeManager(state</span><span class="s5">, </span><span class="s1">state_dict)</span>
+
+    <span class="s3">def </span><span class="s1">_new_state_if_none(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">instance: _O</span>
+    <span class="s1">) -&gt; Union[Literal[</span><span class="s3">False</span><span class="s1">]</span><span class="s5">, </span><span class="s1">InstanceState[_O]]:</span>
+        <span class="s2">&quot;&quot;&quot;Install a default InstanceState if none is present. 
+ 
+        A private convenience method used by the __init__ decorator. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">hasattr(instance</span><span class="s5">, </span><span class="s1">self.STATE_ATTR):</span>
+            <span class="s3">return False</span>
+        <span class="s3">elif </span><span class="s1">self.class_ </span><span class="s3">is not </span><span class="s1">instance.__class__ </span><span class="s3">and </span><span class="s1">self.is_mapped:</span>
+            <span class="s0"># this will create a new ClassManager for the</span>
+            <span class="s0"># subclass, without a mapper.  This is likely a</span>
+            <span class="s0"># user error situation but allow the object</span>
+            <span class="s0"># to be constructed, so that it is usable</span>
+            <span class="s0"># in a non-ORM context at least.</span>
+            <span class="s3">return </span><span class="s1">self._subclass_manager(</span>
+                <span class="s1">instance.__class__</span>
+            <span class="s1">)._new_state_if_none(instance)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">state = self._state_constructor(instance</span><span class="s5">, </span><span class="s1">self)</span>
+            <span class="s1">self._state_setter(instance</span><span class="s5">, </span><span class="s1">state)</span>
+            <span class="s3">return </span><span class="s1">state</span>
+
+    <span class="s3">def </span><span class="s1">has_state(self</span><span class="s5">, </span><span class="s1">instance: _O) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">hasattr(instance</span><span class="s5">, </span><span class="s1">self.STATE_ATTR)</span>
+
+    <span class="s3">def </span><span class="s1">has_parent(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">state: InstanceState[_O]</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">optimistic: bool = </span><span class="s3">False</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;TODO&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.get_impl(key).hasparent(state</span><span class="s5">, </span><span class="s1">optimistic=optimistic)</span>
+
+    <span class="s3">def </span><span class="s1">__bool__(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;All ClassManagers are non-zero regardless of attribute state.&quot;&quot;&quot;</span>
+        <span class="s3">return True</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s4">&quot;&lt;%s of %r at %x&gt;&quot; </span><span class="s1">% (</span>
+            <span class="s1">self.__class__.__name__</span><span class="s5">,</span>
+            <span class="s1">self.class_</span><span class="s5">,</span>
+            <span class="s1">id(self)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_SerializeManager:</span>
+    <span class="s2">&quot;&quot;&quot;Provide serialization of a :class:`.ClassManager`. 
+ 
+    The :class:`.InstanceState` uses ``__init__()`` on serialize 
+    and ``__call__()`` on deserialize. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">state: state.InstanceState[Any]</span><span class="s5">, </span><span class="s1">d: Dict[str</span><span class="s5">, </span><span class="s1">Any]):</span>
+        <span class="s1">self.class_ = state.class_</span>
+        <span class="s1">manager = state.manager</span>
+        <span class="s1">manager.dispatch.pickle(state</span><span class="s5">, </span><span class="s1">d)</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">inst</span><span class="s5">, </span><span class="s1">state_dict):</span>
+        <span class="s1">state.manager = manager = opt_manager_of_class(self.class_)</span>
+        <span class="s3">if </span><span class="s1">manager </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.UnmappedInstanceError(</span>
+                <span class="s1">inst</span><span class="s5">,</span>
+                <span class="s4">&quot;Cannot deserialize object of type %r - &quot;</span>
+                <span class="s4">&quot;no mapper() has &quot;</span>
+                <span class="s4">&quot;been configured for this class within the current &quot;</span>
+                <span class="s4">&quot;Python process!&quot; </span><span class="s1">% self.class_</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">manager.is_mapped </span><span class="s3">and not </span><span class="s1">manager.mapper.configured:</span>
+            <span class="s1">manager.mapper._check_configure()</span>
+
+        <span class="s0"># setup _sa_instance_state ahead of time so that</span>
+        <span class="s0"># unpickle events can access the object normally.</span>
+        <span class="s0"># see [ticket:2362]</span>
+        <span class="s3">if </span><span class="s1">inst </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">manager.setup_instance(inst</span><span class="s5">, </span><span class="s1">state)</span>
+        <span class="s1">manager.dispatch.unpickle(state</span><span class="s5">, </span><span class="s1">state_dict)</span>
+
+
+<span class="s3">class </span><span class="s1">InstrumentationFactory(EventTarget):</span>
+    <span class="s2">&quot;&quot;&quot;Factory for new ClassManager instances.&quot;&quot;&quot;</span>
+
+    <span class="s1">dispatch: dispatcher[InstrumentationFactory]</span>
+
+    <span class="s3">def </span><span class="s1">create_manager_for_cls(self</span><span class="s5">, </span><span class="s1">class_: Type[_O]) -&gt; ClassManager[_O]:</span>
+        <span class="s3">assert </span><span class="s1">class_ </span><span class="s3">is not None</span>
+        <span class="s3">assert </span><span class="s1">opt_manager_of_class(class_) </span><span class="s3">is None</span>
+
+        <span class="s0"># give a more complicated subclass</span>
+        <span class="s0"># a chance to do what it wants here</span>
+        <span class="s1">manager</span><span class="s5">, </span><span class="s1">factory = self._locate_extended_factory(class_)</span>
+
+        <span class="s3">if </span><span class="s1">factory </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">factory = ClassManager</span>
+            <span class="s1">manager = ClassManager(class_)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">assert </span><span class="s1">manager </span><span class="s3">is not None</span>
+
+        <span class="s1">self._check_conflicts(class_</span><span class="s5">, </span><span class="s1">factory)</span>
+
+        <span class="s1">manager.factory = factory</span>
+
+        <span class="s3">return </span><span class="s1">manager</span>
+
+    <span class="s3">def </span><span class="s1">_locate_extended_factory(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">class_: Type[_O]</span>
+    <span class="s1">) -&gt; Tuple[Optional[ClassManager[_O]]</span><span class="s5">, </span><span class="s1">Optional[_ManagerFactory]]:</span>
+        <span class="s2">&quot;&quot;&quot;Overridden by a subclass to do an extended lookup.&quot;&quot;&quot;</span>
+        <span class="s3">return None</span><span class="s5">, </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">_check_conflicts(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">class_: Type[_O]</span><span class="s5">, </span><span class="s1">factory: Callable[[Type[_O]]</span><span class="s5">, </span><span class="s1">ClassManager[_O]]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Overridden by a subclass to test for conflicting factories.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">unregister(self</span><span class="s5">, </span><span class="s1">class_: Type[_O]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">manager = manager_of_class(class_)</span>
+        <span class="s1">manager.unregister()</span>
+        <span class="s1">self.dispatch.class_uninstrument(class_)</span>
+
+
+<span class="s0"># this attribute is replaced by sqlalchemy.ext.instrumentation</span>
+<span class="s0"># when imported.</span>
+<span class="s1">_instrumentation_factory = InstrumentationFactory()</span>
+
+<span class="s0"># these attributes are replaced by sqlalchemy.ext.instrumentation</span>
+<span class="s0"># when a non-standard InstrumentationManager class is first</span>
+<span class="s0"># used to instrument a class.</span>
+<span class="s1">instance_state = _default_state_getter = base.instance_state</span>
+
+<span class="s1">instance_dict = _default_dict_getter = base.instance_dict</span>
+
+<span class="s1">manager_of_class = _default_manager_getter = base.manager_of_class</span>
+<span class="s1">opt_manager_of_class = _default_opt_manager_getter = base.opt_manager_of_class</span>
+
+
+<span class="s3">def </span><span class="s1">register_class(</span>
+    <span class="s1">class_: Type[_O]</span><span class="s5">,</span>
+    <span class="s1">finalize: bool = </span><span class="s3">True</span><span class="s5">,</span>
+    <span class="s1">mapper: Optional[Mapper[_O]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">registry: Optional[_RegistryType] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">declarative_scan: Optional[_MapperConfig] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">expired_attribute_loader: Optional[_ExpiredAttributeLoaderProto] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">init_method: Optional[Callable[...</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]] = </span><span class="s3">None</span><span class="s5">,</span>
+<span class="s1">) -&gt; ClassManager[_O]:</span>
+    <span class="s2">&quot;&quot;&quot;Register class instrumentation. 
+ 
+    Returns the existing or newly created class manager. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">manager = opt_manager_of_class(class_)</span>
+    <span class="s3">if </span><span class="s1">manager </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">manager = _instrumentation_factory.create_manager_for_cls(class_)</span>
+    <span class="s1">manager._update_state(</span>
+        <span class="s1">mapper=mapper</span><span class="s5">,</span>
+        <span class="s1">registry=registry</span><span class="s5">,</span>
+        <span class="s1">declarative_scan=declarative_scan</span><span class="s5">,</span>
+        <span class="s1">expired_attribute_loader=expired_attribute_loader</span><span class="s5">,</span>
+        <span class="s1">init_method=init_method</span><span class="s5">,</span>
+        <span class="s1">finalize=finalize</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s3">return </span><span class="s1">manager</span>
+
+
+<span class="s3">def </span><span class="s1">unregister_class(class_):</span>
+    <span class="s2">&quot;&quot;&quot;Unregister class instrumentation.&quot;&quot;&quot;</span>
+
+    <span class="s1">_instrumentation_factory.unregister(class_)</span>
+
+
+<span class="s3">def </span><span class="s1">is_instrumented(instance</span><span class="s5">, </span><span class="s1">key):</span>
+    <span class="s2">&quot;&quot;&quot;Return True if the given attribute on the given instance is 
+    instrumented by the attributes package. 
+ 
+    This function may be used regardless of instrumentation 
+    applied directly to the class, i.e. no descriptors are required. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">return </span><span class="s1">manager_of_class(instance.__class__).is_instrumented(</span>
+        <span class="s1">key</span><span class="s5">, </span><span class="s1">search=</span><span class="s3">True</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_generate_init(class_</span><span class="s5">, </span><span class="s1">class_manager</span><span class="s5">, </span><span class="s1">original_init):</span>
+    <span class="s2">&quot;&quot;&quot;Build an __init__ decorator that triggers ClassManager events.&quot;&quot;&quot;</span>
+
+    <span class="s0"># TODO: we should use the ClassManager's notion of the</span>
+    <span class="s0"># original '__init__' method, once ClassManager is fixed</span>
+    <span class="s0"># to always reference that.</span>
+
+    <span class="s3">if </span><span class="s1">original_init </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">original_init = class_.__init__</span>
+
+    <span class="s0"># Go through some effort here and don't change the user's __init__</span>
+    <span class="s0"># calling signature, including the unlikely case that it has</span>
+    <span class="s0"># a return value.</span>
+    <span class="s0"># FIXME: need to juggle local names to avoid constructor argument</span>
+    <span class="s0"># clashes.</span>
+    <span class="s1">func_body = </span><span class="s4">&quot;&quot;&quot;</span><span class="s7">\ 
+</span><span class="s4">def __init__(%(apply_pos)s): 
+    new_state = class_manager._new_state_if_none(%(self_arg)s) 
+    if new_state: 
+        return new_state._initialize_instance(%(apply_kw)s) 
+    else: 
+        return original_init(%(apply_kw)s) 
+&quot;&quot;&quot;</span>
+    <span class="s1">func_vars = util.format_argspec_init(original_init</span><span class="s5">, </span><span class="s1">grouped=</span><span class="s3">False</span><span class="s1">)</span>
+    <span class="s1">func_text = func_body % func_vars</span>
+
+    <span class="s1">func_defaults = getattr(original_init</span><span class="s5">, </span><span class="s4">&quot;__defaults__&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+    <span class="s1">func_kw_defaults = getattr(original_init</span><span class="s5">, </span><span class="s4">&quot;__kwdefaults__&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s1">env = locals().copy()</span>
+    <span class="s1">env[</span><span class="s4">&quot;__name__&quot;</span><span class="s1">] = __name__</span>
+    <span class="s1">exec(func_text</span><span class="s5">, </span><span class="s1">env)</span>
+    <span class="s1">__init__ = env[</span><span class="s4">&quot;__init__&quot;</span><span class="s1">]</span>
+    <span class="s1">__init__.__doc__ = original_init.__doc__</span>
+    <span class="s1">__init__._sa_original_init = original_init</span>
+
+    <span class="s3">if </span><span class="s1">func_defaults:</span>
+        <span class="s1">__init__.__defaults__ = func_defaults</span>
+    <span class="s3">if </span><span class="s1">func_kw_defaults:</span>
+        <span class="s1">__init__.__kwdefaults__ = func_kw_defaults</span>
+
+    <span class="s3">return </span><span class="s1">__init__</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<html>
+<head>
+<title>processors.pyx</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+processors.pyx</font>
+</center></td></tr></table>
+<pre><span class="s0"># cyextension/processors.pyx</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s2">import </span><span class="s1">datetime</span>
+<span class="s2">from </span><span class="s1">datetime </span><span class="s2">import </span><span class="s1">datetime </span><span class="s2">as </span><span class="s1">datetime_cls</span>
+<span class="s2">from </span><span class="s1">datetime </span><span class="s2">import </span><span class="s1">time </span><span class="s2">as </span><span class="s1">time_cls</span>
+<span class="s2">from </span><span class="s1">datetime </span><span class="s2">import </span><span class="s1">date </span><span class="s2">as </span><span class="s1">date_cls</span>
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s1">cpython.object </span><span class="s2">cimport </span><span class="s1">PyObject_Str</span>
+<span class="s2">from </span><span class="s1">cpython.unicode </span><span class="s2">cimport </span><span class="s1">PyUnicode_AsASCIIString</span><span class="s3">, </span><span class="s1">PyUnicode_Check</span><span class="s3">, </span><span class="s1">PyUnicode_Decode</span>
+<span class="s2">from </span><span class="s1">libc.stdio </span><span class="s2">cimport </span><span class="s1">sscanf</span>
+
+
+<span class="s2">def </span><span class="s1">int_to_boolean(value):</span>
+    <span class="s2">if </span><span class="s1">value </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">return None</span>
+    <span class="s2">return True if </span><span class="s1">value </span><span class="s2">else False</span>
+
+<span class="s2">def </span><span class="s1">to_str(value):</span>
+    <span class="s2">return </span><span class="s1">PyObject_Str(value) </span><span class="s2">if </span><span class="s1">value </span><span class="s2">is not None else None</span>
+
+<span class="s2">def </span><span class="s1">to_float(value):</span>
+    <span class="s2">return </span><span class="s1">float(value) </span><span class="s2">if </span><span class="s1">value </span><span class="s2">is not None else None</span>
+
+<span class="s2">cdef </span><span class="s1">inline bytes to_bytes(object value</span><span class="s3">, </span><span class="s1">str type_name):</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">PyUnicode_AsASCIIString(value)</span>
+    <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">e:</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span>
+            <span class="s4">f&quot;Couldn't parse </span><span class="s5">{</span><span class="s1">type_name</span><span class="s5">} </span><span class="s4">string '</span><span class="s5">{</span><span class="s1">value</span><span class="s5">!r}</span><span class="s4">' &quot;</span>
+            <span class="s4">&quot;- value is not a string.&quot;</span>
+        <span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+<span class="s2">def </span><span class="s1">str_to_datetime(value):</span>
+    <span class="s2">if </span><span class="s1">value </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s1">value = datetime_cls.fromisoformat(value)</span>
+    <span class="s2">return </span><span class="s1">value</span>
+
+<span class="s2">def </span><span class="s1">str_to_time(value):</span>
+    <span class="s2">if </span><span class="s1">value </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s1">value = time_cls.fromisoformat(value)</span>
+    <span class="s2">return </span><span class="s1">value</span>
+
+
+<span class="s2">def </span><span class="s1">str_to_date(value):</span>
+    <span class="s2">if </span><span class="s1">value </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s1">value = date_cls.fromisoformat(value)</span>
+    <span class="s2">return </span><span class="s1">value</span>
+
+
+
+<span class="s2">cdef class </span><span class="s1">DecimalResultProcessor:</span>
+    <span class="s2">cdef </span><span class="s1">object type_</span>
+    <span class="s2">cdef </span><span class="s1">str format_</span>
+
+    <span class="s2">def </span><span class="s1">__cinit__(self</span><span class="s3">, </span><span class="s1">type_</span><span class="s3">, </span><span class="s1">format_):</span>
+        <span class="s1">self.type_ = type_</span>
+        <span class="s1">self.format_ = format_</span>
+
+    <span class="s2">def </span><span class="s1">process(self</span><span class="s3">, </span><span class="s1">object value):</span>
+        <span class="s2">if </span><span class="s1">value </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self.type_(self.format_ % value)</span>
+</pre>
+</body>
+</html>

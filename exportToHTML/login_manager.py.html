@@ -1,0 +1,567 @@
+<html>
+<head>
+<title>login_manager.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #5d69bb;}
+.s5 { color: #96bf7d;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+login_manager.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">datetime </span><span class="s0">import </span><span class="s1">datetime</span>
+<span class="s0">from </span><span class="s1">datetime </span><span class="s0">import </span><span class="s1">timedelta</span>
+
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">abort</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">current_app</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">flash</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">g</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">has_app_context</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">redirect</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">request</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">session</span>
+
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">AUTH_HEADER_NAME</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">COOKIE_DURATION</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">COOKIE_HTTPONLY</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">COOKIE_NAME</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">COOKIE_SAMESITE</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">COOKIE_SECURE</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">ID_ATTRIBUTE</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">LOGIN_MESSAGE</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">LOGIN_MESSAGE_CATEGORY</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">REFRESH_MESSAGE</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">REFRESH_MESSAGE_CATEGORY</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">SESSION_KEYS</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">USE_SESSION_FOR_NEXT</span>
+<span class="s0">from </span><span class="s1">.mixins </span><span class="s0">import </span><span class="s1">AnonymousUserMixin</span>
+<span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">session_protected</span>
+<span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">user_accessed</span>
+<span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">user_loaded_from_cookie</span>
+<span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">user_loaded_from_request</span>
+<span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">user_needs_refresh</span>
+<span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">user_unauthorized</span>
+<span class="s0">from </span><span class="s1">.utils </span><span class="s0">import </span><span class="s1">_create_identifier</span>
+<span class="s0">from </span><span class="s1">.utils </span><span class="s0">import </span><span class="s1">_user_context_processor</span>
+<span class="s0">from </span><span class="s1">.utils </span><span class="s0">import </span><span class="s1">decode_cookie</span>
+<span class="s0">from </span><span class="s1">.utils </span><span class="s0">import </span><span class="s1">encode_cookie</span>
+<span class="s0">from </span><span class="s1">.utils </span><span class="s0">import </span><span class="s1">expand_login_view</span>
+<span class="s0">from </span><span class="s1">.utils </span><span class="s0">import </span><span class="s1">login_url </span><span class="s0">as </span><span class="s1">make_login_url</span>
+<span class="s0">from </span><span class="s1">.utils </span><span class="s0">import </span><span class="s1">make_next_param</span>
+
+
+<span class="s0">class </span><span class="s1">LoginManager:</span>
+    <span class="s2">&quot;&quot;&quot;This object is used to hold the settings used for logging in. Instances 
+    of :class:`LoginManager` are *not* bound to specific apps, so you can 
+    create one in the main body of your code and then bind it to your 
+    app in a factory function. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">app=</span><span class="s0">None</span><span class="s3">, </span><span class="s1">add_context_processor=</span><span class="s0">True</span><span class="s1">):</span>
+        <span class="s4">#: A class or factory function that produces an anonymous user, which</span>
+        <span class="s4">#: is used when no one is logged in.</span>
+        <span class="s1">self.anonymous_user = AnonymousUserMixin</span>
+
+        <span class="s4">#: The name of the view to redirect to when the user needs to log in.</span>
+        <span class="s4">#: (This can be an absolute URL as well, if your authentication</span>
+        <span class="s4">#: machinery is external to your application.)</span>
+        <span class="s1">self.login_view = </span><span class="s0">None</span>
+
+        <span class="s4">#: Names of views to redirect to when the user needs to log in,</span>
+        <span class="s4">#: per blueprint. If the key value is set to None the value of</span>
+        <span class="s4">#: :attr:`login_view` will be used instead.</span>
+        <span class="s1">self.blueprint_login_views = {}</span>
+
+        <span class="s4">#: The message to flash when a user is redirected to the login page.</span>
+        <span class="s1">self.login_message = LOGIN_MESSAGE</span>
+
+        <span class="s4">#: The message category to flash when a user is redirected to the login</span>
+        <span class="s4">#: page.</span>
+        <span class="s1">self.login_message_category = LOGIN_MESSAGE_CATEGORY</span>
+
+        <span class="s4">#: The name of the view to redirect to when the user needs to</span>
+        <span class="s4">#: reauthenticate.</span>
+        <span class="s1">self.refresh_view = </span><span class="s0">None</span>
+
+        <span class="s4">#: The message to flash when a user is redirected to the 'needs</span>
+        <span class="s4">#: refresh' page.</span>
+        <span class="s1">self.needs_refresh_message = REFRESH_MESSAGE</span>
+
+        <span class="s4">#: The message category to flash when a user is redirected to the</span>
+        <span class="s4">#: 'needs refresh' page.</span>
+        <span class="s1">self.needs_refresh_message_category = REFRESH_MESSAGE_CATEGORY</span>
+
+        <span class="s4">#: The mode to use session protection in. This can be either</span>
+        <span class="s4">#: ``'basic'`` (the default) or ``'strong'``, or ``None`` to disable</span>
+        <span class="s4">#: it.</span>
+        <span class="s1">self.session_protection = </span><span class="s5">&quot;basic&quot;</span>
+
+        <span class="s4">#: If present, used to translate flash messages ``self.login_message``</span>
+        <span class="s4">#: and ``self.needs_refresh_message``</span>
+        <span class="s1">self.localize_callback = </span><span class="s0">None</span>
+
+        <span class="s1">self.unauthorized_callback = </span><span class="s0">None</span>
+
+        <span class="s1">self.needs_refresh_callback = </span><span class="s0">None</span>
+
+        <span class="s1">self.id_attribute = ID_ATTRIBUTE</span>
+
+        <span class="s1">self._user_callback = </span><span class="s0">None</span>
+
+        <span class="s1">self._header_callback = </span><span class="s0">None</span>
+
+        <span class="s1">self._request_callback = </span><span class="s0">None</span>
+
+        <span class="s1">self._session_identifier_generator = _create_identifier</span>
+
+        <span class="s0">if </span><span class="s1">app </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">self.init_app(app</span><span class="s3">, </span><span class="s1">add_context_processor)</span>
+
+    <span class="s0">def </span><span class="s1">setup_app(self</span><span class="s3">, </span><span class="s1">app</span><span class="s3">, </span><span class="s1">add_context_processor=</span><span class="s0">True</span><span class="s1">):  </span><span class="s4"># pragma: no cover</span>
+        <span class="s2">&quot;&quot;&quot; 
+        This method has been deprecated. Please use 
+        :meth:`LoginManager.init_app` instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">import </span><span class="s1">warnings</span>
+
+        <span class="s1">warnings.warn(</span>
+            <span class="s5">&quot;'setup_app' is deprecated and will be removed in&quot;</span>
+            <span class="s5">&quot; Flask-Login 0.7. Use 'init_app' instead.&quot;</span><span class="s3">,</span>
+            <span class="s1">DeprecationWarning</span><span class="s3">,</span>
+            <span class="s1">stacklevel=</span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self.init_app(app</span><span class="s3">, </span><span class="s1">add_context_processor)</span>
+
+    <span class="s0">def </span><span class="s1">init_app(self</span><span class="s3">, </span><span class="s1">app</span><span class="s3">, </span><span class="s1">add_context_processor=</span><span class="s0">True</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Configures an application. This registers an `after_request` call, and 
+        attaches this `LoginManager` to it as `app.login_manager`. 
+ 
+        :param app: The :class:`flask.Flask` object to configure. 
+        :type app: :class:`flask.Flask` 
+        :param add_context_processor: Whether to add a context processor to 
+            the app that adds a `current_user` variable to the template. 
+            Defaults to ``True``. 
+        :type add_context_processor: bool 
+        &quot;&quot;&quot;</span>
+        <span class="s1">app.login_manager = self</span>
+        <span class="s1">app.after_request(self._update_remember_cookie)</span>
+
+        <span class="s0">if </span><span class="s1">add_context_processor:</span>
+            <span class="s1">app.context_processor(_user_context_processor)</span>
+
+    <span class="s0">def </span><span class="s1">unauthorized(self):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        This is called when the user is required to log in. If you register a 
+        callback with :meth:`LoginManager.unauthorized_handler`, then it will 
+        be called. Otherwise, it will take the following actions: 
+ 
+            - Flash :attr:`LoginManager.login_message` to the user. 
+ 
+            - If the app is using blueprints find the login view for 
+              the current blueprint using `blueprint_login_views`. If the app 
+              is not using blueprints or the login view for the current 
+              blueprint is not specified use the value of `login_view`. 
+ 
+            - Redirect the user to the login view. (The page they were 
+              attempting to access will be passed in the ``next`` query 
+              string variable, so you can redirect there if present instead 
+              of the homepage. Alternatively, it will be added to the session 
+              as ``next`` if USE_SESSION_FOR_NEXT is set.) 
+ 
+        If :attr:`LoginManager.login_view` is not defined, then it will simply 
+        raise a HTTP 401 (Unauthorized) error instead. 
+ 
+        This should be returned from a view or before/after_request function, 
+        otherwise the redirect will have no effect. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">user_unauthorized.send(current_app._get_current_object())</span>
+
+        <span class="s0">if </span><span class="s1">self.unauthorized_callback:</span>
+            <span class="s0">return </span><span class="s1">self.unauthorized_callback()</span>
+
+        <span class="s0">if </span><span class="s1">request.blueprint </span><span class="s0">in </span><span class="s1">self.blueprint_login_views:</span>
+            <span class="s1">login_view = self.blueprint_login_views[request.blueprint]</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">login_view = self.login_view</span>
+
+        <span class="s0">if not </span><span class="s1">login_view:</span>
+            <span class="s1">abort(</span><span class="s6">401</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">self.login_message:</span>
+            <span class="s0">if </span><span class="s1">self.localize_callback </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">flash(</span>
+                    <span class="s1">self.localize_callback(self.login_message)</span><span class="s3">,</span>
+                    <span class="s1">category=self.login_message_category</span><span class="s3">,</span>
+                <span class="s1">)</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">flash(self.login_message</span><span class="s3">, </span><span class="s1">category=self.login_message_category)</span>
+
+        <span class="s1">config = current_app.config</span>
+        <span class="s0">if </span><span class="s1">config.get(</span><span class="s5">&quot;USE_SESSION_FOR_NEXT&quot;</span><span class="s3">, </span><span class="s1">USE_SESSION_FOR_NEXT):</span>
+            <span class="s1">login_url = expand_login_view(login_view)</span>
+            <span class="s1">session[</span><span class="s5">&quot;_id&quot;</span><span class="s1">] = self._session_identifier_generator()</span>
+            <span class="s1">session[</span><span class="s5">&quot;next&quot;</span><span class="s1">] = make_next_param(login_url</span><span class="s3">, </span><span class="s1">request.url)</span>
+            <span class="s1">redirect_url = make_login_url(login_view)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">redirect_url = make_login_url(login_view</span><span class="s3">, </span><span class="s1">next_url=request.url)</span>
+
+        <span class="s0">return </span><span class="s1">redirect(redirect_url)</span>
+
+    <span class="s0">def </span><span class="s1">user_loader(self</span><span class="s3">, </span><span class="s1">callback):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        This sets the callback for reloading a user from the session. The 
+        function you set should take a user ID (a ``str``) and return a 
+        user object, or ``None`` if the user does not exist. 
+ 
+        :param callback: The callback for retrieving a user object. 
+        :type callback: callable 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._user_callback = callback</span>
+        <span class="s0">return </span><span class="s1">self.user_callback</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">user_callback(self):</span>
+        <span class="s2">&quot;&quot;&quot;Gets the user_loader callback set by user_loader decorator.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self._user_callback</span>
+
+    <span class="s0">def </span><span class="s1">request_loader(self</span><span class="s3">, </span><span class="s1">callback):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        This sets the callback for loading a user from a Flask request. 
+        The function you set should take Flask request object and 
+        return a user object, or `None` if the user does not exist. 
+ 
+        :param callback: The callback for retrieving a user object. 
+        :type callback: callable 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._request_callback = callback</span>
+        <span class="s0">return </span><span class="s1">self.request_callback</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">request_callback(self):</span>
+        <span class="s2">&quot;&quot;&quot;Gets the request_loader callback set by request_loader decorator.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self._request_callback</span>
+
+    <span class="s0">def </span><span class="s1">unauthorized_handler(self</span><span class="s3">, </span><span class="s1">callback):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        This will set the callback for the `unauthorized` method, which among 
+        other things is used by `login_required`. It takes no arguments, and 
+        should return a response to be sent to the user instead of their 
+        normal view. 
+ 
+        :param callback: The callback for unauthorized users. 
+        :type callback: callable 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.unauthorized_callback = callback</span>
+        <span class="s0">return </span><span class="s1">callback</span>
+
+    <span class="s0">def </span><span class="s1">needs_refresh_handler(self</span><span class="s3">, </span><span class="s1">callback):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        This will set the callback for the `needs_refresh` method, which among 
+        other things is used by `fresh_login_required`. It takes no arguments, 
+        and should return a response to be sent to the user instead of their 
+        normal view. 
+ 
+        :param callback: The callback for unauthorized users. 
+        :type callback: callable 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.needs_refresh_callback = callback</span>
+        <span class="s0">return </span><span class="s1">callback</span>
+
+    <span class="s0">def </span><span class="s1">needs_refresh(self):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        This is called when the user is logged in, but they need to be 
+        reauthenticated because their session is stale. If you register a 
+        callback with `needs_refresh_handler`, then it will be called. 
+        Otherwise, it will take the following actions: 
+ 
+            - Flash :attr:`LoginManager.needs_refresh_message` to the user. 
+ 
+            - Redirect the user to :attr:`LoginManager.refresh_view`. (The page 
+              they were attempting to access will be passed in the ``next`` 
+              query string variable, so you can redirect there if present 
+              instead of the homepage.) 
+ 
+        If :attr:`LoginManager.refresh_view` is not defined, then it will 
+        simply raise a HTTP 401 (Unauthorized) error instead. 
+ 
+        This should be returned from a view or before/after_request function, 
+        otherwise the redirect will have no effect. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">user_needs_refresh.send(current_app._get_current_object())</span>
+
+        <span class="s0">if </span><span class="s1">self.needs_refresh_callback:</span>
+            <span class="s0">return </span><span class="s1">self.needs_refresh_callback()</span>
+
+        <span class="s0">if not </span><span class="s1">self.refresh_view:</span>
+            <span class="s1">abort(</span><span class="s6">401</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">self.needs_refresh_message:</span>
+            <span class="s0">if </span><span class="s1">self.localize_callback </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">flash(</span>
+                    <span class="s1">self.localize_callback(self.needs_refresh_message)</span><span class="s3">,</span>
+                    <span class="s1">category=self.needs_refresh_message_category</span><span class="s3">,</span>
+                <span class="s1">)</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">flash(</span>
+                    <span class="s1">self.needs_refresh_message</span><span class="s3">,</span>
+                    <span class="s1">category=self.needs_refresh_message_category</span><span class="s3">,</span>
+                <span class="s1">)</span>
+
+        <span class="s1">config = current_app.config</span>
+        <span class="s0">if </span><span class="s1">config.get(</span><span class="s5">&quot;USE_SESSION_FOR_NEXT&quot;</span><span class="s3">, </span><span class="s1">USE_SESSION_FOR_NEXT):</span>
+            <span class="s1">login_url = expand_login_view(self.refresh_view)</span>
+            <span class="s1">session[</span><span class="s5">&quot;_id&quot;</span><span class="s1">] = self._session_identifier_generator()</span>
+            <span class="s1">session[</span><span class="s5">&quot;next&quot;</span><span class="s1">] = make_next_param(login_url</span><span class="s3">, </span><span class="s1">request.url)</span>
+            <span class="s1">redirect_url = make_login_url(self.refresh_view)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">login_url = self.refresh_view</span>
+            <span class="s1">redirect_url = make_login_url(login_url</span><span class="s3">, </span><span class="s1">next_url=request.url)</span>
+
+        <span class="s0">return </span><span class="s1">redirect(redirect_url)</span>
+
+    <span class="s0">def </span><span class="s1">header_loader(self</span><span class="s3">, </span><span class="s1">callback):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        This function has been deprecated. Please use 
+        :meth:`LoginManager.request_loader` instead. 
+ 
+        This sets the callback for loading a user from a header value. 
+        The function you set should take an authentication token and 
+        return a user object, or `None` if the user does not exist. 
+ 
+        :param callback: The callback for retrieving a user object. 
+        :type callback: callable 
+        &quot;&quot;&quot;</span>
+        <span class="s0">import </span><span class="s1">warnings</span>
+
+        <span class="s1">warnings.warn(</span>
+            <span class="s5">&quot;'header_loader' is deprecated and will be removed in&quot;</span>
+            <span class="s5">&quot; Flask-Login 0.7. Use 'request_loader' instead.&quot;</span><span class="s3">,</span>
+            <span class="s1">DeprecationWarning</span><span class="s3">,</span>
+            <span class="s1">stacklevel=</span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self._header_callback = callback</span>
+        <span class="s0">return </span><span class="s1">callback</span>
+
+    <span class="s0">def </span><span class="s1">_update_request_context_with_user(self</span><span class="s3">, </span><span class="s1">user=</span><span class="s0">None</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Store the given user as ctx.user.&quot;&quot;&quot;</span>
+
+        <span class="s0">if </span><span class="s1">user </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">user = self.anonymous_user()</span>
+
+        <span class="s1">g._login_user = user</span>
+
+    <span class="s0">def </span><span class="s1">_load_user(self):</span>
+        <span class="s2">&quot;&quot;&quot;Loads user from session or remember_me cookie as applicable&quot;&quot;&quot;</span>
+
+        <span class="s0">if </span><span class="s1">self._user_callback </span><span class="s0">is None and </span><span class="s1">self._request_callback </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">Exception(</span>
+                <span class="s5">&quot;Missing user_loader or request_loader. Refer to &quot;</span>
+                <span class="s5">&quot;http://flask-login.readthedocs.io/#how-it-works &quot;</span>
+                <span class="s5">&quot;for more info.&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">user_accessed.send(current_app._get_current_object())</span>
+
+        <span class="s4"># Check SESSION_PROTECTION</span>
+        <span class="s0">if </span><span class="s1">self._session_protection_failed():</span>
+            <span class="s0">return </span><span class="s1">self._update_request_context_with_user()</span>
+
+        <span class="s1">user = </span><span class="s0">None</span>
+
+        <span class="s4"># Load user from Flask Session</span>
+        <span class="s1">user_id = session.get(</span><span class="s5">&quot;_user_id&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">user_id </span><span class="s0">is not None and </span><span class="s1">self._user_callback </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">user = self._user_callback(user_id)</span>
+
+        <span class="s4"># Load user from Remember Me Cookie or Request Loader</span>
+        <span class="s0">if </span><span class="s1">user </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">config = current_app.config</span>
+            <span class="s1">cookie_name = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_NAME&quot;</span><span class="s3">, </span><span class="s1">COOKIE_NAME)</span>
+            <span class="s1">header_name = config.get(</span><span class="s5">&quot;AUTH_HEADER_NAME&quot;</span><span class="s3">, </span><span class="s1">AUTH_HEADER_NAME)</span>
+            <span class="s1">has_cookie = (</span>
+                <span class="s1">cookie_name </span><span class="s0">in </span><span class="s1">request.cookies </span><span class="s0">and </span><span class="s1">session.get(</span><span class="s5">&quot;_remember&quot;</span><span class="s1">) != </span><span class="s5">&quot;clear&quot;</span>
+            <span class="s1">)</span>
+            <span class="s0">if </span><span class="s1">has_cookie:</span>
+                <span class="s1">cookie = request.cookies[cookie_name]</span>
+                <span class="s1">user = self._load_user_from_remember_cookie(cookie)</span>
+            <span class="s0">elif </span><span class="s1">self._request_callback:</span>
+                <span class="s1">user = self._load_user_from_request(request)</span>
+            <span class="s0">elif </span><span class="s1">header_name </span><span class="s0">in </span><span class="s1">request.headers:</span>
+                <span class="s1">header = request.headers[header_name]</span>
+                <span class="s1">user = self._load_user_from_header(header)</span>
+
+        <span class="s0">return </span><span class="s1">self._update_request_context_with_user(user)</span>
+
+    <span class="s0">def </span><span class="s1">_session_protection_failed(self):</span>
+        <span class="s1">sess = session._get_current_object()</span>
+        <span class="s1">ident = self._session_identifier_generator()</span>
+
+        <span class="s1">app = current_app._get_current_object()</span>
+        <span class="s1">mode = app.config.get(</span><span class="s5">&quot;SESSION_PROTECTION&quot;</span><span class="s3">, </span><span class="s1">self.session_protection)</span>
+
+        <span class="s0">if not </span><span class="s1">mode </span><span class="s0">or </span><span class="s1">mode </span><span class="s0">not in </span><span class="s1">[</span><span class="s5">&quot;basic&quot;</span><span class="s3">, </span><span class="s5">&quot;strong&quot;</span><span class="s1">]:</span>
+            <span class="s0">return False</span>
+
+        <span class="s4"># if the sess is empty, it's an anonymous user or just logged out</span>
+        <span class="s4"># so we can skip this</span>
+        <span class="s0">if </span><span class="s1">sess </span><span class="s0">and </span><span class="s1">ident != sess.get(</span><span class="s5">&quot;_id&quot;</span><span class="s3">, </span><span class="s0">None</span><span class="s1">):</span>
+            <span class="s0">if </span><span class="s1">mode == </span><span class="s5">&quot;basic&quot; </span><span class="s0">or </span><span class="s1">sess.permanent:</span>
+                <span class="s0">if </span><span class="s1">sess.get(</span><span class="s5">&quot;_fresh&quot;</span><span class="s1">) </span><span class="s0">is not False</span><span class="s1">:</span>
+                    <span class="s1">sess[</span><span class="s5">&quot;_fresh&quot;</span><span class="s1">] = </span><span class="s0">False</span>
+                <span class="s1">session_protected.send(app)</span>
+                <span class="s0">return False</span>
+            <span class="s0">elif </span><span class="s1">mode == </span><span class="s5">&quot;strong&quot;</span><span class="s1">:</span>
+                <span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">SESSION_KEYS:</span>
+                    <span class="s1">sess.pop(k</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)</span>
+
+                <span class="s1">sess[</span><span class="s5">&quot;_remember&quot;</span><span class="s1">] = </span><span class="s5">&quot;clear&quot;</span>
+                <span class="s1">session_protected.send(app)</span>
+                <span class="s0">return True</span>
+
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">_load_user_from_remember_cookie(self</span><span class="s3">, </span><span class="s1">cookie):</span>
+        <span class="s1">user_id = decode_cookie(cookie)</span>
+        <span class="s0">if </span><span class="s1">user_id </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">session[</span><span class="s5">&quot;_user_id&quot;</span><span class="s1">] = user_id</span>
+            <span class="s1">session[</span><span class="s5">&quot;_fresh&quot;</span><span class="s1">] = </span><span class="s0">False</span>
+            <span class="s1">user = </span><span class="s0">None</span>
+            <span class="s0">if </span><span class="s1">self._user_callback:</span>
+                <span class="s1">user = self._user_callback(user_id)</span>
+            <span class="s0">if </span><span class="s1">user </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">app = current_app._get_current_object()</span>
+                <span class="s1">user_loaded_from_cookie.send(app</span><span class="s3">, </span><span class="s1">user=user)</span>
+                <span class="s0">return </span><span class="s1">user</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">_load_user_from_header(self</span><span class="s3">, </span><span class="s1">header):</span>
+        <span class="s0">if </span><span class="s1">self._header_callback:</span>
+            <span class="s1">user = self._header_callback(header)</span>
+            <span class="s0">if </span><span class="s1">user </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">app = current_app._get_current_object()</span>
+
+                <span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">_user_loaded_from_header</span>
+
+                <span class="s1">_user_loaded_from_header.send(app</span><span class="s3">, </span><span class="s1">user=user)</span>
+                <span class="s0">return </span><span class="s1">user</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">_load_user_from_request(self</span><span class="s3">, </span><span class="s1">request):</span>
+        <span class="s0">if </span><span class="s1">self._request_callback:</span>
+            <span class="s1">user = self._request_callback(request)</span>
+            <span class="s0">if </span><span class="s1">user </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">app = current_app._get_current_object()</span>
+                <span class="s1">user_loaded_from_request.send(app</span><span class="s3">, </span><span class="s1">user=user)</span>
+                <span class="s0">return </span><span class="s1">user</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">_update_remember_cookie(self</span><span class="s3">, </span><span class="s1">response):</span>
+        <span class="s4"># Don't modify the session unless there's something to do.</span>
+        <span class="s0">if </span><span class="s5">&quot;_remember&quot; </span><span class="s0">not in </span><span class="s1">session </span><span class="s0">and </span><span class="s1">current_app.config.get(</span>
+            <span class="s5">&quot;REMEMBER_COOKIE_REFRESH_EACH_REQUEST&quot;</span>
+        <span class="s1">):</span>
+            <span class="s1">session[</span><span class="s5">&quot;_remember&quot;</span><span class="s1">] = </span><span class="s5">&quot;set&quot;</span>
+
+        <span class="s0">if </span><span class="s5">&quot;_remember&quot; </span><span class="s0">in </span><span class="s1">session:</span>
+            <span class="s1">operation = session.pop(</span><span class="s5">&quot;_remember&quot;</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)</span>
+
+            <span class="s0">if </span><span class="s1">operation == </span><span class="s5">&quot;set&quot; </span><span class="s0">and </span><span class="s5">&quot;_user_id&quot; </span><span class="s0">in </span><span class="s1">session:</span>
+                <span class="s1">self._set_cookie(response)</span>
+            <span class="s0">elif </span><span class="s1">operation == </span><span class="s5">&quot;clear&quot;</span><span class="s1">:</span>
+                <span class="s1">self._clear_cookie(response)</span>
+
+        <span class="s0">return </span><span class="s1">response</span>
+
+    <span class="s0">def </span><span class="s1">_set_cookie(self</span><span class="s3">, </span><span class="s1">response):</span>
+        <span class="s4"># cookie settings</span>
+        <span class="s1">config = current_app.config</span>
+        <span class="s1">cookie_name = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_NAME&quot;</span><span class="s3">, </span><span class="s1">COOKIE_NAME)</span>
+        <span class="s1">domain = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_DOMAIN&quot;</span><span class="s1">)</span>
+        <span class="s1">path = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_PATH&quot;</span><span class="s3">, </span><span class="s5">&quot;/&quot;</span><span class="s1">)</span>
+
+        <span class="s1">secure = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_SECURE&quot;</span><span class="s3">, </span><span class="s1">COOKIE_SECURE)</span>
+        <span class="s1">httponly = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_HTTPONLY&quot;</span><span class="s3">, </span><span class="s1">COOKIE_HTTPONLY)</span>
+        <span class="s1">samesite = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_SAMESITE&quot;</span><span class="s3">, </span><span class="s1">COOKIE_SAMESITE)</span>
+
+        <span class="s0">if </span><span class="s5">&quot;_remember_seconds&quot; </span><span class="s0">in </span><span class="s1">session:</span>
+            <span class="s1">duration = timedelta(seconds=session[</span><span class="s5">&quot;_remember_seconds&quot;</span><span class="s1">])</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">duration = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_DURATION&quot;</span><span class="s3">, </span><span class="s1">COOKIE_DURATION)</span>
+
+        <span class="s4"># prepare data</span>
+        <span class="s1">data = encode_cookie(str(session[</span><span class="s5">&quot;_user_id&quot;</span><span class="s1">]))</span>
+
+        <span class="s0">if </span><span class="s1">isinstance(duration</span><span class="s3">, </span><span class="s1">int):</span>
+            <span class="s1">duration = timedelta(seconds=duration)</span>
+
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">expires = datetime.utcnow() + duration</span>
+        <span class="s0">except </span><span class="s1">TypeError </span><span class="s0">as </span><span class="s1">e:</span>
+            <span class="s0">raise </span><span class="s1">Exception(</span>
+                <span class="s5">&quot;REMEMBER_COOKIE_DURATION must be a datetime.timedelta,&quot;</span>
+                <span class="s5">f&quot; instead got: </span><span class="s7">{</span><span class="s1">duration</span><span class="s7">}</span><span class="s5">&quot;</span>
+            <span class="s1">) </span><span class="s0">from </span><span class="s1">e</span>
+
+        <span class="s4"># actually set it</span>
+        <span class="s1">response.set_cookie(</span>
+            <span class="s1">cookie_name</span><span class="s3">,</span>
+            <span class="s1">value=data</span><span class="s3">,</span>
+            <span class="s1">expires=expires</span><span class="s3">,</span>
+            <span class="s1">domain=domain</span><span class="s3">,</span>
+            <span class="s1">path=path</span><span class="s3">,</span>
+            <span class="s1">secure=secure</span><span class="s3">,</span>
+            <span class="s1">httponly=httponly</span><span class="s3">,</span>
+            <span class="s1">samesite=samesite</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">_clear_cookie(self</span><span class="s3">, </span><span class="s1">response):</span>
+        <span class="s1">config = current_app.config</span>
+        <span class="s1">cookie_name = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_NAME&quot;</span><span class="s3">, </span><span class="s1">COOKIE_NAME)</span>
+        <span class="s1">domain = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_DOMAIN&quot;</span><span class="s1">)</span>
+        <span class="s1">path = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_PATH&quot;</span><span class="s3">, </span><span class="s5">&quot;/&quot;</span><span class="s1">)</span>
+        <span class="s1">response.delete_cookie(cookie_name</span><span class="s3">, </span><span class="s1">domain=domain</span><span class="s3">, </span><span class="s1">path=path)</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">_login_disabled(self):</span>
+        <span class="s2">&quot;&quot;&quot;Legacy property, use app.config['LOGIN_DISABLED'] instead.&quot;&quot;&quot;</span>
+        <span class="s0">import </span><span class="s1">warnings</span>
+
+        <span class="s1">warnings.warn(</span>
+            <span class="s5">&quot;'_login_disabled' is deprecated and will be removed in&quot;</span>
+            <span class="s5">&quot; Flask-Login 0.7. Use 'LOGIN_DISABLED' in 'app.config'&quot;</span>
+            <span class="s5">&quot; instead.&quot;</span><span class="s3">,</span>
+            <span class="s1">DeprecationWarning</span><span class="s3">,</span>
+            <span class="s1">stacklevel=</span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">has_app_context():</span>
+            <span class="s0">return </span><span class="s1">current_app.config.get(</span><span class="s5">&quot;LOGIN_DISABLED&quot;</span><span class="s3">, </span><span class="s0">False</span><span class="s1">)</span>
+        <span class="s0">return False</span>
+
+    <span class="s1">@_login_disabled.setter</span>
+    <span class="s0">def </span><span class="s1">_login_disabled(self</span><span class="s3">, </span><span class="s1">newvalue):</span>
+        <span class="s2">&quot;&quot;&quot;Legacy property setter, use app.config['LOGIN_DISABLED'] instead.&quot;&quot;&quot;</span>
+        <span class="s0">import </span><span class="s1">warnings</span>
+
+        <span class="s1">warnings.warn(</span>
+            <span class="s5">&quot;'_login_disabled' is deprecated and will be removed in&quot;</span>
+            <span class="s5">&quot; Flask-Login 0.7. Use 'LOGIN_DISABLED' in 'app.config'&quot;</span>
+            <span class="s5">&quot; instead.&quot;</span><span class="s3">,</span>
+            <span class="s1">DeprecationWarning</span><span class="s3">,</span>
+            <span class="s1">stacklevel=</span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">current_app.config[</span><span class="s5">&quot;LOGIN_DISABLED&quot;</span><span class="s1">] = newvalue</span>
+</pre>
+</body>
+</html>

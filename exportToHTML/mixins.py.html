@@ -1,0 +1,87 @@
+<html>
+<head>
+<title>mixins.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #5d69bb;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+mixins.py</font>
+</center></td></tr></table>
+<pre><span class="s0">class </span><span class="s1">UserMixin:</span>
+    <span class="s2">&quot;&quot;&quot; 
+    This provides default implementations for the methods that Flask-Login 
+    expects user objects to have. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3"># Python 3 implicitly set __hash__ to None if we override __eq__</span>
+    <span class="s3"># We set it back to its default implementation</span>
+    <span class="s1">__hash__ = object.__hash__</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">is_active(self):</span>
+        <span class="s0">return True</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">is_authenticated(self):</span>
+        <span class="s0">return </span><span class="s1">self.is_active</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">is_anonymous(self):</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">get_id(self):</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">str(self.id)</span>
+        <span class="s0">except </span><span class="s1">AttributeError:</span>
+            <span class="s0">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;No `id` attribute - override `get_id`&quot;</span><span class="s1">) </span><span class="s0">from None</span>
+
+    <span class="s0">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Checks the equality of two `UserMixin` objects using `get_id`. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">isinstance(other</span><span class="s5">, </span><span class="s1">UserMixin):</span>
+            <span class="s0">return </span><span class="s1">self.get_id() == other.get_id()</span>
+        <span class="s0">return </span><span class="s1">NotImplemented</span>
+
+    <span class="s0">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">other):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Checks the inequality of two `UserMixin` objects using `get_id`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">equal = self.__eq__(other)</span>
+        <span class="s0">if </span><span class="s1">equal </span><span class="s0">is </span><span class="s1">NotImplemented:</span>
+            <span class="s0">return </span><span class="s1">NotImplemented</span>
+        <span class="s0">return not </span><span class="s1">equal</span>
+
+
+<span class="s0">class </span><span class="s1">AnonymousUserMixin:</span>
+    <span class="s2">&quot;&quot;&quot; 
+    This is the default object for representing an anonymous user. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">is_authenticated(self):</span>
+        <span class="s0">return False</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">is_active(self):</span>
+        <span class="s0">return False</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">is_anonymous(self):</span>
+        <span class="s0">return True</span>
+
+    <span class="s0">def </span><span class="s1">get_id(self):</span>
+        <span class="s0">return</span>
+</pre>
+</body>
+</html>

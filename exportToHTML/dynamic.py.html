@@ -1,0 +1,322 @@
+<html>
+<head>
+<title>dynamic.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+dynamic.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/dynamic.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+
+<span class="s2">&quot;&quot;&quot;Dynamic collection API. 
+ 
+Dynamic collections act like Query() objects for read operations and support 
+basic add/delete mutation. 
+ 
+.. legacy:: the &quot;dynamic&quot; loader is a legacy feature, superseded by the 
+ &quot;write_only&quot; loader. 
+ 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">orm_exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">relationships</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">orm_util</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PassiveFlag</span>
+<span class="s3">from </span><span class="s1">.query </span><span class="s3">import </span><span class="s1">Query</span>
+<span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">object_session</span>
+<span class="s3">from </span><span class="s1">.writeonly </span><span class="s3">import </span><span class="s1">AbstractCollectionWriter</span>
+<span class="s3">from </span><span class="s1">.writeonly </span><span class="s3">import </span><span class="s1">WriteOnlyAttributeImpl</span>
+<span class="s3">from </span><span class="s1">.writeonly </span><span class="s3">import </span><span class="s1">WriteOnlyHistory</span>
+<span class="s3">from </span><span class="s1">.writeonly </span><span class="s3">import </span><span class="s1">WriteOnlyLoader</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..engine </span><span class="s3">import </span><span class="s1">result</span>
+
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">QueryableAttribute</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.relationships </span><span class="s3">import </span><span class="s1">_RelationshipOrderByArg</span>
+    <span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">Session</span>
+    <span class="s3">from </span><span class="s1">.state </span><span class="s3">import </span><span class="s1">InstanceState</span>
+    <span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">AliasedClass</span>
+    <span class="s3">from </span><span class="s1">..event </span><span class="s3">import </span><span class="s1">_Dispatch</span>
+    <span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">ColumnElement</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s3">class </span><span class="s1">DynamicCollectionHistory(WriteOnlyHistory[_T]):</span>
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attr: DynamicAttributeImpl</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[_T]</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag</span><span class="s5">,</span>
+        <span class="s1">apply_to: Optional[DynamicCollectionHistory[_T]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">apply_to:</span>
+            <span class="s1">coll = AppenderQuery(attr</span><span class="s5">, </span><span class="s1">state).autoflush(</span><span class="s3">False</span><span class="s1">)</span>
+            <span class="s1">self.unchanged_items = util.OrderedIdentitySet(coll)</span>
+            <span class="s1">self.added_items = apply_to.added_items</span>
+            <span class="s1">self.deleted_items = apply_to.deleted_items</span>
+            <span class="s1">self._reconcile_collection = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.deleted_items = util.OrderedIdentitySet()</span>
+            <span class="s1">self.added_items = util.OrderedIdentitySet()</span>
+            <span class="s1">self.unchanged_items = util.OrderedIdentitySet()</span>
+            <span class="s1">self._reconcile_collection = </span><span class="s3">False</span>
+
+
+<span class="s3">class </span><span class="s1">DynamicAttributeImpl(WriteOnlyAttributeImpl):</span>
+    <span class="s1">_supports_dynamic_iteration = </span><span class="s3">True</span>
+    <span class="s1">collection_history_cls = DynamicCollectionHistory[Any]</span>
+    <span class="s1">query_class: Type[AppenderMixin[Any]]  </span><span class="s0"># type: ignore[assignment]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">class_: Union[Type[Any]</span><span class="s5">, </span><span class="s1">AliasedClass[Any]]</span><span class="s5">,</span>
+        <span class="s1">key: str</span><span class="s5">,</span>
+        <span class="s1">dispatch: _Dispatch[QueryableAttribute[Any]]</span><span class="s5">,</span>
+        <span class="s1">target_mapper: Mapper[_T]</span><span class="s5">,</span>
+        <span class="s1">order_by: _RelationshipOrderByArg</span><span class="s5">,</span>
+        <span class="s1">query_class: Optional[Type[AppenderMixin[_T]]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">attributes.AttributeImpl.__init__(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">class_</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">dispatch</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+        <span class="s1">self.target_mapper = target_mapper</span>
+        <span class="s3">if </span><span class="s1">order_by:</span>
+            <span class="s1">self.order_by = tuple(order_by)</span>
+        <span class="s3">if not </span><span class="s1">query_class:</span>
+            <span class="s1">self.query_class = AppenderQuery</span>
+        <span class="s3">elif </span><span class="s1">AppenderMixin </span><span class="s3">in </span><span class="s1">query_class.mro():</span>
+            <span class="s1">self.query_class = query_class</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.query_class = mixin_user_query(query_class)</span>
+
+
+<span class="s1">@relationships.RelationshipProperty.strategy_for(lazy=</span><span class="s4">&quot;dynamic&quot;</span><span class="s1">)</span>
+<span class="s3">class </span><span class="s1">DynaLoader(WriteOnlyLoader):</span>
+    <span class="s1">impl_class = DynamicAttributeImpl</span>
+
+
+<span class="s3">class </span><span class="s1">AppenderMixin(AbstractCollectionWriter[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;A mixin that expects to be mixing in a Query class with 
+    AbstractAppender. 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">query_class: Optional[Type[Query[_T]]] = </span><span class="s3">None</span>
+    <span class="s1">_order_by_clauses: Tuple[ColumnElement[Any]</span><span class="s5">, </span><span class="s1">...]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">attr: DynamicAttributeImpl</span><span class="s5">, </span><span class="s1">state: InstanceState[_T]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">Query.__init__(</span>
+            <span class="s1">self</span><span class="s5">,  </span><span class="s0"># type: ignore[arg-type]</span>
+            <span class="s1">attr.target_mapper</span><span class="s5">,</span>
+            <span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">super().__init__(attr</span><span class="s5">, </span><span class="s1">state)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">session(self) -&gt; Optional[Session]:</span>
+        <span class="s1">sess = object_session(self.instance)</span>
+        <span class="s3">if </span><span class="s1">sess </span><span class="s3">is not None and </span><span class="s1">sess.autoflush </span><span class="s3">and </span><span class="s1">self.instance </span><span class="s3">in </span><span class="s1">sess:</span>
+            <span class="s1">sess.flush()</span>
+        <span class="s3">if not </span><span class="s1">orm_util.has_identity(self.instance):</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">sess</span>
+
+    <span class="s1">@session.setter</span>
+    <span class="s3">def </span><span class="s1">session(self</span><span class="s5">, </span><span class="s1">session: Session) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.sess = session</span>
+
+    <span class="s3">def </span><span class="s1">_iter(self) -&gt; Union[result.ScalarResult[_T]</span><span class="s5">, </span><span class="s1">result.Result[_T]]:</span>
+        <span class="s1">sess = self.session</span>
+        <span class="s3">if </span><span class="s1">sess </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">state = attributes.instance_state(self.instance)</span>
+            <span class="s3">if </span><span class="s1">state.detached:</span>
+                <span class="s1">util.warn(</span>
+                    <span class="s4">&quot;Instance %s is detached, dynamic relationship cannot &quot;</span>
+                    <span class="s4">&quot;return a correct result.   This warning will become &quot;</span>
+                    <span class="s4">&quot;a DetachedInstanceError in a future release.&quot;</span>
+                    <span class="s1">% (orm_util.state_str(state))</span>
+                <span class="s1">)</span>
+
+            <span class="s3">return </span><span class="s1">result.IteratorResult(</span>
+                <span class="s1">result.SimpleResultMetaData([self.attr.class_.__name__])</span><span class="s5">,</span>
+                <span class="s1">iter(</span>
+                    <span class="s1">self.attr._get_collection_history(</span>
+                        <span class="s1">attributes.instance_state(self.instance)</span><span class="s5">,</span>
+                        <span class="s1">PassiveFlag.PASSIVE_NO_INITIALIZE</span><span class="s5">,</span>
+                    <span class="s1">).added_items</span>
+                <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">_source_supports_scalars=</span><span class="s3">True</span><span class="s5">,</span>
+            <span class="s1">).scalars()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._generate(sess)._iter()</span>
+
+    <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[_T]: ...</span>
+
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">index: Any) -&gt; Union[_T</span><span class="s5">, </span><span class="s1">List[_T]]:</span>
+        <span class="s1">sess = self.session</span>
+        <span class="s3">if </span><span class="s1">sess </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.attr._get_collection_history(</span>
+                <span class="s1">attributes.instance_state(self.instance)</span><span class="s5">,</span>
+                <span class="s1">PassiveFlag.PASSIVE_NO_INITIALIZE</span><span class="s5">,</span>
+            <span class="s1">).indexed(index)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._generate(sess).__getitem__(index)  </span><span class="s0"># type: ignore[no-any-return] # noqa: E501</span>
+
+    <span class="s3">def </span><span class="s1">count(self) -&gt; int:</span>
+        <span class="s1">sess = self.session</span>
+        <span class="s3">if </span><span class="s1">sess </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">len(</span>
+                <span class="s1">self.attr._get_collection_history(</span>
+                    <span class="s1">attributes.instance_state(self.instance)</span><span class="s5">,</span>
+                    <span class="s1">PassiveFlag.PASSIVE_NO_INITIALIZE</span><span class="s5">,</span>
+                <span class="s1">).added_items</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._generate(sess).count()</span>
+
+    <span class="s3">def </span><span class="s1">_generate(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">sess: Optional[Session] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Query[_T]:</span>
+        <span class="s0"># note we're returning an entirely new Query class instance</span>
+        <span class="s0"># here without any assignment capabilities; the class of this</span>
+        <span class="s0"># query is determined by the session.</span>
+        <span class="s1">instance = self.instance</span>
+        <span class="s3">if </span><span class="s1">sess </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">sess = object_session(instance)</span>
+            <span class="s3">if </span><span class="s1">sess </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">orm_exc.DetachedInstanceError(</span>
+                    <span class="s4">&quot;Parent instance %s is not bound to a Session, and no &quot;</span>
+                    <span class="s4">&quot;contextual session is established; lazy load operation &quot;</span>
+                    <span class="s4">&quot;of attribute '%s' cannot proceed&quot;</span>
+                    <span class="s1">% (orm_util.instance_str(instance)</span><span class="s5">, </span><span class="s1">self.attr.key)</span>
+                <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self.query_class:</span>
+            <span class="s1">query = self.query_class(self.attr.target_mapper</span><span class="s5">, </span><span class="s1">session=sess)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">query = sess.query(self.attr.target_mapper)</span>
+
+        <span class="s1">query._where_criteria = self._where_criteria</span>
+        <span class="s1">query._from_obj = self._from_obj</span>
+        <span class="s1">query._order_by_clauses = self._order_by_clauses</span>
+
+        <span class="s3">return </span><span class="s1">query</span>
+
+    <span class="s3">def </span><span class="s1">add_all(self</span><span class="s5">, </span><span class="s1">iterator: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Add an iterable of items to this :class:`_orm.AppenderQuery`. 
+ 
+        The given items will be persisted to the database in terms of 
+        the parent instance's collection on the next flush. 
+ 
+        This method is provided to assist in delivering forwards-compatibility 
+        with the :class:`_orm.WriteOnlyCollection` collection class. 
+ 
+        .. versionadded:: 2.0 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._add_all_impl(iterator)</span>
+
+    <span class="s3">def </span><span class="s1">add(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Add an item to this :class:`_orm.AppenderQuery`. 
+ 
+        The given item will be persisted to the database in terms of 
+        the parent instance's collection on the next flush. 
+ 
+        This method is provided to assist in delivering forwards-compatibility 
+        with the :class:`_orm.WriteOnlyCollection` collection class. 
+ 
+        .. versionadded:: 2.0 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._add_all_impl([item])</span>
+
+    <span class="s3">def </span><span class="s1">extend(self</span><span class="s5">, </span><span class="s1">iterator: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Add an iterable of items to this :class:`_orm.AppenderQuery`. 
+ 
+        The given items will be persisted to the database in terms of 
+        the parent instance's collection on the next flush. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._add_all_impl(iterator)</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Append an item to this :class:`_orm.AppenderQuery`. 
+ 
+        The given item will be persisted to the database in terms of 
+        the parent instance's collection on the next flush. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._add_all_impl([item])</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Remove an item from this :class:`_orm.AppenderQuery`. 
+ 
+        The given item will be removed from the parent instance's collection on 
+        the next flush. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._remove_impl(item)</span>
+
+
+<span class="s3">class </span><span class="s1">AppenderQuery(AppenderMixin[_T]</span><span class="s5">, </span><span class="s1">Query[_T]):  </span><span class="s0"># type: ignore[misc]</span>
+    <span class="s2">&quot;&quot;&quot;A dynamic query that supports basic collection storage operations. 
+ 
+    Methods on :class:`.AppenderQuery` include all methods of 
+    :class:`_orm.Query`, plus additional methods used for collection 
+    persistence. 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+
+<span class="s3">def </span><span class="s1">mixin_user_query(cls: Any) -&gt; type[AppenderMixin[Any]]:</span>
+    <span class="s2">&quot;&quot;&quot;Return a new class with AppenderQuery functionality layered over.&quot;&quot;&quot;</span>
+    <span class="s1">name = </span><span class="s4">&quot;Appender&quot; </span><span class="s1">+ cls.__name__</span>
+    <span class="s3">return </span><span class="s1">type(name</span><span class="s5">, </span><span class="s1">(AppenderMixin</span><span class="s5">, </span><span class="s1">cls)</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;query_class&quot;</span><span class="s1">: cls})</span>
+</pre>
+</body>
+</html>

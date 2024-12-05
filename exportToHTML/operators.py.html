@@ -1,0 +1,150 @@
+<html>
+<head>
+<title>operators.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+operators.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/operators.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">operators</span>
+
+
+<span class="s1">_getitem_precedence = operators._PRECEDENCE[operators.json_getitem_op]</span>
+<span class="s1">_eq_precedence = operators._PRECEDENCE[operators.eq]</span>
+
+<span class="s0"># JSON + JSONB</span>
+<span class="s1">ASTEXT = operators.custom_op(</span>
+    <span class="s3">&quot;-&gt;&gt;&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_getitem_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">JSONPATH_ASTEXT = operators.custom_op(</span>
+    <span class="s3">&quot;#&gt;&gt;&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_getitem_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s0"># JSONB + HSTORE</span>
+<span class="s1">HAS_KEY = operators.custom_op(</span>
+    <span class="s3">&quot;?&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_eq_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">is_comparison=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">HAS_ALL = operators.custom_op(</span>
+    <span class="s3">&quot;?&amp;&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_eq_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">is_comparison=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">HAS_ANY = operators.custom_op(</span>
+    <span class="s3">&quot;?|&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_eq_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">is_comparison=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s0"># JSONB</span>
+<span class="s1">DELETE_PATH = operators.custom_op(</span>
+    <span class="s3">&quot;#-&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_getitem_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">PATH_EXISTS = operators.custom_op(</span>
+    <span class="s3">&quot;@?&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_eq_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">is_comparison=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">PATH_MATCH = operators.custom_op(</span>
+    <span class="s3">&quot;@@&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_eq_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">is_comparison=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s0"># JSONB + ARRAY + HSTORE + RANGE</span>
+<span class="s1">CONTAINS = operators.custom_op(</span>
+    <span class="s3">&quot;@&gt;&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_eq_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">is_comparison=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">CONTAINED_BY = operators.custom_op(</span>
+    <span class="s3">&quot;&lt;@&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_eq_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">is_comparison=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s0"># ARRAY + RANGE</span>
+<span class="s1">OVERLAP = operators.custom_op(</span>
+    <span class="s3">&quot;&amp;&amp;&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_eq_precedence</span><span class="s4">,</span>
+    <span class="s1">is_comparison=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s0"># RANGE</span>
+<span class="s1">STRICTLY_LEFT_OF = operators.custom_op(</span>
+    <span class="s3">&quot;&lt;&lt;&quot;</span><span class="s4">, </span><span class="s1">precedence=_eq_precedence</span><span class="s4">, </span><span class="s1">is_comparison=</span><span class="s2">True</span>
+<span class="s1">)</span>
+
+<span class="s1">STRICTLY_RIGHT_OF = operators.custom_op(</span>
+    <span class="s3">&quot;&gt;&gt;&quot;</span><span class="s4">, </span><span class="s1">precedence=_eq_precedence</span><span class="s4">, </span><span class="s1">is_comparison=</span><span class="s2">True</span>
+<span class="s1">)</span>
+
+<span class="s1">NOT_EXTEND_RIGHT_OF = operators.custom_op(</span>
+    <span class="s3">&quot;&amp;&lt;&quot;</span><span class="s4">, </span><span class="s1">precedence=_eq_precedence</span><span class="s4">, </span><span class="s1">is_comparison=</span><span class="s2">True</span>
+<span class="s1">)</span>
+
+<span class="s1">NOT_EXTEND_LEFT_OF = operators.custom_op(</span>
+    <span class="s3">&quot;&amp;&gt;&quot;</span><span class="s4">, </span><span class="s1">precedence=_eq_precedence</span><span class="s4">, </span><span class="s1">is_comparison=</span><span class="s2">True</span>
+<span class="s1">)</span>
+
+<span class="s1">ADJACENT_TO = operators.custom_op(</span>
+    <span class="s3">&quot;-|-&quot;</span><span class="s4">, </span><span class="s1">precedence=_eq_precedence</span><span class="s4">, </span><span class="s1">is_comparison=</span><span class="s2">True</span>
+<span class="s1">)</span>
+
+<span class="s0"># HSTORE</span>
+<span class="s1">GETITEM = operators.custom_op(</span>
+    <span class="s3">&quot;-&gt;&quot;</span><span class="s4">,</span>
+    <span class="s1">precedence=_getitem_precedence</span><span class="s4">,</span>
+    <span class="s1">natural_self_precedent=</span><span class="s2">True</span><span class="s4">,</span>
+    <span class="s1">eager_grouping=</span><span class="s2">True</span><span class="s4">,</span>
+<span class="s1">)</span>
+</pre>
+</body>
+</html>

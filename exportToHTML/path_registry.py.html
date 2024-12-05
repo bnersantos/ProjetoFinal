@@ -1,0 +1,835 @@
+<html>
+<head>
+<title>path_registry.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+path_registry.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/path_registry.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s2">&quot;&quot;&quot;Path tracking utilities, representing mapper graph traversals. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">functools </span><span class="s3">import </span><span class="s1">reduce</span>
+<span class="s3">from </span><span class="s1">itertools </span><span class="s3">import </span><span class="s1">chain</span>
+<span class="s3">import </span><span class="s1">logging</span>
+<span class="s3">import </span><span class="s1">operator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">base </span><span class="s3">as </span><span class="s1">orm_base</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">insp_is_mapper_property</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">visitors</span>
+<span class="s3">from </span><span class="s1">..sql.cache_key </span><span class="s3">import </span><span class="s1">HasCacheKey</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_InternalEntityType</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">StrategizedProperty</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.relationships </span><span class="s3">import </span><span class="s1">RelationshipProperty</span>
+    <span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">AliasedInsp</span>
+    <span class="s3">from </span><span class="s1">..sql.cache_key </span><span class="s3">import </span><span class="s1">_CacheKeyTraversalType</span>
+    <span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">BindParameter</span>
+    <span class="s3">from </span><span class="s1">..sql.visitors </span><span class="s3">import </span><span class="s1">anon_map</span>
+    <span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">_LiteralStar</span>
+    <span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">TypeGuard</span>
+
+    <span class="s3">def </span><span class="s1">is_root(path: PathRegistry) -&gt; TypeGuard[RootRegistry]: ...</span>
+
+    <span class="s3">def </span><span class="s1">is_entity(path: PathRegistry) -&gt; TypeGuard[AbstractEntityRegistry]: ...</span>
+
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s1">is_root = operator.attrgetter(</span><span class="s4">&quot;is_root&quot;</span><span class="s1">)</span>
+    <span class="s1">is_entity = operator.attrgetter(</span><span class="s4">&quot;is_entity&quot;</span><span class="s1">)</span>
+
+
+<span class="s1">_SerializedPath = List[Any]</span>
+<span class="s1">_StrPathToken = str</span>
+<span class="s1">_PathElementType = Union[</span>
+    <span class="s1">_StrPathToken</span><span class="s5">, </span><span class="s4">&quot;_InternalEntityType[Any]&quot;</span><span class="s5">, </span><span class="s4">&quot;StrategizedProperty[Any]&quot;</span>
+<span class="s1">]</span>
+
+<span class="s0"># the representation is in fact</span>
+<span class="s0"># a tuple with alternating:</span>
+<span class="s0"># [_InternalEntityType[Any], Union[str, StrategizedProperty[Any]],</span>
+<span class="s0"># _InternalEntityType[Any], Union[str, StrategizedProperty[Any]], ...]</span>
+<span class="s0"># this might someday be a tuple of 2-tuples instead, but paths can be</span>
+<span class="s0"># chopped at odd intervals as well so this is less flexible</span>
+<span class="s1">_PathRepresentation = Tuple[_PathElementType</span><span class="s5">, </span><span class="s1">...]</span>
+
+<span class="s0"># NOTE: these names are weird since the array is 0-indexed,</span>
+<span class="s0"># the &quot;_Odd&quot; entries are at 0, 2, 4, etc</span>
+<span class="s1">_OddPathRepresentation = Sequence[</span><span class="s4">&quot;_InternalEntityType[Any]&quot;</span><span class="s1">]</span>
+<span class="s1">_EvenPathRepresentation = Sequence[Union[</span><span class="s4">&quot;StrategizedProperty[Any]&quot;</span><span class="s5">, </span><span class="s1">str]]</span>
+
+
+<span class="s1">log = logging.getLogger(__name__)</span>
+
+
+<span class="s3">def </span><span class="s1">_unreduce_path(path: _SerializedPath) -&gt; PathRegistry:</span>
+    <span class="s3">return </span><span class="s1">PathRegistry.deserialize(path)</span>
+
+
+<span class="s1">_WILDCARD_TOKEN: _LiteralStar = </span><span class="s4">&quot;*&quot;</span>
+<span class="s1">_DEFAULT_TOKEN = </span><span class="s4">&quot;_sa_default&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">PathRegistry(HasCacheKey):</span>
+    <span class="s2">&quot;&quot;&quot;Represent query load paths and registry functions. 
+ 
+    Basically represents structures like: 
+ 
+    (&lt;User mapper&gt;, &quot;orders&quot;, &lt;Order mapper&gt;, &quot;items&quot;, &lt;Item mapper&gt;) 
+ 
+    These structures are generated by things like 
+    query options (joinedload(), subqueryload(), etc.) and are 
+    used to compose keys stored in the query._attributes dictionary 
+    for various options. 
+ 
+    They are then re-composed at query compile/result row time as 
+    the query is formed and as rows are fetched, where they again 
+    serve to compose keys to look up options in the context.attributes 
+    dictionary, which is copied from query._attributes. 
+ 
+    The path structure has a limited amount of caching, where each 
+    &quot;root&quot; ultimately pulls from a fixed registry associated with 
+    the first mapper, that also contains elements for each of its 
+    property keys.  However paths longer than two elements, which 
+    are the exception rather than the rule, are generated on an 
+    as-needed basis. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">is_token = </span><span class="s3">False</span>
+    <span class="s1">is_root = </span><span class="s3">False</span>
+    <span class="s1">has_entity = </span><span class="s3">False</span>
+    <span class="s1">is_property = </span><span class="s3">False</span>
+    <span class="s1">is_entity = </span><span class="s3">False</span>
+
+    <span class="s1">is_unnatural: bool</span>
+
+    <span class="s1">path: _PathRepresentation</span>
+    <span class="s1">natural_path: _PathRepresentation</span>
+    <span class="s1">parent: Optional[PathRegistry]</span>
+    <span class="s1">root: RootRegistry</span>
+
+    <span class="s1">_cache_key_traversal: _CacheKeyTraversalType = [</span>
+        <span class="s1">(</span><span class="s4">&quot;path&quot;</span><span class="s5">, </span><span class="s1">visitors.ExtendedInternalTraversal.dp_has_cache_key_list)</span>
+    <span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">other </span><span class="s3">is not None and </span><span class="s1">self.path == other._path_for_compare</span>
+        <span class="s3">except </span><span class="s1">AttributeError:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">&quot;Comparison of PathRegistry to %r is not supported&quot;</span>
+                <span class="s1">% (type(other))</span>
+            <span class="s1">)</span>
+            <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">other </span><span class="s3">is None or </span><span class="s1">self.path != other._path_for_compare</span>
+        <span class="s3">except </span><span class="s1">AttributeError:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">&quot;Comparison of PathRegistry to %r is not supported&quot;</span>
+                <span class="s1">% (type(other))</span>
+            <span class="s1">)</span>
+            <span class="s3">return True</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_path_for_compare(self) -&gt; Optional[_PathRepresentation]:</span>
+        <span class="s3">return </span><span class="s1">self.path</span>
+
+    <span class="s3">def </span><span class="s1">odd_element(self</span><span class="s5">, </span><span class="s1">index: int) -&gt; _InternalEntityType[Any]:</span>
+        <span class="s3">return </span><span class="s1">self.path[index]  </span><span class="s0"># type: ignore</span>
+
+    <span class="s3">def </span><span class="s1">set(self</span><span class="s5">, </span><span class="s1">attributes: Dict[Any</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">key: Any</span><span class="s5">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">log.debug(</span><span class="s4">&quot;set '%s' on path '%s' to '%s'&quot;</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">self</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s1">attributes[(key</span><span class="s5">, </span><span class="s1">self.natural_path)] = value</span>
+
+    <span class="s3">def </span><span class="s1">setdefault(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">attributes: Dict[Any</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">key: Any</span><span class="s5">, </span><span class="s1">value: Any</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">log.debug(</span><span class="s4">&quot;setdefault '%s' on path '%s' to '%s'&quot;</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">self</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s1">attributes.setdefault((key</span><span class="s5">, </span><span class="s1">self.natural_path)</span><span class="s5">, </span><span class="s1">value)</span>
+
+    <span class="s3">def </span><span class="s1">get(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">attributes: Dict[Any</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">key: Any</span><span class="s5">, </span><span class="s1">value: Optional[Any] = </span><span class="s3">None</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s1">key = (key</span><span class="s5">, </span><span class="s1">self.natural_path)</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">attributes:</span>
+            <span class="s3">return </span><span class="s1">attributes[key]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self.path)</span>
+
+    <span class="s3">def </span><span class="s1">__hash__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">id(self)</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">entity: _StrPathToken) -&gt; TokenRegistry: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">entity: int) -&gt; _PathElementType: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">entity: slice) -&gt; _PathRepresentation: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__getitem__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">entity: _InternalEntityType[Any]</span>
+    <span class="s1">) -&gt; AbstractEntityRegistry: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__getitem__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">entity: StrategizedProperty[Any]</span>
+    <span class="s1">) -&gt; PropRegistry: ...</span>
+
+    <span class="s3">def </span><span class="s1">__getitem__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">entity: Union[</span>
+            <span class="s1">_StrPathToken</span><span class="s5">,</span>
+            <span class="s1">int</span><span class="s5">,</span>
+            <span class="s1">slice</span><span class="s5">,</span>
+            <span class="s1">_InternalEntityType[Any]</span><span class="s5">,</span>
+            <span class="s1">StrategizedProperty[Any]</span><span class="s5">,</span>
+        <span class="s1">]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Union[</span>
+        <span class="s1">TokenRegistry</span><span class="s5">,</span>
+        <span class="s1">_PathElementType</span><span class="s5">,</span>
+        <span class="s1">_PathRepresentation</span><span class="s5">,</span>
+        <span class="s1">PropRegistry</span><span class="s5">,</span>
+        <span class="s1">AbstractEntityRegistry</span><span class="s5">,</span>
+    <span class="s1">]:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s0"># TODO: what are we using this for?</span>
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">length(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self.path)</span>
+
+    <span class="s3">def </span><span class="s1">pairs(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Iterator[</span>
+        <span class="s1">Tuple[_InternalEntityType[Any]</span><span class="s5">, </span><span class="s1">Union[str</span><span class="s5">, </span><span class="s1">StrategizedProperty[Any]]]</span>
+    <span class="s1">]:</span>
+        <span class="s1">odd_path = cast(_OddPathRepresentation</span><span class="s5">, </span><span class="s1">self.path)</span>
+        <span class="s1">even_path = cast(_EvenPathRepresentation</span><span class="s5">, </span><span class="s1">odd_path)</span>
+        <span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">range(</span><span class="s6">0</span><span class="s5">, </span><span class="s1">len(odd_path)</span><span class="s5">, </span><span class="s6">2</span><span class="s1">):</span>
+            <span class="s3">yield </span><span class="s1">odd_path[i]</span><span class="s5">, </span><span class="s1">even_path[i + </span><span class="s6">1</span><span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">contains_mapper(self</span><span class="s5">, </span><span class="s1">mapper: Mapper[Any]) -&gt; bool:</span>
+        <span class="s1">_m_path = cast(_OddPathRepresentation</span><span class="s5">, </span><span class="s1">self.path)</span>
+        <span class="s3">for </span><span class="s1">path_mapper </span><span class="s3">in </span><span class="s1">[_m_path[i] </span><span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">range(</span><span class="s6">0</span><span class="s5">, </span><span class="s1">len(_m_path)</span><span class="s5">, </span><span class="s6">2</span><span class="s1">)]:</span>
+            <span class="s3">if </span><span class="s1">path_mapper.mapper.isa(mapper):</span>
+                <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">contains(self</span><span class="s5">, </span><span class="s1">attributes: Dict[Any</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">key: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">(key</span><span class="s5">, </span><span class="s1">self.path) </span><span class="s3">in </span><span class="s1">attributes</span>
+
+    <span class="s3">def </span><span class="s1">__reduce__(self) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">_unreduce_path</span><span class="s5">, </span><span class="s1">(self.serialize()</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_serialize_path(cls</span><span class="s5">, </span><span class="s1">path: _PathRepresentation) -&gt; _SerializedPath:</span>
+        <span class="s1">_m_path = cast(_OddPathRepresentation</span><span class="s5">, </span><span class="s1">path)</span>
+        <span class="s1">_p_path = cast(_EvenPathRepresentation</span><span class="s5">, </span><span class="s1">path)</span>
+
+        <span class="s3">return </span><span class="s1">list(</span>
+            <span class="s1">zip(</span>
+                <span class="s1">tuple(</span>
+                    <span class="s1">m.class_ </span><span class="s3">if </span><span class="s1">(m.is_mapper </span><span class="s3">or </span><span class="s1">m.is_aliased_class) </span><span class="s3">else </span><span class="s1">str(m)</span>
+                    <span class="s3">for </span><span class="s1">m </span><span class="s3">in </span><span class="s1">[_m_path[i] </span><span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">range(</span><span class="s6">0</span><span class="s5">, </span><span class="s1">len(_m_path)</span><span class="s5">, </span><span class="s6">2</span><span class="s1">)]</span>
+                <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">tuple(</span>
+                    <span class="s1">p.key </span><span class="s3">if </span><span class="s1">insp_is_mapper_property(p) </span><span class="s3">else </span><span class="s1">str(p)</span>
+                    <span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">[_p_path[i] </span><span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">range(</span><span class="s6">1</span><span class="s5">, </span><span class="s1">len(_p_path)</span><span class="s5">, </span><span class="s6">2</span><span class="s1">)]</span>
+                <span class="s1">)</span>
+                <span class="s1">+ (</span><span class="s3">None</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_deserialize_path(cls</span><span class="s5">, </span><span class="s1">path: _SerializedPath) -&gt; _PathRepresentation:</span>
+        <span class="s3">def </span><span class="s1">_deserialize_mapper_token(mcls: Any) -&gt; Any:</span>
+            <span class="s3">return </span><span class="s1">(</span>
+                <span class="s0"># note: we likely dont want configure=True here however</span>
+                <span class="s0"># this is maintained at the moment for backwards compatibility</span>
+                <span class="s1">orm_base._inspect_mapped_class(mcls</span><span class="s5">, </span><span class="s1">configure=</span><span class="s3">True</span><span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">mcls </span><span class="s3">not in </span><span class="s1">PathToken._intern</span>
+                <span class="s3">else </span><span class="s1">PathToken._intern[mcls]</span>
+            <span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">_deserialize_key_token(mcls: Any</span><span class="s5">, </span><span class="s1">key: Any) -&gt; Any:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+            <span class="s3">elif </span><span class="s1">key </span><span class="s3">in </span><span class="s1">PathToken._intern:</span>
+                <span class="s3">return </span><span class="s1">PathToken._intern[key]</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">mp = orm_base._inspect_mapped_class(mcls</span><span class="s5">, </span><span class="s1">configure=</span><span class="s3">True</span><span class="s1">)</span>
+                <span class="s3">assert </span><span class="s1">mp </span><span class="s3">is not None</span>
+                <span class="s3">return </span><span class="s1">mp.attrs[key]</span>
+
+        <span class="s1">p = tuple(</span>
+            <span class="s1">chain(</span>
+                <span class="s1">*[</span>
+                    <span class="s1">(</span>
+                        <span class="s1">_deserialize_mapper_token(mcls)</span><span class="s5">,</span>
+                        <span class="s1">_deserialize_key_token(mcls</span><span class="s5">, </span><span class="s1">key)</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">mcls</span><span class="s5">, </span><span class="s1">key </span><span class="s3">in </span><span class="s1">path</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">p </span><span class="s3">and </span><span class="s1">p[-</span><span class="s6">1</span><span class="s1">] </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">p = p[</span><span class="s6">0</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]</span>
+        <span class="s3">return </span><span class="s1">p</span>
+
+    <span class="s3">def </span><span class="s1">serialize(self) -&gt; _SerializedPath:</span>
+        <span class="s1">path = self.path</span>
+        <span class="s3">return </span><span class="s1">self._serialize_path(path)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">deserialize(cls</span><span class="s5">, </span><span class="s1">path: _SerializedPath) -&gt; PathRegistry:</span>
+        <span class="s3">assert </span><span class="s1">path </span><span class="s3">is not None</span>
+        <span class="s1">p = cls._deserialize_path(path)</span>
+        <span class="s3">return </span><span class="s1">cls.coerce(p)</span>
+
+    <span class="s1">@overload</span>
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">per_mapper(cls</span><span class="s5">, </span><span class="s1">mapper: Mapper[Any]) -&gt; CachingEntityRegistry: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">per_mapper(cls</span><span class="s5">, </span><span class="s1">mapper: AliasedInsp[Any]) -&gt; SlotsEntityRegistry: ...</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">per_mapper(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">mapper: _InternalEntityType[Any]</span>
+    <span class="s1">) -&gt; AbstractEntityRegistry:</span>
+        <span class="s3">if </span><span class="s1">mapper.is_mapper:</span>
+            <span class="s3">return </span><span class="s1">CachingEntityRegistry(cls.root</span><span class="s5">, </span><span class="s1">mapper)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">SlotsEntityRegistry(cls.root</span><span class="s5">, </span><span class="s1">mapper)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">coerce(cls</span><span class="s5">, </span><span class="s1">raw: _PathRepresentation) -&gt; PathRegistry:</span>
+        <span class="s3">def </span><span class="s1">_red(prev: PathRegistry</span><span class="s5">, </span><span class="s1">next_: _PathElementType) -&gt; PathRegistry:</span>
+            <span class="s3">return </span><span class="s1">prev[next_]</span>
+
+        <span class="s0"># can't quite get mypy to appreciate this one :)</span>
+        <span class="s3">return </span><span class="s1">reduce(_red</span><span class="s5">, </span><span class="s1">raw</span><span class="s5">, </span><span class="s1">cls.root)  </span><span class="s0"># type: ignore</span>
+
+    <span class="s3">def </span><span class="s1">__add__(self</span><span class="s5">, </span><span class="s1">other: PathRegistry) -&gt; PathRegistry:</span>
+        <span class="s3">def </span><span class="s1">_red(prev: PathRegistry</span><span class="s5">, </span><span class="s1">next_: _PathElementType) -&gt; PathRegistry:</span>
+            <span class="s3">return </span><span class="s1">prev[next_]</span>
+
+        <span class="s3">return </span><span class="s1">reduce(_red</span><span class="s5">, </span><span class="s1">other.path</span><span class="s5">, </span><span class="s1">self)</span>
+
+    <span class="s3">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s4">f&quot;ORM Path[</span><span class="s7">{</span><span class="s4">' -&gt; '</span><span class="s1">.join(str(elem) </span><span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">self.path)</span><span class="s7">}</span><span class="s4">]&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">self.__class__.__name__</span><span class="s7">}</span><span class="s4">(</span><span class="s7">{</span><span class="s1">self.path</span><span class="s7">!r}</span><span class="s4">)&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">CreatesToken(PathRegistry):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">is_aliased_class: bool</span>
+    <span class="s1">is_root: bool</span>
+
+    <span class="s3">def </span><span class="s1">token(self</span><span class="s5">, </span><span class="s1">token: _StrPathToken) -&gt; TokenRegistry:</span>
+        <span class="s3">if </span><span class="s1">token.endswith(</span><span class="s4">f&quot;:</span><span class="s7">{</span><span class="s1">_WILDCARD_TOKEN</span><span class="s7">}</span><span class="s4">&quot;</span><span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">TokenRegistry(self</span><span class="s5">, </span><span class="s1">token)</span>
+        <span class="s3">elif </span><span class="s1">token.endswith(</span><span class="s4">f&quot;:</span><span class="s7">{</span><span class="s1">_DEFAULT_TOKEN</span><span class="s7">}</span><span class="s4">&quot;</span><span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">TokenRegistry(self.root</span><span class="s5">, </span><span class="s1">token)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span><span class="s4">f&quot;invalid token: </span><span class="s7">{</span><span class="s1">token</span><span class="s7">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">RootRegistry(CreatesToken):</span>
+    <span class="s2">&quot;&quot;&quot;Root registry, defers to mappers so that 
+    paths are maintained per-root-mapper. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">inherit_cache = </span><span class="s3">True</span>
+
+    <span class="s1">path = natural_path = ()</span>
+    <span class="s1">has_entity = </span><span class="s3">False</span>
+    <span class="s1">is_aliased_class = </span><span class="s3">False</span>
+    <span class="s1">is_root = </span><span class="s3">True</span>
+    <span class="s1">is_unnatural = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">_getitem(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">entity: Any</span>
+    <span class="s1">) -&gt; Union[TokenRegistry</span><span class="s5">, </span><span class="s1">AbstractEntityRegistry]:</span>
+        <span class="s3">if </span><span class="s1">entity </span><span class="s3">in </span><span class="s1">PathToken._intern:</span>
+            <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+                <span class="s3">assert </span><span class="s1">isinstance(entity</span><span class="s5">, </span><span class="s1">_StrPathToken)</span>
+            <span class="s3">return </span><span class="s1">TokenRegistry(self</span><span class="s5">, </span><span class="s1">PathToken._intern[entity])</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">entity._path_registry  </span><span class="s0"># type: ignore</span>
+            <span class="s3">except </span><span class="s1">AttributeError:</span>
+                <span class="s3">raise </span><span class="s1">IndexError(</span>
+                    <span class="s4">f&quot;invalid argument for RootRegistry.__getitem__: </span><span class="s7">{</span><span class="s1">entity</span><span class="s7">}</span><span class="s4">&quot;</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_truncate_recursive(self) -&gt; RootRegistry:</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s1">__getitem__ = _getitem</span>
+
+
+<span class="s1">PathRegistry.root = RootRegistry()</span>
+
+
+<span class="s3">class </span><span class="s1">PathToken(orm_base.InspectionAttr</span><span class="s5">, </span><span class="s1">HasCacheKey</span><span class="s5">, </span><span class="s1">str):</span>
+    <span class="s2">&quot;&quot;&quot;cacheable string token&quot;&quot;&quot;</span>
+
+    <span class="s1">_intern: Dict[str</span><span class="s5">, </span><span class="s1">PathToken] = {}</span>
+
+    <span class="s3">def </span><span class="s1">_gen_cache_key(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">anon_map: anon_map</span><span class="s5">, </span><span class="s1">bindparams: List[BindParameter[Any]]</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s5">, </span><span class="s1">...]:</span>
+        <span class="s3">return </span><span class="s1">(str(self)</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_path_for_compare(self) -&gt; Optional[_PathRepresentation]:</span>
+        <span class="s3">return None</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">intern(cls</span><span class="s5">, </span><span class="s1">strvalue: str) -&gt; PathToken:</span>
+        <span class="s3">if </span><span class="s1">strvalue </span><span class="s3">in </span><span class="s1">cls._intern:</span>
+            <span class="s3">return </span><span class="s1">cls._intern[strvalue]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">cls._intern[strvalue] = result = PathToken(strvalue)</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+
+<span class="s3">class </span><span class="s1">TokenRegistry(PathRegistry):</span>
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;token&quot;</span><span class="s5">, </span><span class="s4">&quot;parent&quot;</span><span class="s5">, </span><span class="s4">&quot;path&quot;</span><span class="s5">, </span><span class="s4">&quot;natural_path&quot;</span><span class="s1">)</span>
+
+    <span class="s1">inherit_cache = </span><span class="s3">True</span>
+
+    <span class="s1">token: _StrPathToken</span>
+    <span class="s1">parent: CreatesToken</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">parent: CreatesToken</span><span class="s5">, </span><span class="s1">token: _StrPathToken):</span>
+        <span class="s1">token = PathToken.intern(token)</span>
+
+        <span class="s1">self.token = token</span>
+        <span class="s1">self.parent = parent</span>
+        <span class="s1">self.path = parent.path + (token</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s1">self.natural_path = parent.natural_path + (token</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s1">has_entity = </span><span class="s3">False</span>
+
+    <span class="s1">is_token = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">generate_for_superclasses(self) -&gt; Iterator[PathRegistry]:</span>
+        <span class="s0"># NOTE: this method is no longer used.  consider removal</span>
+        <span class="s1">parent = self.parent</span>
+        <span class="s3">if </span><span class="s1">is_root(parent):</span>
+            <span class="s3">yield </span><span class="s1">self</span>
+            <span class="s3">return</span>
+
+        <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+            <span class="s3">assert </span><span class="s1">isinstance(parent</span><span class="s5">, </span><span class="s1">AbstractEntityRegistry)</span>
+        <span class="s3">if not </span><span class="s1">parent.is_aliased_class:</span>
+            <span class="s3">for </span><span class="s1">mp_ent </span><span class="s3">in </span><span class="s1">parent.mapper.iterate_to_root():</span>
+                <span class="s3">yield </span><span class="s1">TokenRegistry(parent.parent[mp_ent]</span><span class="s5">, </span><span class="s1">self.token)</span>
+        <span class="s3">elif </span><span class="s1">(</span>
+            <span class="s1">parent.is_aliased_class</span>
+            <span class="s3">and </span><span class="s1">cast(</span>
+                <span class="s4">&quot;AliasedInsp[Any]&quot;</span><span class="s5">,</span>
+                <span class="s1">parent.entity</span><span class="s5">,</span>
+            <span class="s1">)._is_with_polymorphic</span>
+        <span class="s1">):</span>
+            <span class="s3">yield </span><span class="s1">self</span>
+            <span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">cast(</span>
+                <span class="s4">&quot;AliasedInsp[Any]&quot;</span><span class="s5">, </span><span class="s1">parent.entity</span>
+            <span class="s1">)._with_polymorphic_entities:</span>
+                <span class="s3">yield </span><span class="s1">TokenRegistry(parent.parent[ent]</span><span class="s5">, </span><span class="s1">self.token)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">yield </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_generate_natural_for_superclasses(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Iterator[_PathRepresentation]:</span>
+        <span class="s1">parent = self.parent</span>
+        <span class="s3">if </span><span class="s1">is_root(parent):</span>
+            <span class="s3">yield </span><span class="s1">self.natural_path</span>
+            <span class="s3">return</span>
+
+        <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+            <span class="s3">assert </span><span class="s1">isinstance(parent</span><span class="s5">, </span><span class="s1">AbstractEntityRegistry)</span>
+        <span class="s3">for </span><span class="s1">mp_ent </span><span class="s3">in </span><span class="s1">parent.mapper.iterate_to_root():</span>
+            <span class="s3">yield </span><span class="s1">TokenRegistry(parent.parent[mp_ent]</span><span class="s5">, </span><span class="s1">self.token).natural_path</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">parent.is_aliased_class</span>
+            <span class="s3">and </span><span class="s1">cast(</span>
+                <span class="s4">&quot;AliasedInsp[Any]&quot;</span><span class="s5">,</span>
+                <span class="s1">parent.entity</span><span class="s5">,</span>
+            <span class="s1">)._is_with_polymorphic</span>
+        <span class="s1">):</span>
+            <span class="s3">yield </span><span class="s1">self.natural_path</span>
+            <span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">cast(</span>
+                <span class="s4">&quot;AliasedInsp[Any]&quot;</span><span class="s5">, </span><span class="s1">parent.entity</span>
+            <span class="s1">)._with_polymorphic_entities:</span>
+                <span class="s3">yield </span><span class="s1">(</span>
+                    <span class="s1">TokenRegistry(parent.parent[ent]</span><span class="s5">, </span><span class="s1">self.token).natural_path</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">yield </span><span class="s1">self.natural_path</span>
+
+    <span class="s3">def </span><span class="s1">_getitem(self</span><span class="s5">, </span><span class="s1">entity: Any) -&gt; Any:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.path[entity]</span>
+        <span class="s3">except </span><span class="s1">TypeError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s3">raise </span><span class="s1">IndexError(</span><span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">entity</span><span class="s7">}</span><span class="s4">&quot;</span><span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s1">__getitem__ = _getitem</span>
+
+
+<span class="s3">class </span><span class="s1">PropRegistry(PathRegistry):</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;prop&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;parent&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;path&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;natural_path&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;has_entity&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;entity&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;mapper&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_wildcard_path_loader_key&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_default_path_loader_key&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_loader_key&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;is_unnatural&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+    <span class="s1">inherit_cache = </span><span class="s3">True</span>
+    <span class="s1">is_property = </span><span class="s3">True</span>
+
+    <span class="s1">prop: StrategizedProperty[Any]</span>
+    <span class="s1">mapper: Optional[Mapper[Any]]</span>
+    <span class="s1">entity: Optional[_InternalEntityType[Any]]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">parent: AbstractEntityRegistry</span><span class="s5">, </span><span class="s1">prop: StrategizedProperty[Any]</span>
+    <span class="s1">):</span>
+
+        <span class="s0"># restate this path in terms of the</span>
+        <span class="s0"># given StrategizedProperty's parent.</span>
+        <span class="s1">insp = cast(</span><span class="s4">&quot;_InternalEntityType[Any]&quot;</span><span class="s5">, </span><span class="s1">parent[-</span><span class="s6">1</span><span class="s1">])</span>
+        <span class="s1">natural_parent: AbstractEntityRegistry = parent</span>
+
+        <span class="s0"># inherit &quot;is_unnatural&quot; from the parent</span>
+        <span class="s1">self.is_unnatural = parent.parent.is_unnatural </span><span class="s3">or </span><span class="s1">bool(</span>
+            <span class="s1">parent.mapper.inherits</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if not </span><span class="s1">insp.is_aliased_class </span><span class="s3">or </span><span class="s1">insp._use_mapper_path:  </span><span class="s0"># type: ignore</span>
+            <span class="s1">parent = natural_parent = parent.parent[prop.parent]</span>
+        <span class="s3">elif </span><span class="s1">(</span>
+            <span class="s1">insp.is_aliased_class</span>
+            <span class="s3">and </span><span class="s1">insp.with_polymorphic_mappers</span>
+            <span class="s3">and </span><span class="s1">prop.parent </span><span class="s3">in </span><span class="s1">insp.with_polymorphic_mappers</span>
+        <span class="s1">):</span>
+            <span class="s1">subclass_entity: _InternalEntityType[Any] = parent[-</span><span class="s6">1</span><span class="s1">]._entity_for_mapper(prop.parent)  </span><span class="s0"># type: ignore  # noqa: E501</span>
+            <span class="s1">parent = parent.parent[subclass_entity]</span>
+
+            <span class="s0"># when building a path where with_polymorphic() is in use,</span>
+            <span class="s0"># special logic to determine the &quot;natural path&quot; when subclass</span>
+            <span class="s0"># entities are used.</span>
+            <span class="s0">#</span>
+            <span class="s0"># here we are trying to distinguish between a path that starts</span>
+            <span class="s0"># on a the with_polymorhpic entity vs. one that starts on a</span>
+            <span class="s0"># normal entity that introduces a with_polymorphic() in the</span>
+            <span class="s0"># middle using of_type():</span>
+            <span class="s0">#</span>
+            <span class="s0">#  # as in test_polymorphic_rel-&gt;</span>
+            <span class="s0">#  #    test_subqueryload_on_subclass_uses_path_correctly</span>
+            <span class="s0">#  wp = with_polymorphic(RegularEntity, &quot;*&quot;)</span>
+            <span class="s0">#  sess.query(wp).options(someload(wp.SomeSubEntity.foos))</span>
+            <span class="s0">#</span>
+            <span class="s0"># vs</span>
+            <span class="s0">#</span>
+            <span class="s0">#  # as in test_relationship-&gt;JoinedloadWPolyOfTypeContinued</span>
+            <span class="s0">#  wp = with_polymorphic(SomeFoo, &quot;*&quot;)</span>
+            <span class="s0">#  sess.query(RegularEntity).options(</span>
+            <span class="s0">#       someload(RegularEntity.foos.of_type(wp))</span>
+            <span class="s0">#       .someload(wp.SubFoo.bar)</span>
+            <span class="s0">#   )</span>
+            <span class="s0">#</span>
+            <span class="s0"># in the former case, the Query as it generates a path that we</span>
+            <span class="s0"># want to match will be in terms of the with_polymorphic at the</span>
+            <span class="s0"># beginning.  in the latter case, Query will generate simple</span>
+            <span class="s0"># paths that don't know about this with_polymorphic, so we must</span>
+            <span class="s0"># use a separate natural path.</span>
+            <span class="s0">#</span>
+            <span class="s0">#</span>
+            <span class="s3">if </span><span class="s1">parent.parent:</span>
+                <span class="s1">natural_parent = parent.parent[subclass_entity.mapper]</span>
+                <span class="s1">self.is_unnatural = </span><span class="s3">True</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">natural_parent = parent</span>
+        <span class="s3">elif </span><span class="s1">(</span>
+            <span class="s1">natural_parent.parent</span>
+            <span class="s3">and </span><span class="s1">insp.is_aliased_class</span>
+            <span class="s3">and </span><span class="s1">prop.parent  </span><span class="s0"># this should always be the case here</span>
+            <span class="s3">is not </span><span class="s1">insp.mapper</span>
+            <span class="s3">and </span><span class="s1">insp.mapper.isa(prop.parent)</span>
+        <span class="s1">):</span>
+            <span class="s1">natural_parent = parent.parent[prop.parent]</span>
+
+        <span class="s1">self.prop = prop</span>
+        <span class="s1">self.parent = parent</span>
+        <span class="s1">self.path = parent.path + (prop</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s1">self.natural_path = natural_parent.natural_path + (prop</span><span class="s5">,</span><span class="s1">)</span>
+
+        <span class="s1">self.has_entity = prop._links_to_entity</span>
+        <span class="s3">if </span><span class="s1">prop._is_relationship:</span>
+            <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+                <span class="s3">assert </span><span class="s1">isinstance(prop</span><span class="s5">, </span><span class="s1">RelationshipProperty)</span>
+            <span class="s1">self.entity = prop.entity</span>
+            <span class="s1">self.mapper = prop.mapper</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.entity = </span><span class="s3">None</span>
+            <span class="s1">self.mapper = </span><span class="s3">None</span>
+
+        <span class="s1">self._wildcard_path_loader_key = (</span>
+            <span class="s4">&quot;loader&quot;</span><span class="s5">,</span>
+            <span class="s1">parent.natural_path + self.prop._wildcard_token</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self._default_path_loader_key = self.prop._default_path_loader_key</span>
+        <span class="s1">self._loader_key = (</span><span class="s4">&quot;loader&quot;</span><span class="s5">, </span><span class="s1">self.natural_path)</span>
+
+    <span class="s3">def </span><span class="s1">_truncate_recursive(self) -&gt; PropRegistry:</span>
+        <span class="s1">earliest = </span><span class="s3">None</span>
+        <span class="s3">for </span><span class="s1">i</span><span class="s5">, </span><span class="s1">token </span><span class="s3">in </span><span class="s1">enumerate(reversed(self.path[:-</span><span class="s6">1</span><span class="s1">])):</span>
+            <span class="s3">if </span><span class="s1">token </span><span class="s3">is </span><span class="s1">self.prop:</span>
+                <span class="s1">earliest = i</span>
+
+        <span class="s3">if </span><span class="s1">earliest </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.coerce(self.path[</span><span class="s6">0 </span><span class="s1">: -(earliest + </span><span class="s6">1</span><span class="s1">)])  </span><span class="s0"># type: ignore</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">entity_path(self) -&gt; AbstractEntityRegistry:</span>
+        <span class="s3">assert </span><span class="s1">self.entity </span><span class="s3">is not None</span>
+        <span class="s3">return </span><span class="s1">self[self.entity]</span>
+
+    <span class="s3">def </span><span class="s1">_getitem(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">entity: Union[int</span><span class="s5">, </span><span class="s1">slice</span><span class="s5">, </span><span class="s1">_InternalEntityType[Any]]</span>
+    <span class="s1">) -&gt; Union[AbstractEntityRegistry</span><span class="s5">, </span><span class="s1">_PathElementType</span><span class="s5">, </span><span class="s1">_PathRepresentation]:</span>
+        <span class="s3">if </span><span class="s1">isinstance(entity</span><span class="s5">, </span><span class="s1">(int</span><span class="s5">, </span><span class="s1">slice)):</span>
+            <span class="s3">return </span><span class="s1">self.path[entity]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">SlotsEntityRegistry(self</span><span class="s5">, </span><span class="s1">entity)</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s1">__getitem__ = _getitem</span>
+
+
+<span class="s3">class </span><span class="s1">AbstractEntityRegistry(CreatesToken):</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;key&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;parent&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;is_aliased_class&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;path&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;entity&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;natural_path&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">has_entity = </span><span class="s3">True</span>
+    <span class="s1">is_entity = </span><span class="s3">True</span>
+
+    <span class="s1">parent: Union[RootRegistry</span><span class="s5">, </span><span class="s1">PropRegistry]</span>
+    <span class="s1">key: _InternalEntityType[Any]</span>
+    <span class="s1">entity: _InternalEntityType[Any]</span>
+    <span class="s1">is_aliased_class: bool</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent: Union[RootRegistry</span><span class="s5">, </span><span class="s1">PropRegistry]</span><span class="s5">,</span>
+        <span class="s1">entity: _InternalEntityType[Any]</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.key = entity</span>
+        <span class="s1">self.parent = parent</span>
+        <span class="s1">self.is_aliased_class = entity.is_aliased_class</span>
+        <span class="s1">self.entity = entity</span>
+        <span class="s1">self.path = parent.path + (entity</span><span class="s5">,</span><span class="s1">)</span>
+
+        <span class="s0"># the &quot;natural path&quot; is the path that we get when Query is traversing</span>
+        <span class="s0"># from the lead entities into the various relationships; it corresponds</span>
+        <span class="s0"># to the structure of mappers and relationships. when we are given a</span>
+        <span class="s0"># path that comes from loader options, as of 1.3 it can have ac-hoc</span>
+        <span class="s0"># with_polymorphic() and other AliasedInsp objects inside of it, which</span>
+        <span class="s0"># are usually not present in mappings.  So here we track both the</span>
+        <span class="s0"># &quot;enhanced&quot; path in self.path and the &quot;natural&quot; path that doesn't</span>
+        <span class="s0"># include those objects so these two traversals can be matched up.</span>
+
+        <span class="s0"># the test here for &quot;(self.is_aliased_class or parent.is_unnatural)&quot;</span>
+        <span class="s0"># are to avoid the more expensive conditional logic that follows if we</span>
+        <span class="s0"># know we don't have to do it.   This conditional can just as well be</span>
+        <span class="s0"># &quot;if parent.path:&quot;, it just is more function calls.</span>
+        <span class="s0">#</span>
+        <span class="s0"># This is basically the only place that the &quot;is_unnatural&quot; flag</span>
+        <span class="s0"># actually changes behavior.</span>
+        <span class="s3">if </span><span class="s1">parent.path </span><span class="s3">and </span><span class="s1">(self.is_aliased_class </span><span class="s3">or </span><span class="s1">parent.is_unnatural):</span>
+            <span class="s0"># this is an infrequent code path used only for loader strategies</span>
+            <span class="s0"># that also make use of of_type().</span>
+            <span class="s3">if </span><span class="s1">entity.mapper.isa(parent.natural_path[-</span><span class="s6">1</span><span class="s1">].mapper):  </span><span class="s0"># type: ignore # noqa: E501</span>
+                <span class="s1">self.natural_path = parent.natural_path + (entity.mapper</span><span class="s5">,</span><span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self.natural_path = parent.natural_path + (</span>
+                    <span class="s1">parent.natural_path[-</span><span class="s6">1</span><span class="s1">].entity</span><span class="s5">,  </span><span class="s0"># type: ignore</span>
+                <span class="s1">)</span>
+        <span class="s0"># it seems to make sense that since these paths get mixed up</span>
+        <span class="s0"># with statements that are cached or not, we should make</span>
+        <span class="s0"># sure the natural path is cacheable across different occurrences</span>
+        <span class="s0"># of equivalent AliasedClass objects.  however, so far this</span>
+        <span class="s0"># does not seem to be needed for whatever reason.</span>
+        <span class="s0"># elif not parent.path and self.is_aliased_class:</span>
+        <span class="s0">#     self.natural_path = (self.entity._generate_cache_key()[0], )</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.natural_path = self.path</span>
+
+    <span class="s3">def </span><span class="s1">_truncate_recursive(self) -&gt; AbstractEntityRegistry:</span>
+        <span class="s3">return </span><span class="s1">self.parent._truncate_recursive()[self.entity]</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">root_entity(self) -&gt; _InternalEntityType[Any]:</span>
+        <span class="s3">return </span><span class="s1">self.odd_element(</span><span class="s6">0</span><span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">entity_path(self) -&gt; PathRegistry:</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">mapper(self) -&gt; Mapper[Any]:</span>
+        <span class="s3">return </span><span class="s1">self.entity.mapper</span>
+
+    <span class="s3">def </span><span class="s1">__bool__(self) -&gt; bool:</span>
+        <span class="s3">return True</span>
+
+    <span class="s3">def </span><span class="s1">_getitem(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">entity: Any</span>
+    <span class="s1">) -&gt; Union[_PathElementType</span><span class="s5">, </span><span class="s1">_PathRepresentation</span><span class="s5">, </span><span class="s1">PathRegistry]:</span>
+        <span class="s3">if </span><span class="s1">isinstance(entity</span><span class="s5">, </span><span class="s1">(int</span><span class="s5">, </span><span class="s1">slice)):</span>
+            <span class="s3">return </span><span class="s1">self.path[entity]</span>
+        <span class="s3">elif </span><span class="s1">entity </span><span class="s3">in </span><span class="s1">PathToken._intern:</span>
+            <span class="s3">return </span><span class="s1">TokenRegistry(self</span><span class="s5">, </span><span class="s1">PathToken._intern[entity])</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">PropRegistry(self</span><span class="s5">, </span><span class="s1">entity)</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s1">__getitem__ = _getitem</span>
+
+
+<span class="s3">class </span><span class="s1">SlotsEntityRegistry(AbstractEntityRegistry):</span>
+    <span class="s0"># for aliased class, return lightweight, no-cycles created</span>
+    <span class="s0"># version</span>
+    <span class="s1">inherit_cache = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_ERDict(Dict[Any</span><span class="s5">, </span><span class="s1">Any]):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">registry: CachingEntityRegistry):</span>
+        <span class="s1">self.registry = registry</span>
+
+    <span class="s3">def </span><span class="s1">__missing__(self</span><span class="s5">, </span><span class="s1">key: Any) -&gt; PropRegistry:</span>
+        <span class="s1">self[key] = item = PropRegistry(self.registry</span><span class="s5">, </span><span class="s1">key)</span>
+
+        <span class="s3">return </span><span class="s1">item</span>
+
+
+<span class="s3">class </span><span class="s1">CachingEntityRegistry(AbstractEntityRegistry):</span>
+    <span class="s0"># for long lived mapper, return dict based caching</span>
+    <span class="s0"># version that creates reference cycles</span>
+
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;_cache&quot;</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s1">inherit_cache = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent: Union[RootRegistry</span><span class="s5">, </span><span class="s1">PropRegistry]</span><span class="s5">,</span>
+        <span class="s1">entity: _InternalEntityType[Any]</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">super().__init__(parent</span><span class="s5">, </span><span class="s1">entity)</span>
+        <span class="s1">self._cache = _ERDict(self)</span>
+
+    <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">key: Any</span><span class="s5">, </span><span class="s1">default: Any) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self._cache.pop(key</span><span class="s5">, </span><span class="s1">default)</span>
+
+    <span class="s3">def </span><span class="s1">_getitem(self</span><span class="s5">, </span><span class="s1">entity: Any) -&gt; Any:</span>
+        <span class="s3">if </span><span class="s1">isinstance(entity</span><span class="s5">, </span><span class="s1">(int</span><span class="s5">, </span><span class="s1">slice)):</span>
+            <span class="s3">return </span><span class="s1">self.path[entity]</span>
+        <span class="s3">elif </span><span class="s1">isinstance(entity</span><span class="s5">, </span><span class="s1">PathToken):</span>
+            <span class="s3">return </span><span class="s1">TokenRegistry(self</span><span class="s5">, </span><span class="s1">entity)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._cache[entity]</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s1">__getitem__ = _getitem</span>
+
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+
+    <span class="s3">def </span><span class="s1">path_is_entity(</span>
+        <span class="s1">path: PathRegistry</span><span class="s5">,</span>
+    <span class="s1">) -&gt; TypeGuard[AbstractEntityRegistry]: ...</span>
+
+    <span class="s3">def </span><span class="s1">path_is_property(path: PathRegistry) -&gt; TypeGuard[PropRegistry]: ...</span>
+
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s1">path_is_entity = operator.attrgetter(</span><span class="s4">&quot;is_entity&quot;</span><span class="s1">)</span>
+    <span class="s1">path_is_property = operator.attrgetter(</span><span class="s4">&quot;is_property&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

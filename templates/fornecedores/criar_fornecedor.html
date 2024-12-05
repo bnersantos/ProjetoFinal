@@ -1,0 +1,31 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="mensagens">
+            {% for category, message in messages %}
+                <div class="alert {{ 'alert-success' if category == 'success' else 'alert-danger' }}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<form class="criar" action="{{ url_for('criar_fornecedor') }}" method="POST">
+    <label class="criar" for="nome_fornecedor">Nome do Fornecedor:</label>
+    <input class="criar" type="text" name="nome_fornecedor" id="nome_fornecedor" required><br>
+
+    <label class="criar" for="telefone_fornecedor">Telefone:</label>
+    <input class="criar" type="tel" name="telefone_fornecedor" id="telefone_fornecedor" required pattern="\d+" title="O telefone deve conter apenas números."><br>
+
+    <label class="criar" for="email_fornecedor">E-mail:</label>
+    <input class="criar" type="email" name="email_fornecedor" id="email_fornecedor" required><br>
+
+    <button class="criar" type="submit">Criar Fornecedor</button>
+</form>
+<br>
+
+{% endblock %}

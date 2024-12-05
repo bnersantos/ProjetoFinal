@@ -1,0 +1,408 @@
+<html>
+<head>
+<title>registry.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+registry.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># event/registry.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Provides managed registration services on behalf of :func:`.listen` 
+arguments. 
+ 
+By &quot;managed registration&quot;, we mean that event listening functions and 
+other objects can be added to various collections in such a way that their 
+membership in all those collections can be revoked at once, based on 
+an equivalent :class:`._EventKey`. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">collections</span>
+<span class="s3">import </span><span class="s1">types</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Deque</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generic</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">weakref</span>
+
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.attr </span><span class="s3">import </span><span class="s1">RefCollection</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">dispatcher</span>
+
+<span class="s1">_ListenerFnType = Callable[...</span><span class="s4">, </span><span class="s1">Any]</span>
+<span class="s1">_ListenerFnKeyType = Union[int</span><span class="s4">, </span><span class="s1">Tuple[int</span><span class="s4">, </span><span class="s1">int]]</span>
+<span class="s1">_EventKeyTupleType = Tuple[int</span><span class="s4">, </span><span class="s1">str</span><span class="s4">, </span><span class="s1">_ListenerFnKeyType]</span>
+
+
+<span class="s1">_ET = TypeVar(</span><span class="s5">&quot;_ET&quot;</span><span class="s4">, </span><span class="s1">bound=</span><span class="s5">&quot;EventTarget&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">EventTarget:</span>
+    <span class="s2">&quot;&quot;&quot;represents an event target, that is, something we can listen on 
+    either with that target as a class or as an instance. 
+ 
+    Examples include:  Connection, Mapper, Table, Session, 
+    InstrumentedAttribute, Engine, Pool, Dialect. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">dispatch: dispatcher[Any]</span>
+
+
+<span class="s1">_RefCollectionToListenerType = Dict[</span>
+    <span class="s5">&quot;weakref.ref[RefCollection[Any]]&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;weakref.ref[_ListenerFnType]&quot;</span><span class="s4">,</span>
+<span class="s1">]</span>
+
+<span class="s1">_key_to_collection: Dict[_EventKeyTupleType</span><span class="s4">, </span><span class="s1">_RefCollectionToListenerType] = (</span>
+    <span class="s1">collections.defaultdict(dict)</span>
+<span class="s1">)</span>
+<span class="s5">&quot;&quot;&quot; 
+Given an original listen() argument, can locate all 
+listener collections and the listener fn contained 
+ 
+(target, identifier, fn) -&gt; { 
+                            ref(listenercollection) -&gt; ref(listener_fn) 
+                            ref(listenercollection) -&gt; ref(listener_fn) 
+                            ref(listenercollection) -&gt; ref(listener_fn) 
+                        } 
+&quot;&quot;&quot;</span>
+
+<span class="s1">_ListenerToEventKeyType = Dict[</span>
+    <span class="s5">&quot;weakref.ref[_ListenerFnType]&quot;</span><span class="s4">,</span>
+    <span class="s1">_EventKeyTupleType</span><span class="s4">,</span>
+<span class="s1">]</span>
+<span class="s1">_collection_to_key: Dict[</span>
+    <span class="s1">weakref.ref[RefCollection[Any]]</span><span class="s4">,</span>
+    <span class="s1">_ListenerToEventKeyType</span><span class="s4">,</span>
+<span class="s1">] = collections.defaultdict(dict)</span>
+<span class="s5">&quot;&quot;&quot; 
+Given a _ListenerCollection or _ClsLevelListener, can locate 
+all the original listen() arguments and the listener fn contained 
+ 
+ref(listenercollection) -&gt; { 
+                            ref(listener_fn) -&gt; (target, identifier, fn), 
+                            ref(listener_fn) -&gt; (target, identifier, fn), 
+                            ref(listener_fn) -&gt; (target, identifier, fn), 
+                        } 
+&quot;&quot;&quot;</span>
+
+
+<span class="s3">def </span><span class="s1">_collection_gced(ref: weakref.ref[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s0"># defaultdict, so can't get a KeyError</span>
+    <span class="s3">if not </span><span class="s1">_collection_to_key </span><span class="s3">or </span><span class="s1">ref </span><span class="s3">not in </span><span class="s1">_collection_to_key:</span>
+        <span class="s3">return</span>
+
+    <span class="s1">ref = cast(</span><span class="s5">&quot;weakref.ref[RefCollection[EventTarget]]&quot;</span><span class="s4">, </span><span class="s1">ref)</span>
+
+    <span class="s1">listener_to_key = _collection_to_key.pop(ref)</span>
+    <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">listener_to_key.values():</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">_key_to_collection:</span>
+            <span class="s0"># defaultdict, so can't get a KeyError</span>
+            <span class="s1">dispatch_reg = _key_to_collection[key]</span>
+            <span class="s1">dispatch_reg.pop(ref)</span>
+            <span class="s3">if not </span><span class="s1">dispatch_reg:</span>
+                <span class="s1">_key_to_collection.pop(key)</span>
+
+
+<span class="s3">def </span><span class="s1">_stored_in_collection(</span>
+    <span class="s1">event_key: _EventKey[_ET]</span><span class="s4">, </span><span class="s1">owner: RefCollection[_ET]</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s1">key = event_key._key</span>
+
+    <span class="s1">dispatch_reg = _key_to_collection[key]</span>
+
+    <span class="s1">owner_ref = owner.ref</span>
+    <span class="s1">listen_ref = weakref.ref(event_key._listen_fn)</span>
+
+    <span class="s3">if </span><span class="s1">owner_ref </span><span class="s3">in </span><span class="s1">dispatch_reg:</span>
+        <span class="s3">return False</span>
+
+    <span class="s1">dispatch_reg[owner_ref] = listen_ref</span>
+
+    <span class="s1">listener_to_key = _collection_to_key[owner_ref]</span>
+    <span class="s1">listener_to_key[listen_ref] = key</span>
+
+    <span class="s3">return True</span>
+
+
+<span class="s3">def </span><span class="s1">_removed_from_collection(</span>
+    <span class="s1">event_key: _EventKey[_ET]</span><span class="s4">, </span><span class="s1">owner: RefCollection[_ET]</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s1">key = event_key._key</span>
+
+    <span class="s1">dispatch_reg = _key_to_collection[key]</span>
+
+    <span class="s1">listen_ref = weakref.ref(event_key._listen_fn)</span>
+
+    <span class="s1">owner_ref = owner.ref</span>
+    <span class="s1">dispatch_reg.pop(owner_ref</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+    <span class="s3">if not </span><span class="s1">dispatch_reg:</span>
+        <span class="s3">del </span><span class="s1">_key_to_collection[key]</span>
+
+    <span class="s3">if </span><span class="s1">owner_ref </span><span class="s3">in </span><span class="s1">_collection_to_key:</span>
+        <span class="s1">listener_to_key = _collection_to_key[owner_ref]</span>
+        <span class="s1">listener_to_key.pop(listen_ref)</span>
+
+
+<span class="s3">def </span><span class="s1">_stored_in_collection_multi(</span>
+    <span class="s1">newowner: RefCollection[_ET]</span><span class="s4">,</span>
+    <span class="s1">oldowner: RefCollection[_ET]</span><span class="s4">,</span>
+    <span class="s1">elements: Iterable[_ListenerFnType]</span><span class="s4">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s3">if not </span><span class="s1">elements:</span>
+        <span class="s3">return</span>
+
+    <span class="s1">oldowner_ref = oldowner.ref</span>
+    <span class="s1">newowner_ref = newowner.ref</span>
+
+    <span class="s1">old_listener_to_key = _collection_to_key[oldowner_ref]</span>
+    <span class="s1">new_listener_to_key = _collection_to_key[newowner_ref]</span>
+
+    <span class="s3">for </span><span class="s1">listen_fn </span><span class="s3">in </span><span class="s1">elements:</span>
+        <span class="s1">listen_ref = weakref.ref(listen_fn)</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">key = old_listener_to_key[listen_ref]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s0"># can occur during interpreter shutdown.</span>
+            <span class="s0"># see #6740</span>
+            <span class="s3">continue</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">dispatch_reg = _key_to_collection[key]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s3">continue</span>
+
+        <span class="s3">if </span><span class="s1">newowner_ref </span><span class="s3">in </span><span class="s1">dispatch_reg:</span>
+            <span class="s3">assert </span><span class="s1">dispatch_reg[newowner_ref] == listen_ref</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">dispatch_reg[newowner_ref] = listen_ref</span>
+
+        <span class="s1">new_listener_to_key[listen_ref] = key</span>
+
+
+<span class="s3">def </span><span class="s1">_clear(</span>
+    <span class="s1">owner: RefCollection[_ET]</span><span class="s4">,</span>
+    <span class="s1">elements: Iterable[_ListenerFnType]</span><span class="s4">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s3">if not </span><span class="s1">elements:</span>
+        <span class="s3">return</span>
+
+    <span class="s1">owner_ref = owner.ref</span>
+    <span class="s1">listener_to_key = _collection_to_key[owner_ref]</span>
+    <span class="s3">for </span><span class="s1">listen_fn </span><span class="s3">in </span><span class="s1">elements:</span>
+        <span class="s1">listen_ref = weakref.ref(listen_fn)</span>
+        <span class="s1">key = listener_to_key[listen_ref]</span>
+        <span class="s1">dispatch_reg = _key_to_collection[key]</span>
+        <span class="s1">dispatch_reg.pop(owner_ref</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">if not </span><span class="s1">dispatch_reg:</span>
+            <span class="s3">del </span><span class="s1">_key_to_collection[key]</span>
+
+
+<span class="s3">class </span><span class="s1">_EventKey(Generic[_ET]):</span>
+    <span class="s2">&quot;&quot;&quot;Represent :func:`.listen` arguments.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s5">&quot;target&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;identifier&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;fn&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;fn_key&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;fn_wrap&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;dispatch_target&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">target: _ET</span>
+    <span class="s1">identifier: str</span>
+    <span class="s1">fn: _ListenerFnType</span>
+    <span class="s1">fn_key: _ListenerFnKeyType</span>
+    <span class="s1">dispatch_target: Any</span>
+    <span class="s1">_fn_wrap: Optional[_ListenerFnType]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">target: _ET</span><span class="s4">,</span>
+        <span class="s1">identifier: str</span><span class="s4">,</span>
+        <span class="s1">fn: _ListenerFnType</span><span class="s4">,</span>
+        <span class="s1">dispatch_target: Any</span><span class="s4">,</span>
+        <span class="s1">_fn_wrap: Optional[_ListenerFnType] = </span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.target = target</span>
+        <span class="s1">self.identifier = identifier</span>
+        <span class="s1">self.fn = fn</span>
+        <span class="s3">if </span><span class="s1">isinstance(fn</span><span class="s4">, </span><span class="s1">types.MethodType):</span>
+            <span class="s1">self.fn_key = id(fn.__func__)</span><span class="s4">, </span><span class="s1">id(fn.__self__)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.fn_key = id(fn)</span>
+        <span class="s1">self.fn_wrap = _fn_wrap</span>
+        <span class="s1">self.dispatch_target = dispatch_target</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_key(self) -&gt; _EventKeyTupleType:</span>
+        <span class="s3">return </span><span class="s1">(id(self.target)</span><span class="s4">, </span><span class="s1">self.identifier</span><span class="s4">, </span><span class="s1">self.fn_key)</span>
+
+    <span class="s3">def </span><span class="s1">with_wrapper(self</span><span class="s4">, </span><span class="s1">fn_wrap: _ListenerFnType) -&gt; _EventKey[_ET]:</span>
+        <span class="s3">if </span><span class="s1">fn_wrap </span><span class="s3">is </span><span class="s1">self._listen_fn:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">_EventKey(</span>
+                <span class="s1">self.target</span><span class="s4">,</span>
+                <span class="s1">self.identifier</span><span class="s4">,</span>
+                <span class="s1">self.fn</span><span class="s4">,</span>
+                <span class="s1">self.dispatch_target</span><span class="s4">,</span>
+                <span class="s1">_fn_wrap=fn_wrap</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">with_dispatch_target(self</span><span class="s4">, </span><span class="s1">dispatch_target: Any) -&gt; _EventKey[_ET]:</span>
+        <span class="s3">if </span><span class="s1">dispatch_target </span><span class="s3">is </span><span class="s1">self.dispatch_target:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">_EventKey(</span>
+                <span class="s1">self.target</span><span class="s4">,</span>
+                <span class="s1">self.identifier</span><span class="s4">,</span>
+                <span class="s1">self.fn</span><span class="s4">,</span>
+                <span class="s1">dispatch_target</span><span class="s4">,</span>
+                <span class="s1">_fn_wrap=self.fn_wrap</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">listen(self</span><span class="s4">, </span><span class="s1">*args: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">once = kw.pop(</span><span class="s5">&quot;once&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">once_unless_exception = kw.pop(</span><span class="s5">&quot;_once_unless_exception&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">named = kw.pop(</span><span class="s5">&quot;named&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+
+        <span class="s1">target</span><span class="s4">, </span><span class="s1">identifier</span><span class="s4">, </span><span class="s1">fn = (</span>
+            <span class="s1">self.dispatch_target</span><span class="s4">,</span>
+            <span class="s1">self.identifier</span><span class="s4">,</span>
+            <span class="s1">self._listen_fn</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">dispatch_collection = getattr(target.dispatch</span><span class="s4">, </span><span class="s1">identifier)</span>
+
+        <span class="s1">adjusted_fn = dispatch_collection._adjust_fn_spec(fn</span><span class="s4">, </span><span class="s1">named)</span>
+
+        <span class="s1">self = self.with_wrapper(adjusted_fn)</span>
+
+        <span class="s1">stub_function = getattr(</span>
+            <span class="s1">self.dispatch_target.dispatch._events</span><span class="s4">, </span><span class="s1">self.identifier</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">hasattr(stub_function</span><span class="s4">, </span><span class="s5">&quot;_sa_warn&quot;</span><span class="s1">):</span>
+            <span class="s1">stub_function._sa_warn()</span>
+
+        <span class="s3">if </span><span class="s1">once </span><span class="s3">or </span><span class="s1">once_unless_exception:</span>
+            <span class="s1">self.with_wrapper(</span>
+                <span class="s1">util.only_once(</span>
+                    <span class="s1">self._listen_fn</span><span class="s4">, </span><span class="s1">retry_on_exception=once_unless_exception</span>
+                <span class="s1">)</span>
+            <span class="s1">).listen(*args</span><span class="s4">, </span><span class="s1">**kw)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.dispatch_target.dispatch._listen(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">remove(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">key = self._key</span>
+
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">_key_to_collection:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s5">&quot;No listeners found for event %s / %r / %s &quot;</span>
+                <span class="s1">% (self.target</span><span class="s4">, </span><span class="s1">self.identifier</span><span class="s4">, </span><span class="s1">self.fn)</span>
+            <span class="s1">)</span>
+
+        <span class="s1">dispatch_reg = _key_to_collection.pop(key)</span>
+
+        <span class="s3">for </span><span class="s1">collection_ref</span><span class="s4">, </span><span class="s1">listener_ref </span><span class="s3">in </span><span class="s1">dispatch_reg.items():</span>
+            <span class="s1">collection = collection_ref()</span>
+            <span class="s1">listener_fn = listener_ref()</span>
+            <span class="s3">if </span><span class="s1">collection </span><span class="s3">is not None and </span><span class="s1">listener_fn </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">collection.remove(self.with_wrapper(listener_fn))</span>
+
+    <span class="s3">def </span><span class="s1">contains(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return True if this event key is registered to listen.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._key </span><span class="s3">in </span><span class="s1">_key_to_collection</span>
+
+    <span class="s3">def </span><span class="s1">base_listen(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">propagate: bool = </span><span class="s3">False</span><span class="s4">,</span>
+        <span class="s1">insert: bool = </span><span class="s3">False</span><span class="s4">,</span>
+        <span class="s1">named: bool = </span><span class="s3">False</span><span class="s4">,</span>
+        <span class="s1">retval: Optional[bool] = </span><span class="s3">None</span><span class="s4">,</span>
+        <span class="s1">asyncio: bool = </span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">target</span><span class="s4">, </span><span class="s1">identifier = self.dispatch_target</span><span class="s4">, </span><span class="s1">self.identifier</span>
+
+        <span class="s1">dispatch_collection = getattr(target.dispatch</span><span class="s4">, </span><span class="s1">identifier)</span>
+
+        <span class="s1">for_modify = dispatch_collection.for_modify(target.dispatch)</span>
+        <span class="s3">if </span><span class="s1">asyncio:</span>
+            <span class="s1">for_modify._set_asyncio()</span>
+
+        <span class="s3">if </span><span class="s1">insert:</span>
+            <span class="s1">for_modify.insert(self</span><span class="s4">, </span><span class="s1">propagate)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">for_modify.append(self</span><span class="s4">, </span><span class="s1">propagate)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_listen_fn(self) -&gt; _ListenerFnType:</span>
+        <span class="s3">return </span><span class="s1">self.fn_wrap </span><span class="s3">or </span><span class="s1">self.fn</span>
+
+    <span class="s3">def </span><span class="s1">append_to_list(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">owner: RefCollection[_ET]</span><span class="s4">,</span>
+        <span class="s1">list_: Deque[_ListenerFnType]</span><span class="s4">,</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s3">if </span><span class="s1">_stored_in_collection(self</span><span class="s4">, </span><span class="s1">owner):</span>
+            <span class="s1">list_.append(self._listen_fn)</span>
+            <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">remove_from_list(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">owner: RefCollection[_ET]</span><span class="s4">,</span>
+        <span class="s1">list_: Deque[_ListenerFnType]</span><span class="s4">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">_removed_from_collection(self</span><span class="s4">, </span><span class="s1">owner)</span>
+        <span class="s1">list_.remove(self._listen_fn)</span>
+
+    <span class="s3">def </span><span class="s1">prepend_to_list(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">owner: RefCollection[_ET]</span><span class="s4">,</span>
+        <span class="s1">list_: Deque[_ListenerFnType]</span><span class="s4">,</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s3">if </span><span class="s1">_stored_in_collection(self</span><span class="s4">, </span><span class="s1">owner):</span>
+            <span class="s1">list_.appendleft(self._listen_fn)</span>
+            <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+</pre>
+</body>
+</html>

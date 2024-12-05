@@ -1,0 +1,26 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+
+    <!-- Formulário para editar o fornecedor, passando o ID na URL -->
+    <form action="{{ url_for('editar_fornecedor', id=fornecedor.id) }}" method="POST">
+
+        <!-- Nome do fornecedor -->
+        <label for="nome">Nome:</label>
+        <input type="text" id="nome" name="nome" value="{{ fornecedor.nome_fornecedor }}" required><br><br>
+
+        <!-- Telefone -->
+        <label for="telefone">Telefone:</label>
+        <input type="text" id="telefone" name="telefone" value="{{ fornecedor.telefone_fornecedor }}" required><br><br>
+
+        <!-- E-mail -->
+        <label for="email">E-mail:</label>
+        <input type="email" id="email" name="email" value="{{ fornecedor.email_fornecedor }}" required><br><br>
+
+        <button type="submit">Atualizar Fornecedor</button>
+    </form>
+
+    <br>
+    <a href="{{ url_for('listar_fornecedores') }}">Voltar para lista de fornecedores</a>
+
+{% endblock %}

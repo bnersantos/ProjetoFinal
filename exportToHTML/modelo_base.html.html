@@ -1,0 +1,64 @@
+<html>
+<head>
+<title>modelo_base.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #e8bf6a;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #bababa;}
+.s3 { color: #a5c261;}
+.s4 { color: #5d69bb;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+modelo_base.html</font>
+</center></td></tr></table>
+<pre><span class="s0">&lt;!DOCTYPE </span><span class="s2">html</span><span class="s0">&gt;</span>
+<span class="s0">&lt;html </span><span class="s2">lang</span><span class="s3">=&quot;pt-BR&quot;</span><span class="s0">&gt;</span>
+<span class="s0">&lt;head&gt;</span>
+    <span class="s0">&lt;meta </span><span class="s2">charset</span><span class="s3">=&quot;UTF-8&quot;</span><span class="s0">&gt;</span>
+    <span class="s0">&lt;meta </span><span class="s2">name</span><span class="s3">=&quot;viewport&quot; </span><span class="s2">content</span><span class="s3">=&quot;width=device-width, initial-scale=1.0&quot;</span><span class="s0">&gt;</span>
+    <span class="s0">&lt;title&gt;</span><span class="s1">TESTE</span><span class="s0">&lt;/title&gt;</span>
+    <span class="s0">&lt;link </span><span class="s2">rel</span><span class="s3">=&quot;stylesheet&quot; </span><span class="s2">href</span><span class="s3">=&quot;/static/base.css&quot;</span><span class="s0">&gt;</span>
+<span class="s0">&lt;/head&gt;</span>
+<span class="s0">&lt;body&gt;</span>
+  <span class="s0">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;nav-bar&quot;</span><span class="s0">&gt;</span>
+    <span class="s0">&lt;ul </span><span class="s2">class</span><span class="s3">=&quot;menu&quot;</span><span class="s0">&gt;</span>
+        <span class="s0">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;usuario-btn&quot;</span><span class="s0">&gt;</span>
+              <span class="s0">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('login') }}&quot;</span><span class="s0">&gt;</span>
+                  <span class="s0">&lt;button </span><span class="s2">id</span><span class="s3">=&quot;usuario-btn&quot;</span><span class="s0">&gt;</span><span class="s1">Login</span><span class="s0">&lt;/button&gt;</span>
+              <span class="s0">&lt;/a&gt;</span>
+        <span class="s0">&lt;/div&gt;</span>
+        <span class="s0">&lt;li&gt;&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('home') }}&quot;</span><span class="s0">&gt;</span><span class="s1">MENU</span><span class="s0">&lt;/a&gt;&lt;/li&gt;</span>
+        <span class="s0">&lt;li&gt;&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('gerenciamento') }}&quot;</span><span class="s0">&gt;</span><span class="s1">GERENCIAMENTO</span><span class="s0">&lt;/a&gt;&lt;/li&gt;</span>
+        <span class="s0">&lt;li&gt;&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('grafico_movimentacoes') }}&quot;</span><span class="s0">&gt;</span><span class="s1">RELATORIO</span><span class="s0">&lt;/a&gt;&lt;/li&gt;</span>
+    <span class="s0">&lt;/ul&gt;</span>
+    <span class="s0">&lt;span </span><span class="s2">class</span><span class="s3">=&quot;search-icon&quot; </span><span class="s2">id</span><span class="s3">=&quot;search-icon&quot;</span><span class="s0">&gt;</span>
+        <span class="s0">&lt;i </span><span class="s2">class</span><span class="s3">=&quot;fas fa-search&quot;</span><span class="s0">&gt;&lt;/i&gt; </span><span class="s4">&lt;!-- Ícone de lupa do Font Awesome --&gt;</span>
+    <span class="s0">&lt;/span&gt;</span>
+    <span class="s0">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;search-box&quot; </span><span class="s2">id</span><span class="s3">=&quot;search-box&quot;</span><span class="s0">&gt;</span>
+        <span class="s0">&lt;input </span><span class="s2">type</span><span class="s3">=&quot;text&quot; </span><span class="s2">id</span><span class="s3">=&quot;search-input&quot; </span><span class="s2">placeholder</span><span class="s3">=&quot;Buscar...&quot;</span><span class="s0">&gt;</span>
+        <span class="s0">&lt;button </span><span class="s2">id</span><span class="s3">=&quot;search-btn&quot;</span><span class="s0">&gt;</span><span class="s1">Buscar</span><span class="s0">&lt;/button&gt;</span>
+    <span class="s0">&lt;/div&gt;</span>
+<span class="s0">&lt;/div&gt;</span>
+<span class="s0">&lt;header </span><span class="s2">class</span><span class="s3">=&quot;header-banner&quot;</span><span class="s0">&gt;</span>
+    <span class="s1">{% block conteudoNav %}</span>
+        <span class="s4">&lt;!-- Conteúdo do cabeçalho pode ser dinâmico --&gt;</span>
+    <span class="s1">{% endblock %}</span>
+<span class="s0">&lt;/header&gt;</span>
+
+
+
+    <span class="s0">&lt;main&gt;</span>
+        <span class="s1">{% block conteudo %}</span>
+        <span class="s4">&lt;!-- Conteúdo principal será inserido aqui --&gt;</span>
+        <span class="s1">{% endblock %}</span>
+    <span class="s0">&lt;/main&gt;</span>
+<span class="s0">&lt;/body&gt;</span>
+<span class="s0">&lt;/html&gt;</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,440 @@
+<html>
+<head>
+<title>utils.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #5d69bb;}
+.s3 { color: #cc7832;}
+.s4 { color: #717ed3; font-style: italic;}
+.s5 { color: #96bf7d;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+.s8 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+utils.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">hmac</span>
+<span class="s0">from </span><span class="s1">functools </span><span class="s0">import </span><span class="s1">wraps</span>
+<span class="s0">from </span><span class="s1">hashlib </span><span class="s0">import </span><span class="s1">sha512</span>
+<span class="s0">from </span><span class="s1">urllib.parse </span><span class="s0">import </span><span class="s1">parse_qs</span>
+<span class="s0">from </span><span class="s1">urllib.parse </span><span class="s0">import </span><span class="s1">urlencode</span>
+<span class="s0">from </span><span class="s1">urllib.parse </span><span class="s0">import </span><span class="s1">urlsplit</span>
+<span class="s0">from </span><span class="s1">urllib.parse </span><span class="s0">import </span><span class="s1">urlunsplit</span>
+
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">current_app</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">g</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">has_request_context</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">request</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">session</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">url_for</span>
+<span class="s0">from </span><span class="s1">werkzeug.local </span><span class="s0">import </span><span class="s1">LocalProxy</span>
+
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">COOKIE_NAME</span>
+<span class="s0">from </span><span class="s1">.config </span><span class="s0">import </span><span class="s1">EXEMPT_METHODS</span>
+<span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">user_logged_in</span>
+<span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">user_logged_out</span>
+<span class="s0">from </span><span class="s1">.signals </span><span class="s0">import </span><span class="s1">user_login_confirmed</span>
+
+<span class="s2">#: A proxy for the current user. If no user is logged in, this will be an</span>
+<span class="s2">#: anonymous user</span>
+<span class="s1">current_user = LocalProxy(</span><span class="s0">lambda</span><span class="s1">: _get_user())</span>
+
+
+<span class="s0">def </span><span class="s1">encode_cookie(payload</span><span class="s3">, </span><span class="s1">key=</span><span class="s0">None</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    This will encode a ``str`` value into a cookie, and sign that cookie 
+    with the app's secret key. 
+ 
+    :param payload: The value to encode, as `str`. 
+    :type payload: str 
+ 
+    :param key: The key to use when creating the cookie digest. If not 
+                specified, the SECRET_KEY value from app config will be used. 
+    :type key: str 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s5">f&quot;</span><span class="s6">{</span><span class="s1">payload</span><span class="s6">}</span><span class="s5">|</span><span class="s6">{</span><span class="s1">_cookie_digest(payload</span><span class="s3">, </span><span class="s1">key=key)</span><span class="s6">}</span><span class="s5">&quot;</span>
+
+
+<span class="s0">def </span><span class="s1">decode_cookie(cookie</span><span class="s3">, </span><span class="s1">key=</span><span class="s0">None</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    This decodes a cookie given by `encode_cookie`. If verification of the 
+    cookie fails, ``None`` will be implicitly returned. 
+ 
+    :param cookie: An encoded cookie. 
+    :type cookie: str 
+ 
+    :param key: The key to use when creating the cookie digest. If not 
+                specified, the SECRET_KEY value from app config will be used. 
+    :type key: str 
+    &quot;&quot;&quot;</span>
+    <span class="s0">try</span><span class="s1">:</span>
+        <span class="s1">payload</span><span class="s3">, </span><span class="s1">digest = cookie.rsplit(</span><span class="s5">&quot;|&quot;</span><span class="s3">, </span><span class="s7">1</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">hasattr(digest</span><span class="s3">, </span><span class="s5">&quot;decode&quot;</span><span class="s1">):</span>
+            <span class="s1">digest = digest.decode(</span><span class="s5">&quot;ascii&quot;</span><span class="s1">)  </span><span class="s2"># pragma: no cover</span>
+    <span class="s0">except </span><span class="s1">ValueError:</span>
+        <span class="s0">return</span>
+
+    <span class="s0">if </span><span class="s1">hmac.compare_digest(_cookie_digest(payload</span><span class="s3">, </span><span class="s1">key=key)</span><span class="s3">, </span><span class="s1">digest):</span>
+        <span class="s0">return </span><span class="s1">payload</span>
+
+
+<span class="s0">def </span><span class="s1">make_next_param(login_url</span><span class="s3">, </span><span class="s1">current_url):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Reduces the scheme and host from a given URL so it can be passed to 
+    the given `login` URL more efficiently. 
+ 
+    :param login_url: The login URL being redirected to. 
+    :type login_url: str 
+    :param current_url: The URL to reduce. 
+    :type current_url: str 
+    &quot;&quot;&quot;</span>
+    <span class="s1">l_url = urlsplit(login_url)</span>
+    <span class="s1">c_url = urlsplit(current_url)</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">not </span><span class="s1">l_url.scheme </span><span class="s0">or </span><span class="s1">l_url.scheme == c_url.scheme) </span><span class="s0">and </span><span class="s1">(</span>
+        <span class="s0">not </span><span class="s1">l_url.netloc </span><span class="s0">or </span><span class="s1">l_url.netloc == c_url.netloc</span>
+    <span class="s1">):</span>
+        <span class="s0">return </span><span class="s1">urlunsplit((</span><span class="s5">&quot;&quot;</span><span class="s3">, </span><span class="s5">&quot;&quot;</span><span class="s3">, </span><span class="s1">c_url.path</span><span class="s3">, </span><span class="s1">c_url.query</span><span class="s3">, </span><span class="s5">&quot;&quot;</span><span class="s1">))</span>
+    <span class="s0">return </span><span class="s1">current_url</span>
+
+
+<span class="s0">def </span><span class="s1">expand_login_view(login_view):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Returns the url for the login view, expanding the view name to a url if 
+    needed. 
+ 
+    :param login_view: The name of the login view or a URL for the login view. 
+    :type login_view: str 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">login_view.startswith((</span><span class="s5">&quot;https://&quot;</span><span class="s3">, </span><span class="s5">&quot;http://&quot;</span><span class="s3">, </span><span class="s5">&quot;/&quot;</span><span class="s1">)):</span>
+        <span class="s0">return </span><span class="s1">login_view</span>
+
+    <span class="s0">return </span><span class="s1">url_for(login_view)</span>
+
+
+<span class="s0">def </span><span class="s1">login_url(login_view</span><span class="s3">, </span><span class="s1">next_url=</span><span class="s0">None</span><span class="s3">, </span><span class="s1">next_field=</span><span class="s5">&quot;next&quot;</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Creates a URL for redirecting to a login page. If only `login_view` is 
+    provided, this will just return the URL for it. If `next_url` is provided, 
+    however, this will append a ``next=URL`` parameter to the query string 
+    so that the login view can redirect back to that URL. Flask-Login's default 
+    unauthorized handler uses this function when redirecting to your login url. 
+    To force the host name used, set `FORCE_HOST_FOR_REDIRECTS` to a host. This 
+    prevents from redirecting to external sites if request headers Host or 
+    X-Forwarded-For are present. 
+ 
+    :param login_view: The name of the login view. (Alternately, the actual 
+                       URL to the login view.) 
+    :type login_view: str 
+    :param next_url: The URL to give the login view for redirection. 
+    :type next_url: str 
+    :param next_field: What field to store the next URL in. (It defaults to 
+                       ``next``.) 
+    :type next_field: str 
+    &quot;&quot;&quot;</span>
+    <span class="s1">base = expand_login_view(login_view)</span>
+
+    <span class="s0">if </span><span class="s1">next_url </span><span class="s0">is None</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s1">base</span>
+
+    <span class="s1">parsed_result = urlsplit(base)</span>
+    <span class="s1">md = parse_qs(parsed_result.query</span><span class="s3">, </span><span class="s1">keep_blank_values=</span><span class="s0">True</span><span class="s1">)</span>
+    <span class="s1">md[next_field] = make_next_param(base</span><span class="s3">, </span><span class="s1">next_url)</span>
+    <span class="s1">netloc = current_app.config.get(</span><span class="s5">&quot;FORCE_HOST_FOR_REDIRECTS&quot;</span><span class="s1">) </span><span class="s0">or </span><span class="s1">parsed_result.netloc</span>
+    <span class="s1">parsed_result = parsed_result._replace(</span>
+        <span class="s1">netloc=netloc</span><span class="s3">, </span><span class="s1">query=urlencode(md</span><span class="s3">, </span><span class="s1">doseq=</span><span class="s0">True</span><span class="s1">)</span>
+    <span class="s1">)</span>
+    <span class="s0">return </span><span class="s1">urlunsplit(parsed_result)</span>
+
+
+<span class="s0">def </span><span class="s1">login_fresh():</span>
+    <span class="s4">&quot;&quot;&quot; 
+    This returns ``True`` if the current login is fresh. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">session.get(</span><span class="s5">&quot;_fresh&quot;</span><span class="s3">, </span><span class="s0">False</span><span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">login_remembered():</span>
+    <span class="s4">&quot;&quot;&quot; 
+    This returns ``True`` if the current login is remembered across sessions. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">config = current_app.config</span>
+    <span class="s1">cookie_name = config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_NAME&quot;</span><span class="s3">, </span><span class="s1">COOKIE_NAME)</span>
+    <span class="s1">has_cookie = cookie_name </span><span class="s0">in </span><span class="s1">request.cookies </span><span class="s0">and </span><span class="s1">session.get(</span><span class="s5">&quot;_remember&quot;</span><span class="s1">) != </span><span class="s5">&quot;clear&quot;</span>
+    <span class="s0">if </span><span class="s1">has_cookie:</span>
+        <span class="s1">cookie = request.cookies[cookie_name]</span>
+        <span class="s1">user_id = decode_cookie(cookie)</span>
+        <span class="s0">return </span><span class="s1">user_id </span><span class="s0">is not None</span>
+    <span class="s0">return False</span>
+
+
+<span class="s0">def </span><span class="s1">login_user(user</span><span class="s3">, </span><span class="s1">remember=</span><span class="s0">False</span><span class="s3">, </span><span class="s1">duration=</span><span class="s0">None</span><span class="s3">, </span><span class="s1">force=</span><span class="s0">False</span><span class="s3">, </span><span class="s1">fresh=</span><span class="s0">True</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Logs a user in. You should pass the actual user object to this. If the 
+    user's `is_active` property is ``False``, they will not be logged in 
+    unless `force` is ``True``. 
+ 
+    This will return ``True`` if the log in attempt succeeds, and ``False`` if 
+    it fails (i.e. because the user is inactive). 
+ 
+    :param user: The user object to log in. 
+    :type user: object 
+    :param remember: Whether to remember the user after their session expires. 
+        Defaults to ``False``. 
+    :type remember: bool 
+    :param duration: The amount of time before the remember cookie expires. If 
+        ``None`` the value set in the settings is used. Defaults to ``None``. 
+    :type duration: :class:`datetime.timedelta` 
+    :param force: If the user is inactive, setting this to ``True`` will log 
+        them in regardless. Defaults to ``False``. 
+    :type force: bool 
+    :param fresh: setting this to ``False`` will log in the user with a session 
+        marked as not &quot;fresh&quot;. Defaults to ``True``. 
+    :type fresh: bool 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if not </span><span class="s1">force </span><span class="s0">and not </span><span class="s1">user.is_active:</span>
+        <span class="s0">return False</span>
+
+    <span class="s1">user_id = getattr(user</span><span class="s3">, </span><span class="s1">current_app.login_manager.id_attribute)()</span>
+    <span class="s1">session[</span><span class="s5">&quot;_user_id&quot;</span><span class="s1">] = user_id</span>
+    <span class="s1">session[</span><span class="s5">&quot;_fresh&quot;</span><span class="s1">] = fresh</span>
+    <span class="s1">session[</span><span class="s5">&quot;_id&quot;</span><span class="s1">] = current_app.login_manager._session_identifier_generator()</span>
+
+    <span class="s0">if </span><span class="s1">remember:</span>
+        <span class="s1">session[</span><span class="s5">&quot;_remember&quot;</span><span class="s1">] = </span><span class="s5">&quot;set&quot;</span>
+        <span class="s0">if </span><span class="s1">duration </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s2"># equal to timedelta.total_seconds() but works with Python 2.6</span>
+                <span class="s1">session[</span><span class="s5">&quot;_remember_seconds&quot;</span><span class="s1">] = (</span>
+                    <span class="s1">duration.microseconds</span>
+                    <span class="s1">+ (duration.seconds + duration.days * </span><span class="s7">24 </span><span class="s1">* </span><span class="s7">3600</span><span class="s1">) * </span><span class="s7">10</span><span class="s1">**</span><span class="s7">6</span>
+                <span class="s1">) / </span><span class="s7">10.0</span><span class="s1">**</span><span class="s7">6</span>
+            <span class="s0">except </span><span class="s1">AttributeError </span><span class="s0">as </span><span class="s1">e:</span>
+                <span class="s0">raise </span><span class="s1">Exception(</span>
+                    <span class="s5">f&quot;duration must be a datetime.timedelta, instead got: </span><span class="s6">{</span><span class="s1">duration</span><span class="s6">}</span><span class="s5">&quot;</span>
+                <span class="s1">) </span><span class="s0">from </span><span class="s1">e</span>
+
+    <span class="s1">current_app.login_manager._update_request_context_with_user(user)</span>
+    <span class="s1">user_logged_in.send(current_app._get_current_object()</span><span class="s3">, </span><span class="s1">user=_get_user())</span>
+    <span class="s0">return True</span>
+
+
+<span class="s0">def </span><span class="s1">logout_user():</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Logs a user out. (You do not need to pass the actual user.) This will 
+    also clean up the remember me cookie if it exists. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">user = _get_user()</span>
+
+    <span class="s0">if </span><span class="s5">&quot;_user_id&quot; </span><span class="s0">in </span><span class="s1">session:</span>
+        <span class="s1">session.pop(</span><span class="s5">&quot;_user_id&quot;</span><span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s5">&quot;_fresh&quot; </span><span class="s0">in </span><span class="s1">session:</span>
+        <span class="s1">session.pop(</span><span class="s5">&quot;_fresh&quot;</span><span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s5">&quot;_id&quot; </span><span class="s0">in </span><span class="s1">session:</span>
+        <span class="s1">session.pop(</span><span class="s5">&quot;_id&quot;</span><span class="s1">)</span>
+
+    <span class="s1">cookie_name = current_app.config.get(</span><span class="s5">&quot;REMEMBER_COOKIE_NAME&quot;</span><span class="s3">, </span><span class="s1">COOKIE_NAME)</span>
+    <span class="s0">if </span><span class="s1">cookie_name </span><span class="s0">in </span><span class="s1">request.cookies:</span>
+        <span class="s1">session[</span><span class="s5">&quot;_remember&quot;</span><span class="s1">] = </span><span class="s5">&quot;clear&quot;</span>
+        <span class="s0">if </span><span class="s5">&quot;_remember_seconds&quot; </span><span class="s0">in </span><span class="s1">session:</span>
+            <span class="s1">session.pop(</span><span class="s5">&quot;_remember_seconds&quot;</span><span class="s1">)</span>
+
+    <span class="s1">user_logged_out.send(current_app._get_current_object()</span><span class="s3">, </span><span class="s1">user=user)</span>
+
+    <span class="s1">current_app.login_manager._update_request_context_with_user()</span>
+    <span class="s0">return True</span>
+
+
+<span class="s0">def </span><span class="s1">confirm_login():</span>
+    <span class="s4">&quot;&quot;&quot; 
+    This sets the current session as fresh. Sessions become stale when they 
+    are reloaded from a cookie. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">session[</span><span class="s5">&quot;_fresh&quot;</span><span class="s1">] = </span><span class="s0">True</span>
+    <span class="s1">session[</span><span class="s5">&quot;_id&quot;</span><span class="s1">] = current_app.login_manager._session_identifier_generator()</span>
+    <span class="s1">user_login_confirmed.send(current_app._get_current_object())</span>
+
+
+<span class="s0">def </span><span class="s1">login_required(func):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    If you decorate a view with this, it will ensure that the current user is 
+    logged in and authenticated before calling the actual view. (If they are 
+    not, it calls the :attr:`LoginManager.unauthorized` callback.) For 
+    example:: 
+ 
+        @app.route('/post') 
+        @login_required 
+        def post(): 
+            pass 
+ 
+    If there are only certain times you need to require that your user is 
+    logged in, you can do so with:: 
+ 
+        if not current_user.is_authenticated: 
+            return current_app.login_manager.unauthorized() 
+ 
+    ...which is essentially the code that this function adds to your views. 
+ 
+    It can be convenient to globally turn off authentication when unit testing. 
+    To enable this, if the application configuration variable `LOGIN_DISABLED` 
+    is set to `True`, this decorator will be ignored. 
+ 
+    .. Note :: 
+ 
+        Per `W3 guidelines for CORS preflight requests 
+        &lt;http://www.w3.org/TR/cors/#cross-origin-request-with-preflight-0&gt;`_, 
+        HTTP ``OPTIONS`` requests are exempt from login checks. 
+ 
+    :param func: The view function to decorate. 
+    :type func: function 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@wraps(func)</span>
+    <span class="s0">def </span><span class="s1">decorated_view(*args</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+        <span class="s0">if </span><span class="s1">request.method </span><span class="s0">in </span><span class="s1">EXEMPT_METHODS </span><span class="s0">or </span><span class="s1">current_app.config.get(</span><span class="s5">&quot;LOGIN_DISABLED&quot;</span><span class="s1">):</span>
+            <span class="s0">pass</span>
+        <span class="s0">elif not </span><span class="s1">current_user.is_authenticated:</span>
+            <span class="s0">return </span><span class="s1">current_app.login_manager.unauthorized()</span>
+
+        <span class="s2"># flask 1.x compatibility</span>
+        <span class="s2"># current_app.ensure_sync is only available in Flask &gt;= 2.0</span>
+        <span class="s0">if </span><span class="s1">callable(getattr(current_app</span><span class="s3">, </span><span class="s5">&quot;ensure_sync&quot;</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)):</span>
+            <span class="s0">return </span><span class="s1">current_app.ensure_sync(func)(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+        <span class="s0">return </span><span class="s1">func(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s0">return </span><span class="s1">decorated_view</span>
+
+
+<span class="s0">def </span><span class="s1">fresh_login_required(func):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    If you decorate a view with this, it will ensure that the current user's 
+    login is fresh - i.e. their session was not restored from a 'remember me' 
+    cookie. Sensitive operations, like changing a password or e-mail, should 
+    be protected with this, to impede the efforts of cookie thieves. 
+ 
+    If the user is not authenticated, :meth:`LoginManager.unauthorized` is 
+    called as normal. If they are authenticated, but their session is not 
+    fresh, it will call :meth:`LoginManager.needs_refresh` instead. (In that 
+    case, you will need to provide a :attr:`LoginManager.refresh_view`.) 
+ 
+    Behaves identically to the :func:`login_required` decorator with respect 
+    to configuration variables. 
+ 
+    .. Note :: 
+ 
+        Per `W3 guidelines for CORS preflight requests 
+        &lt;http://www.w3.org/TR/cors/#cross-origin-request-with-preflight-0&gt;`_, 
+        HTTP ``OPTIONS`` requests are exempt from login checks. 
+ 
+    :param func: The view function to decorate. 
+    :type func: function 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@wraps(func)</span>
+    <span class="s0">def </span><span class="s1">decorated_view(*args</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+        <span class="s0">if </span><span class="s1">request.method </span><span class="s0">in </span><span class="s1">EXEMPT_METHODS </span><span class="s0">or </span><span class="s1">current_app.config.get(</span><span class="s5">&quot;LOGIN_DISABLED&quot;</span><span class="s1">):</span>
+            <span class="s0">pass</span>
+        <span class="s0">elif not </span><span class="s1">current_user.is_authenticated:</span>
+            <span class="s0">return </span><span class="s1">current_app.login_manager.unauthorized()</span>
+        <span class="s0">elif not </span><span class="s1">login_fresh():</span>
+            <span class="s0">return </span><span class="s1">current_app.login_manager.needs_refresh()</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s2"># current_app.ensure_sync available in Flask &gt;= 2.0</span>
+            <span class="s0">return </span><span class="s1">current_app.ensure_sync(func)(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+        <span class="s0">except </span><span class="s1">AttributeError:  </span><span class="s2"># pragma: no cover</span>
+            <span class="s0">return </span><span class="s1">func(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s0">return </span><span class="s1">decorated_view</span>
+
+
+<span class="s0">def </span><span class="s1">set_login_view(login_view</span><span class="s3">, </span><span class="s1">blueprint=</span><span class="s0">None</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Sets the login view for the app or blueprint. If a blueprint is passed, 
+    the login view is set for this blueprint on ``blueprint_login_views``. 
+ 
+    :param login_view: The user object to log in. 
+    :type login_view: str 
+    :param blueprint: The blueprint which this login view should be set on. 
+        Defaults to ``None``. 
+    :type blueprint: object 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">num_login_views = len(current_app.login_manager.blueprint_login_views)</span>
+    <span class="s0">if </span><span class="s1">blueprint </span><span class="s0">is not None or </span><span class="s1">num_login_views != </span><span class="s7">0</span><span class="s1">:</span>
+        <span class="s1">(current_app.login_manager.blueprint_login_views[blueprint.name]) = login_view</span>
+
+        <span class="s0">if </span><span class="s1">(</span>
+            <span class="s1">current_app.login_manager.login_view </span><span class="s0">is not None</span>
+            <span class="s0">and None not in </span><span class="s1">current_app.login_manager.blueprint_login_views</span>
+        <span class="s1">):</span>
+            <span class="s1">(</span>
+                <span class="s1">current_app.login_manager.blueprint_login_views[</span><span class="s0">None</span><span class="s1">]</span>
+            <span class="s1">) = current_app.login_manager.login_view</span>
+
+        <span class="s1">current_app.login_manager.login_view = </span><span class="s0">None</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">current_app.login_manager.login_view = login_view</span>
+
+
+<span class="s0">def </span><span class="s1">_get_user():</span>
+    <span class="s0">if </span><span class="s1">has_request_context():</span>
+        <span class="s0">if </span><span class="s5">&quot;_login_user&quot; </span><span class="s0">not in </span><span class="s1">g:</span>
+            <span class="s1">current_app.login_manager._load_user()</span>
+
+        <span class="s0">return </span><span class="s1">g._login_user</span>
+
+    <span class="s0">return None</span>
+
+
+<span class="s0">def </span><span class="s1">_cookie_digest(payload</span><span class="s3">, </span><span class="s1">key=</span><span class="s0">None</span><span class="s1">):</span>
+    <span class="s1">key = _secret_key(key)</span>
+
+    <span class="s0">return </span><span class="s1">hmac.new(key</span><span class="s3">, </span><span class="s1">payload.encode(</span><span class="s5">&quot;utf-8&quot;</span><span class="s1">)</span><span class="s3">, </span><span class="s1">sha512).hexdigest()</span>
+
+
+<span class="s0">def </span><span class="s1">_get_remote_addr():</span>
+    <span class="s1">address = request.headers.get(</span><span class="s5">&quot;X-Forwarded-For&quot;</span><span class="s3">, </span><span class="s1">request.remote_addr)</span>
+    <span class="s0">if </span><span class="s1">address </span><span class="s0">is not None</span><span class="s1">:</span>
+        <span class="s2"># An 'X-Forwarded-For' header includes a comma separated list of the</span>
+        <span class="s2"># addresses, the first address being the actual remote address.</span>
+        <span class="s1">address = address.encode(</span><span class="s5">&quot;utf-8&quot;</span><span class="s1">).split(</span><span class="s8">b&quot;,&quot;</span><span class="s1">)[</span><span class="s7">0</span><span class="s1">].strip()</span>
+    <span class="s0">return </span><span class="s1">address</span>
+
+
+<span class="s0">def </span><span class="s1">_create_identifier():</span>
+    <span class="s1">user_agent = request.headers.get(</span><span class="s5">&quot;User-Agent&quot;</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">user_agent </span><span class="s0">is not None</span><span class="s1">:</span>
+        <span class="s1">user_agent = user_agent.encode(</span><span class="s5">&quot;utf-8&quot;</span><span class="s1">)</span>
+    <span class="s1">base = </span><span class="s5">f&quot;</span><span class="s6">{</span><span class="s1">_get_remote_addr()</span><span class="s6">}</span><span class="s5">|</span><span class="s6">{</span><span class="s1">user_agent</span><span class="s6">}</span><span class="s5">&quot;</span>
+    <span class="s0">if </span><span class="s1">str </span><span class="s0">is </span><span class="s1">bytes:</span>
+        <span class="s1">base = str(base</span><span class="s3">, </span><span class="s5">&quot;utf-8&quot;</span><span class="s3">, </span><span class="s1">errors=</span><span class="s5">&quot;replace&quot;</span><span class="s1">)  </span><span class="s2"># pragma: no cover</span>
+    <span class="s1">h = sha512()</span>
+    <span class="s1">h.update(base.encode(</span><span class="s5">&quot;utf8&quot;</span><span class="s1">))</span>
+    <span class="s0">return </span><span class="s1">h.hexdigest()</span>
+
+
+<span class="s0">def </span><span class="s1">_user_context_processor():</span>
+    <span class="s0">return </span><span class="s1">dict(current_user=_get_user())</span>
+
+
+<span class="s0">def </span><span class="s1">_secret_key(key=</span><span class="s0">None</span><span class="s1">):</span>
+    <span class="s0">if </span><span class="s1">key </span><span class="s0">is None</span><span class="s1">:</span>
+        <span class="s1">key = current_app.config[</span><span class="s5">&quot;SECRET_KEY&quot;</span><span class="s1">]</span>
+
+    <span class="s0">if </span><span class="s1">isinstance(key</span><span class="s3">, </span><span class="s1">str):  </span><span class="s2"># pragma: no cover</span>
+        <span class="s1">key = key.encode(</span><span class="s5">&quot;latin1&quot;</span><span class="s1">)  </span><span class="s2"># ensure bytes</span>
+
+    <span class="s0">return </span><span class="s1">key</span>
+</pre>
+</body>
+</html>

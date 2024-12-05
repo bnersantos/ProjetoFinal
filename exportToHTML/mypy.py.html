@@ -1,0 +1,335 @@
+<html>
+<head>
+<title>mypy.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #d7539b; font-weight: bold;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+mypy.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/fixtures/mypy.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">inspect</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">from </span><span class="s1">pathlib </span><span class="s2">import </span><span class="s1">Path</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">shutil</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">tempfile</span>
+
+<span class="s2">from </span><span class="s1">.base </span><span class="s2">import </span><span class="s1">TestBase</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">config</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">eq_</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">util</span>
+
+
+<span class="s1">@config.add_to_marker.mypy</span>
+<span class="s2">class </span><span class="s1">MypyTest(TestBase):</span>
+    <span class="s1">__requires__ = (</span><span class="s3">&quot;no_sqlalchemy2_stubs&quot;</span><span class="s4">,</span><span class="s1">)</span>
+
+    <span class="s1">@config.fixture(scope=</span><span class="s3">&quot;function&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">per_func_cachedir(self):</span>
+        <span class="s2">yield from </span><span class="s1">self._cachedir()</span>
+
+    <span class="s1">@config.fixture(scope=</span><span class="s3">&quot;class&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">cachedir(self):</span>
+        <span class="s2">yield from </span><span class="s1">self._cachedir()</span>
+
+    <span class="s2">def </span><span class="s1">_cachedir(self):</span>
+        <span class="s0"># as of mypy 0.971 i think we need to keep mypy_path empty</span>
+        <span class="s1">mypy_path = </span><span class="s3">&quot;&quot;</span>
+
+        <span class="s2">with </span><span class="s1">tempfile.TemporaryDirectory() </span><span class="s2">as </span><span class="s1">cachedir:</span>
+            <span class="s2">with </span><span class="s1">open(</span>
+                <span class="s1">Path(cachedir) / </span><span class="s3">&quot;sqla_mypy_config.cfg&quot;</span><span class="s4">, </span><span class="s3">&quot;w&quot;</span>
+            <span class="s1">) </span><span class="s2">as </span><span class="s1">config_file:</span>
+                <span class="s1">config_file.write(</span>
+                    <span class="s3">f&quot;&quot;&quot;</span>
+                    <span class="s3">[mypy]</span><span class="s5">\n</span>
+                    <span class="s3">plugins = sqlalchemy.ext.mypy.plugin</span><span class="s5">\n</span>
+                    <span class="s3">show_error_codes = True</span><span class="s5">\n</span>
+                    <span class="s5">{</span><span class="s1">mypy_path</span><span class="s5">}</span>
+                    <span class="s3">disable_error_code = no-untyped-call</span>
+
+                    <span class="s3">[mypy-sqlalchemy.*]</span>
+                    <span class="s3">ignore_errors = True</span>
+
+                    <span class="s3">&quot;&quot;&quot;</span>
+                <span class="s1">)</span>
+            <span class="s2">with </span><span class="s1">open(</span>
+                <span class="s1">Path(cachedir) / </span><span class="s3">&quot;plain_mypy_config.cfg&quot;</span><span class="s4">, </span><span class="s3">&quot;w&quot;</span>
+            <span class="s1">) </span><span class="s2">as </span><span class="s1">config_file:</span>
+                <span class="s1">config_file.write(</span>
+                    <span class="s3">f&quot;&quot;&quot;</span>
+                    <span class="s3">[mypy]</span><span class="s5">\n</span>
+                    <span class="s3">show_error_codes = True</span><span class="s5">\n</span>
+                    <span class="s5">{</span><span class="s1">mypy_path</span><span class="s5">}</span>
+                    <span class="s3">disable_error_code = var-annotated,no-untyped-call</span>
+                    <span class="s3">[mypy-sqlalchemy.*]</span>
+                    <span class="s3">ignore_errors = True</span>
+
+                    <span class="s3">&quot;&quot;&quot;</span>
+                <span class="s1">)</span>
+            <span class="s2">yield </span><span class="s1">cachedir</span>
+
+    <span class="s1">@config.fixture()</span>
+    <span class="s2">def </span><span class="s1">mypy_runner(self</span><span class="s4">, </span><span class="s1">cachedir):</span>
+        <span class="s2">from </span><span class="s1">mypy </span><span class="s2">import </span><span class="s1">api</span>
+
+        <span class="s2">def </span><span class="s1">run(path</span><span class="s4">, </span><span class="s1">use_plugin=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">use_cachedir=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">use_cachedir </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s1">use_cachedir = cachedir</span>
+            <span class="s1">args = [</span>
+                <span class="s3">&quot;--strict&quot;</span><span class="s4">,</span>
+                <span class="s3">&quot;--raise-exceptions&quot;</span><span class="s4">,</span>
+                <span class="s3">&quot;--cache-dir&quot;</span><span class="s4">,</span>
+                <span class="s1">use_cachedir</span><span class="s4">,</span>
+                <span class="s3">&quot;--config-file&quot;</span><span class="s4">,</span>
+                <span class="s1">os.path.join(</span>
+                    <span class="s1">use_cachedir</span><span class="s4">,</span>
+                    <span class="s1">(</span>
+                        <span class="s3">&quot;sqla_mypy_config.cfg&quot;</span>
+                        <span class="s2">if </span><span class="s1">use_plugin</span>
+                        <span class="s2">else </span><span class="s3">&quot;plain_mypy_config.cfg&quot;</span>
+                    <span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">]</span>
+
+            <span class="s0"># mypy as of 0.990 is more aggressively blocking messaging</span>
+            <span class="s0"># for paths that are in sys.path, and as pytest puts currdir,</span>
+            <span class="s0"># test/ etc in sys.path, just copy the source file to the</span>
+            <span class="s0"># tempdir we are working in so that we don't have to try to</span>
+            <span class="s0"># manipulate sys.path and/or guess what mypy is doing</span>
+            <span class="s1">filename = os.path.basename(path)</span>
+            <span class="s1">test_program = os.path.join(use_cachedir</span><span class="s4">, </span><span class="s1">filename)</span>
+            <span class="s2">if </span><span class="s1">path != test_program:</span>
+                <span class="s1">shutil.copyfile(path</span><span class="s4">, </span><span class="s1">test_program)</span>
+            <span class="s1">args.append(test_program)</span>
+
+            <span class="s0"># I set this locally but for the suite here needs to be</span>
+            <span class="s0"># disabled</span>
+            <span class="s1">os.environ.pop(</span><span class="s3">&quot;MYPY_FORCE_COLOR&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+
+            <span class="s1">stdout</span><span class="s4">, </span><span class="s1">stderr</span><span class="s4">, </span><span class="s1">exitcode = api.run(args)</span>
+            <span class="s2">return </span><span class="s1">stdout</span><span class="s4">, </span><span class="s1">stderr</span><span class="s4">, </span><span class="s1">exitcode</span>
+
+        <span class="s2">return </span><span class="s1">run</span>
+
+    <span class="s1">@config.fixture</span>
+    <span class="s2">def </span><span class="s1">mypy_typecheck_file(self</span><span class="s4">, </span><span class="s1">mypy_runner):</span>
+        <span class="s2">def </span><span class="s1">run(path</span><span class="s4">, </span><span class="s1">use_plugin=</span><span class="s2">False</span><span class="s1">):</span>
+            <span class="s1">expected_messages = self._collect_messages(path)</span>
+            <span class="s1">stdout</span><span class="s4">, </span><span class="s1">stderr</span><span class="s4">, </span><span class="s1">exitcode = mypy_runner(path</span><span class="s4">, </span><span class="s1">use_plugin=use_plugin)</span>
+            <span class="s1">self._check_output(</span>
+                <span class="s1">path</span><span class="s4">, </span><span class="s1">expected_messages</span><span class="s4">, </span><span class="s1">stdout</span><span class="s4">, </span><span class="s1">stderr</span><span class="s4">, </span><span class="s1">exitcode</span>
+            <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">run</span>
+
+    <span class="s1">@staticmethod</span>
+    <span class="s2">def </span><span class="s1">file_combinations(dirname):</span>
+        <span class="s2">if </span><span class="s1">os.path.isabs(dirname):</span>
+            <span class="s1">path = dirname</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">caller_path = inspect.stack()[</span><span class="s6">1</span><span class="s1">].filename</span>
+            <span class="s1">path = os.path.join(os.path.dirname(caller_path)</span><span class="s4">, </span><span class="s1">dirname)</span>
+        <span class="s1">files = list(Path(path).glob(</span><span class="s3">&quot;**/*.py&quot;</span><span class="s1">))</span>
+
+        <span class="s2">for </span><span class="s1">extra_dir </span><span class="s2">in </span><span class="s1">config.options.mypy_extra_test_paths:</span>
+            <span class="s2">if </span><span class="s1">extra_dir </span><span class="s2">and </span><span class="s1">os.path.isdir(extra_dir):</span>
+                <span class="s1">files.extend((Path(extra_dir) / dirname).glob(</span><span class="s3">&quot;**/*.py&quot;</span><span class="s1">))</span>
+        <span class="s2">return </span><span class="s1">files</span>
+
+    <span class="s2">def </span><span class="s1">_collect_messages(self</span><span class="s4">, </span><span class="s1">path):</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.ext.mypy.util </span><span class="s2">import </span><span class="s1">mypy_14</span>
+
+        <span class="s1">expected_messages = []</span>
+        <span class="s1">expected_re = re.compile(</span><span class="s3">r&quot;\s*# EXPECTED(_MYPY)?(_RE)?(_TYPE)?: (.+)&quot;</span><span class="s1">)</span>
+        <span class="s1">py_ver_re = re.compile(</span><span class="s3">r&quot;^#\s*PYTHON_VERSION\s?&gt;=\s?(\d+\.\d+)&quot;</span><span class="s1">)</span>
+        <span class="s2">with </span><span class="s1">open(path) </span><span class="s2">as </span><span class="s1">file_:</span>
+            <span class="s1">current_assert_messages = []</span>
+            <span class="s2">for </span><span class="s1">num</span><span class="s4">, </span><span class="s1">line </span><span class="s2">in </span><span class="s1">enumerate(file_</span><span class="s4">, </span><span class="s6">1</span><span class="s1">):</span>
+                <span class="s1">m = py_ver_re.match(line)</span>
+                <span class="s2">if </span><span class="s1">m:</span>
+                    <span class="s1">major</span><span class="s4">, </span><span class="s1">_</span><span class="s4">, </span><span class="s1">minor = m.group(</span><span class="s6">1</span><span class="s1">).partition(</span><span class="s3">&quot;.&quot;</span><span class="s1">)</span>
+                    <span class="s2">if </span><span class="s1">sys.version_info &lt; (int(major)</span><span class="s4">, </span><span class="s1">int(minor)):</span>
+                        <span class="s1">config.skip_test(</span>
+                            <span class="s3">&quot;Requires python &gt;= %s&quot; </span><span class="s1">% (m.group(</span><span class="s6">1</span><span class="s1">))</span>
+                        <span class="s1">)</span>
+                    <span class="s2">continue</span>
+
+                <span class="s1">m = expected_re.match(line)</span>
+                <span class="s2">if </span><span class="s1">m:</span>
+                    <span class="s1">is_mypy = bool(m.group(</span><span class="s6">1</span><span class="s1">))</span>
+                    <span class="s1">is_re = bool(m.group(</span><span class="s6">2</span><span class="s1">))</span>
+                    <span class="s1">is_type = bool(m.group(</span><span class="s6">3</span><span class="s1">))</span>
+
+                    <span class="s1">expected_msg = re.sub(</span><span class="s3">r&quot;# noqa[:]? ?.*&quot;</span><span class="s4">, </span><span class="s3">&quot;&quot;</span><span class="s4">, </span><span class="s1">m.group(</span><span class="s6">4</span><span class="s1">))</span>
+                    <span class="s2">if </span><span class="s1">is_type:</span>
+                        <span class="s2">if not </span><span class="s1">is_re:</span>
+                            <span class="s0"># the goal here is that we can cut-and-paste</span>
+                            <span class="s0"># from vscode -&gt; pylance into the</span>
+                            <span class="s0"># EXPECTED_TYPE: line, then the test suite will</span>
+                            <span class="s0"># validate that line against what mypy produces</span>
+                            <span class="s1">expected_msg = re.sub(</span>
+                                <span class="s3">r&quot;([\[\]])&quot;</span><span class="s4">,</span>
+                                <span class="s2">lambda </span><span class="s1">m: </span><span class="s3">rf&quot;\</span><span class="s5">{</span><span class="s1">m.group(</span><span class="s6">0</span><span class="s1">)</span><span class="s5">}</span><span class="s3">&quot;</span><span class="s4">,</span>
+                                <span class="s1">expected_msg</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+
+                            <span class="s0"># note making sure preceding text matches</span>
+                            <span class="s0"># with a dot, so that an expect for &quot;Select&quot;</span>
+                            <span class="s0"># does not match &quot;TypedSelect&quot;</span>
+                            <span class="s1">expected_msg = re.sub(</span>
+                                <span class="s3">r&quot;([\w_]+)&quot;</span><span class="s4">,</span>
+                                <span class="s2">lambda </span><span class="s1">m: </span><span class="s3">rf&quot;(?:.*\.)?</span><span class="s5">{</span><span class="s1">m.group(</span><span class="s6">1</span><span class="s1">)</span><span class="s5">}</span><span class="s3">\*?&quot;</span><span class="s4">,</span>
+                                <span class="s1">expected_msg</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+
+                            <span class="s1">expected_msg = re.sub(</span>
+                                <span class="s3">&quot;List&quot;</span><span class="s4">, </span><span class="s3">&quot;builtins.list&quot;</span><span class="s4">, </span><span class="s1">expected_msg</span>
+                            <span class="s1">)</span>
+
+                            <span class="s1">expected_msg = re.sub(</span>
+                                <span class="s3">r&quot;\b(int|str|float|bool)\b&quot;</span><span class="s4">,</span>
+                                <span class="s2">lambda </span><span class="s1">m: </span><span class="s3">rf&quot;builtins.</span><span class="s5">{</span><span class="s1">m.group(</span><span class="s6">0</span><span class="s1">)</span><span class="s5">}</span><span class="s3">\*?&quot;</span><span class="s4">,</span>
+                                <span class="s1">expected_msg</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+                            <span class="s0"># expected_msg = re.sub(</span>
+                            <span class="s0">#     r&quot;(Sequence|Tuple|List|Union)&quot;,</span>
+                            <span class="s0">#     lambda m: fr&quot;typing.{m.group(0)}\*?&quot;,</span>
+                            <span class="s0">#     expected_msg,</span>
+                            <span class="s0"># )</span>
+
+                        <span class="s1">is_mypy = is_re = </span><span class="s2">True</span>
+                        <span class="s1">expected_msg = </span><span class="s3">f'Revealed type is &quot;</span><span class="s5">{</span><span class="s1">expected_msg</span><span class="s5">}</span><span class="s3">&quot;'</span>
+
+                    <span class="s2">if </span><span class="s1">mypy_14 </span><span class="s2">and </span><span class="s1">util.py39:</span>
+                        <span class="s0"># use_lowercase_names, py39 and above</span>
+                        <span class="s0"># https://github.com/python/mypy/blob/304997bfb85200fb521ac727ee0ce3e6085e5278/mypy/options.py#L363  # noqa: E501</span>
+
+                        <span class="s0"># skip first character which could be capitalized</span>
+                        <span class="s0"># &quot;List item x not found&quot; type of message</span>
+                        <span class="s1">expected_msg = expected_msg[</span><span class="s6">0</span><span class="s1">] + re.sub(</span>
+                            <span class="s1">(</span>
+                                <span class="s3">r&quot;\b(List|Tuple|Dict|Set)\b&quot;</span>
+                                <span class="s2">if </span><span class="s1">is_type</span>
+                                <span class="s2">else </span><span class="s3">r&quot;\b(List|Tuple|Dict|Set|Type)\b&quot;</span>
+                            <span class="s1">)</span><span class="s4">,</span>
+                            <span class="s2">lambda </span><span class="s1">m: m.group(</span><span class="s6">1</span><span class="s1">).lower()</span><span class="s4">,</span>
+                            <span class="s1">expected_msg[</span><span class="s6">1</span><span class="s1">:]</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+
+                    <span class="s2">if </span><span class="s1">mypy_14 </span><span class="s2">and </span><span class="s1">util.py310:</span>
+                        <span class="s0"># use_or_syntax, py310 and above</span>
+                        <span class="s0"># https://github.com/python/mypy/blob/304997bfb85200fb521ac727ee0ce3e6085e5278/mypy/options.py#L368  # noqa: E501</span>
+                        <span class="s1">expected_msg = re.sub(</span>
+                            <span class="s3">r&quot;Optional\[(.*?)\]&quot;</span><span class="s4">,</span>
+                            <span class="s2">lambda </span><span class="s1">m: </span><span class="s3">f&quot;</span><span class="s5">{</span><span class="s1">m.group(</span><span class="s6">1</span><span class="s1">)</span><span class="s5">} </span><span class="s3">| None&quot;</span><span class="s4">,</span>
+                            <span class="s1">expected_msg</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+                    <span class="s1">current_assert_messages.append(</span>
+                        <span class="s1">(is_mypy</span><span class="s4">, </span><span class="s1">is_re</span><span class="s4">, </span><span class="s1">expected_msg.strip())</span>
+                    <span class="s1">)</span>
+                <span class="s2">elif </span><span class="s1">current_assert_messages:</span>
+                    <span class="s1">expected_messages.extend(</span>
+                        <span class="s1">(num</span><span class="s4">, </span><span class="s1">is_mypy</span><span class="s4">, </span><span class="s1">is_re</span><span class="s4">, </span><span class="s1">expected_msg)</span>
+                        <span class="s2">for </span><span class="s1">(</span>
+                            <span class="s1">is_mypy</span><span class="s4">,</span>
+                            <span class="s1">is_re</span><span class="s4">,</span>
+                            <span class="s1">expected_msg</span><span class="s4">,</span>
+                        <span class="s1">) </span><span class="s2">in </span><span class="s1">current_assert_messages</span>
+                    <span class="s1">)</span>
+                    <span class="s1">current_assert_messages[:] = []</span>
+
+        <span class="s2">return </span><span class="s1">expected_messages</span>
+
+    <span class="s2">def </span><span class="s1">_check_output(self</span><span class="s4">, </span><span class="s1">path</span><span class="s4">, </span><span class="s1">expected_messages</span><span class="s4">, </span><span class="s1">stdout</span><span class="s4">, </span><span class="s1">stderr</span><span class="s4">, </span><span class="s1">exitcode):</span>
+        <span class="s1">not_located = []</span>
+        <span class="s1">filename = os.path.basename(path)</span>
+        <span class="s2">if </span><span class="s1">expected_messages:</span>
+            <span class="s0"># mypy 0.990 changed how return codes work, so don't assume a</span>
+            <span class="s0"># 1 or a 0 return code here, could be either depending on if</span>
+            <span class="s0"># errors were generated or not</span>
+
+            <span class="s1">output = []</span>
+
+            <span class="s1">raw_lines = stdout.split(</span><span class="s3">&quot;</span><span class="s5">\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+            <span class="s2">while </span><span class="s1">raw_lines:</span>
+                <span class="s1">e = raw_lines.pop(</span><span class="s6">0</span><span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">re.match(</span><span class="s3">r&quot;.+\.py:\d+: error: .*&quot;</span><span class="s4">, </span><span class="s1">e):</span>
+                    <span class="s1">output.append((</span><span class="s3">&quot;error&quot;</span><span class="s4">, </span><span class="s1">e))</span>
+                <span class="s2">elif </span><span class="s1">re.match(</span>
+                    <span class="s3">r&quot;.+\.py:\d+: note: +(?:Possible overload|def ).*&quot;</span><span class="s4">, </span><span class="s1">e</span>
+                <span class="s1">):</span>
+                    <span class="s2">while </span><span class="s1">raw_lines:</span>
+                        <span class="s1">ol = raw_lines.pop(</span><span class="s6">0</span><span class="s1">)</span>
+                        <span class="s2">if not </span><span class="s1">re.match(</span><span class="s3">r&quot;.+\.py:\d+: note: +def \[.*&quot;</span><span class="s4">, </span><span class="s1">ol):</span>
+                            <span class="s2">break</span>
+                <span class="s2">elif </span><span class="s1">re.match(</span>
+                    <span class="s3">r&quot;.+\.py:\d+: note: .*(?:perhaps|suggestion)&quot;</span><span class="s4">, </span><span class="s1">e</span><span class="s4">, </span><span class="s1">re.I</span>
+                <span class="s1">):</span>
+                    <span class="s2">pass</span>
+                <span class="s2">elif </span><span class="s1">re.match(</span><span class="s3">r&quot;.+\.py:\d+: note: .*&quot;</span><span class="s4">, </span><span class="s1">e):</span>
+                    <span class="s1">output.append((</span><span class="s3">&quot;note&quot;</span><span class="s4">, </span><span class="s1">e))</span>
+
+            <span class="s2">for </span><span class="s1">num</span><span class="s4">, </span><span class="s1">is_mypy</span><span class="s4">, </span><span class="s1">is_re</span><span class="s4">, </span><span class="s1">msg </span><span class="s2">in </span><span class="s1">expected_messages:</span>
+                <span class="s1">msg = msg.replace(</span><span class="s3">&quot;'&quot;</span><span class="s4">, </span><span class="s3">'&quot;'</span><span class="s1">)</span>
+                <span class="s1">prefix = </span><span class="s3">&quot;[SQLAlchemy Mypy plugin] &quot; </span><span class="s2">if not </span><span class="s1">is_mypy </span><span class="s2">else </span><span class="s3">&quot;&quot;</span>
+                <span class="s2">for </span><span class="s1">idx</span><span class="s4">, </span><span class="s1">(typ</span><span class="s4">, </span><span class="s1">errmsg) </span><span class="s2">in </span><span class="s1">enumerate(output):</span>
+                    <span class="s2">if </span><span class="s1">is_re:</span>
+                        <span class="s2">if </span><span class="s1">re.match(</span>
+                            <span class="s3">rf&quot;.*</span><span class="s5">{</span><span class="s1">filename</span><span class="s5">}</span><span class="s3">\:</span><span class="s5">{</span><span class="s1">num</span><span class="s5">}</span><span class="s3">\: </span><span class="s5">{</span><span class="s1">typ</span><span class="s5">}</span><span class="s3">\: </span><span class="s5">{</span><span class="s1">prefix</span><span class="s5">}{</span><span class="s1">msg</span><span class="s5">}</span><span class="s3">&quot;</span><span class="s4">,</span>
+                            <span class="s1">errmsg</span><span class="s4">,</span>
+                        <span class="s1">):</span>
+                            <span class="s2">break</span>
+                    <span class="s2">elif </span><span class="s1">(</span>
+                        <span class="s3">f&quot;</span><span class="s5">{</span><span class="s1">filename</span><span class="s5">}</span><span class="s3">:</span><span class="s5">{</span><span class="s1">num</span><span class="s5">}</span><span class="s3">: </span><span class="s5">{</span><span class="s1">typ</span><span class="s5">}</span><span class="s3">: </span><span class="s5">{</span><span class="s1">prefix</span><span class="s5">}{</span><span class="s1">msg</span><span class="s5">}</span><span class="s3">&quot;</span>
+                        <span class="s2">in </span><span class="s1">errmsg.replace(</span><span class="s3">&quot;'&quot;</span><span class="s4">, </span><span class="s3">'&quot;'</span><span class="s1">)</span>
+                    <span class="s1">):</span>
+                        <span class="s2">break</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">not_located.append(msg)</span>
+                    <span class="s2">continue</span>
+                <span class="s2">del </span><span class="s1">output[idx]</span>
+
+            <span class="s2">if </span><span class="s1">not_located:</span>
+                <span class="s1">missing = </span><span class="s3">&quot;</span><span class="s5">\n</span><span class="s3">&quot;</span><span class="s1">.join(not_located)</span>
+                <span class="s1">print(</span><span class="s3">&quot;Couldn't locate expected messages:&quot;</span><span class="s4">, </span><span class="s1">missing</span><span class="s4">, </span><span class="s1">sep=</span><span class="s3">&quot;</span><span class="s5">\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">output:</span>
+                    <span class="s1">extra = </span><span class="s3">&quot;</span><span class="s5">\n</span><span class="s3">&quot;</span><span class="s1">.join(msg </span><span class="s2">for </span><span class="s1">_</span><span class="s4">, </span><span class="s1">msg </span><span class="s2">in </span><span class="s1">output)</span>
+                    <span class="s1">print(</span><span class="s3">&quot;Remaining messages:&quot;</span><span class="s4">, </span><span class="s1">extra</span><span class="s4">, </span><span class="s1">sep=</span><span class="s3">&quot;</span><span class="s5">\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+                <span class="s2">assert False</span><span class="s4">, </span><span class="s3">&quot;expected messages not found, see stdout&quot;</span>
+
+            <span class="s2">if </span><span class="s1">output:</span>
+                <span class="s1">print(</span><span class="s3">f&quot;</span><span class="s5">{</span><span class="s1">len(output)</span><span class="s5">} </span><span class="s3">messages from mypy were not consumed:&quot;</span><span class="s1">)</span>
+                <span class="s1">print(</span><span class="s3">&quot;</span><span class="s5">\n</span><span class="s3">&quot;</span><span class="s1">.join(msg </span><span class="s2">for </span><span class="s1">_</span><span class="s4">, </span><span class="s1">msg </span><span class="s2">in </span><span class="s1">output))</span>
+                <span class="s2">assert False</span><span class="s4">, </span><span class="s3">&quot;errors and/or notes remain, see stdout&quot;</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">exitcode != </span><span class="s6">0</span><span class="s1">:</span>
+                <span class="s1">print(stdout</span><span class="s4">, </span><span class="s1">stderr</span><span class="s4">, </span><span class="s1">sep=</span><span class="s3">&quot;</span><span class="s5">\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+
+            <span class="s1">eq_(exitcode</span><span class="s4">, </span><span class="s6">0</span><span class="s4">, </span><span class="s1">msg=stdout)</span>
+</pre>
+</body>
+</html>

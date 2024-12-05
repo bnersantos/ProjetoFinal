@@ -1,0 +1,233 @@
+<html>
+<head>
+<title>test_cte.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+test_cte.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/suite/test_cte.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">fixtures</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">eq_</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">Column</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">Table</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">ForeignKey</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Integer</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">select</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">String</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">testing</span>
+
+
+<span class="s2">class </span><span class="s1">CTETest(fixtures.TablesTest):</span>
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+    <span class="s1">__requires__ = (</span><span class="s3">&quot;ctes&quot;</span><span class="s4">,</span><span class="s1">)</span>
+
+    <span class="s1">run_inserts = </span><span class="s3">&quot;each&quot;</span>
+    <span class="s1">run_deletes = </span><span class="s3">&quot;each&quot;</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s4">, </span><span class="s1">metadata):</span>
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;some_table&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;parent_id&quot;</span><span class="s4">, </span><span class="s1">ForeignKey(</span><span class="s3">&quot;some_table.id&quot;</span><span class="s1">))</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;some_other_table&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;parent_id&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">insert_data(cls</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">cls.tables.some_table.insert()</span><span class="s4">,</span>
+            <span class="s1">[</span>
+                <span class="s1">{</span><span class="s3">&quot;id&quot;</span><span class="s1">: </span><span class="s5">1</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d1&quot;</span><span class="s4">, </span><span class="s3">&quot;parent_id&quot;</span><span class="s1">: </span><span class="s2">None</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;id&quot;</span><span class="s1">: </span><span class="s5">2</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d2&quot;</span><span class="s4">, </span><span class="s3">&quot;parent_id&quot;</span><span class="s1">: </span><span class="s5">1</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;id&quot;</span><span class="s1">: </span><span class="s5">3</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d3&quot;</span><span class="s4">, </span><span class="s3">&quot;parent_id&quot;</span><span class="s1">: </span><span class="s5">1</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;id&quot;</span><span class="s1">: </span><span class="s5">4</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d4&quot;</span><span class="s4">, </span><span class="s3">&quot;parent_id&quot;</span><span class="s1">: </span><span class="s5">3</span><span class="s1">}</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;id&quot;</span><span class="s1">: </span><span class="s5">5</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s1">: </span><span class="s3">&quot;d5&quot;</span><span class="s4">, </span><span class="s3">&quot;parent_id&quot;</span><span class="s1">: </span><span class="s5">3</span><span class="s1">}</span><span class="s4">,</span>
+            <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_select_nonrecursive_round_trip(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">some_table = self.tables.some_table</span>
+
+        <span class="s1">cte = (</span>
+            <span class="s1">select(some_table)</span>
+            <span class="s1">.where(some_table.c.data.in_([</span><span class="s3">&quot;d2&quot;</span><span class="s4">, </span><span class="s3">&quot;d3&quot;</span><span class="s4">, </span><span class="s3">&quot;d4&quot;</span><span class="s1">]))</span>
+            <span class="s1">.cte(</span><span class="s3">&quot;some_cte&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">select(cte.c.data).where(cte.c.data.in_([</span><span class="s3">&quot;d4&quot;</span><span class="s4">, </span><span class="s3">&quot;d5&quot;</span><span class="s1">]))</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(result.fetchall()</span><span class="s4">, </span><span class="s1">[(</span><span class="s3">&quot;d4&quot;</span><span class="s4">,</span><span class="s1">)])</span>
+
+    <span class="s2">def </span><span class="s1">test_select_recursive_round_trip(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">some_table = self.tables.some_table</span>
+
+        <span class="s1">cte = (</span>
+            <span class="s1">select(some_table)</span>
+            <span class="s1">.where(some_table.c.data.in_([</span><span class="s3">&quot;d2&quot;</span><span class="s4">, </span><span class="s3">&quot;d3&quot;</span><span class="s4">, </span><span class="s3">&quot;d4&quot;</span><span class="s1">]))</span>
+            <span class="s1">.cte(</span><span class="s3">&quot;some_cte&quot;</span><span class="s4">, </span><span class="s1">recursive=</span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">cte_alias = cte.alias(</span><span class="s3">&quot;c1&quot;</span><span class="s1">)</span>
+        <span class="s1">st1 = some_table.alias()</span>
+        <span class="s0"># note that SQL Server requires this to be UNION ALL,</span>
+        <span class="s0"># can't be UNION</span>
+        <span class="s1">cte = cte.union_all(</span>
+            <span class="s1">select(st1).where(st1.c.id == cte_alias.c.parent_id)</span>
+        <span class="s1">)</span>
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">select(cte.c.data)</span>
+            <span class="s1">.where(cte.c.data != </span><span class="s3">&quot;d2&quot;</span><span class="s1">)</span>
+            <span class="s1">.order_by(cte.c.data.desc())</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">result.fetchall()</span><span class="s4">,</span>
+            <span class="s1">[(</span><span class="s3">&quot;d4&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;d3&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;d3&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;d1&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;d1&quot;</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s3">&quot;d1&quot;</span><span class="s4">,</span><span class="s1">)]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_insert_from_select_round_trip(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">some_table = self.tables.some_table</span>
+        <span class="s1">some_other_table = self.tables.some_other_table</span>
+
+        <span class="s1">cte = (</span>
+            <span class="s1">select(some_table)</span>
+            <span class="s1">.where(some_table.c.data.in_([</span><span class="s3">&quot;d2&quot;</span><span class="s4">, </span><span class="s3">&quot;d3&quot;</span><span class="s4">, </span><span class="s3">&quot;d4&quot;</span><span class="s1">]))</span>
+            <span class="s1">.cte(</span><span class="s3">&quot;some_cte&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">some_other_table.insert().from_select(</span>
+                <span class="s1">[</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s3">&quot;parent_id&quot;</span><span class="s1">]</span><span class="s4">, </span><span class="s1">select(cte)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">connection.execute(</span>
+                <span class="s1">select(some_other_table).order_by(some_other_table.c.id)</span>
+            <span class="s1">).fetchall()</span><span class="s4">,</span>
+            <span class="s1">[(</span><span class="s5">2</span><span class="s4">, </span><span class="s3">&quot;d2&quot;</span><span class="s4">, </span><span class="s5">1</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s5">3</span><span class="s4">, </span><span class="s3">&quot;d3&quot;</span><span class="s4">, </span><span class="s5">1</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s5">4</span><span class="s4">, </span><span class="s3">&quot;d4&quot;</span><span class="s4">, </span><span class="s5">3</span><span class="s1">)]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@testing.requires.ctes_with_update_delete</span>
+    <span class="s1">@testing.requires.update_from</span>
+    <span class="s2">def </span><span class="s1">test_update_from_round_trip(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">some_table = self.tables.some_table</span>
+        <span class="s1">some_other_table = self.tables.some_other_table</span>
+
+        <span class="s1">connection.execute(</span>
+            <span class="s1">some_other_table.insert().from_select(</span>
+                <span class="s1">[</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s3">&quot;parent_id&quot;</span><span class="s1">]</span><span class="s4">, </span><span class="s1">select(some_table)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">cte = (</span>
+            <span class="s1">select(some_table)</span>
+            <span class="s1">.where(some_table.c.data.in_([</span><span class="s3">&quot;d2&quot;</span><span class="s4">, </span><span class="s3">&quot;d3&quot;</span><span class="s4">, </span><span class="s3">&quot;d4&quot;</span><span class="s1">]))</span>
+            <span class="s1">.cte(</span><span class="s3">&quot;some_cte&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">some_other_table.update()</span>
+            <span class="s1">.values(parent_id=</span><span class="s5">5</span><span class="s1">)</span>
+            <span class="s1">.where(some_other_table.c.data == cte.c.data)</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">connection.execute(</span>
+                <span class="s1">select(some_other_table).order_by(some_other_table.c.id)</span>
+            <span class="s1">).fetchall()</span><span class="s4">,</span>
+            <span class="s1">[</span>
+                <span class="s1">(</span><span class="s5">1</span><span class="s4">, </span><span class="s3">&quot;d1&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">(</span><span class="s5">2</span><span class="s4">, </span><span class="s3">&quot;d2&quot;</span><span class="s4">, </span><span class="s5">5</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">(</span><span class="s5">3</span><span class="s4">, </span><span class="s3">&quot;d3&quot;</span><span class="s4">, </span><span class="s5">5</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">(</span><span class="s5">4</span><span class="s4">, </span><span class="s3">&quot;d4&quot;</span><span class="s4">, </span><span class="s5">5</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">(</span><span class="s5">5</span><span class="s4">, </span><span class="s3">&quot;d5&quot;</span><span class="s4">, </span><span class="s5">3</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@testing.requires.ctes_with_update_delete</span>
+    <span class="s1">@testing.requires.delete_from</span>
+    <span class="s2">def </span><span class="s1">test_delete_from_round_trip(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">some_table = self.tables.some_table</span>
+        <span class="s1">some_other_table = self.tables.some_other_table</span>
+
+        <span class="s1">connection.execute(</span>
+            <span class="s1">some_other_table.insert().from_select(</span>
+                <span class="s1">[</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s3">&quot;parent_id&quot;</span><span class="s1">]</span><span class="s4">, </span><span class="s1">select(some_table)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">cte = (</span>
+            <span class="s1">select(some_table)</span>
+            <span class="s1">.where(some_table.c.data.in_([</span><span class="s3">&quot;d2&quot;</span><span class="s4">, </span><span class="s3">&quot;d3&quot;</span><span class="s4">, </span><span class="s3">&quot;d4&quot;</span><span class="s1">]))</span>
+            <span class="s1">.cte(</span><span class="s3">&quot;some_cte&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">some_other_table.delete().where(</span>
+                <span class="s1">some_other_table.c.data == cte.c.data</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">connection.execute(</span>
+                <span class="s1">select(some_other_table).order_by(some_other_table.c.id)</span>
+            <span class="s1">).fetchall()</span><span class="s4">,</span>
+            <span class="s1">[(</span><span class="s5">1</span><span class="s4">, </span><span class="s3">&quot;d1&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s5">5</span><span class="s4">, </span><span class="s3">&quot;d5&quot;</span><span class="s4">, </span><span class="s5">3</span><span class="s1">)]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@testing.requires.ctes_with_update_delete</span>
+    <span class="s2">def </span><span class="s1">test_delete_scalar_subq_round_trip(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">some_table = self.tables.some_table</span>
+        <span class="s1">some_other_table = self.tables.some_other_table</span>
+
+        <span class="s1">connection.execute(</span>
+            <span class="s1">some_other_table.insert().from_select(</span>
+                <span class="s1">[</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s3">&quot;data&quot;</span><span class="s4">, </span><span class="s3">&quot;parent_id&quot;</span><span class="s1">]</span><span class="s4">, </span><span class="s1">select(some_table)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">cte = (</span>
+            <span class="s1">select(some_table)</span>
+            <span class="s1">.where(some_table.c.data.in_([</span><span class="s3">&quot;d2&quot;</span><span class="s4">, </span><span class="s3">&quot;d3&quot;</span><span class="s4">, </span><span class="s3">&quot;d4&quot;</span><span class="s1">]))</span>
+            <span class="s1">.cte(</span><span class="s3">&quot;some_cte&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">some_other_table.delete().where(</span>
+                <span class="s1">some_other_table.c.data</span>
+                <span class="s1">== select(cte.c.data)</span>
+                <span class="s1">.where(cte.c.id == some_other_table.c.id)</span>
+                <span class="s1">.scalar_subquery()</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(</span>
+            <span class="s1">connection.execute(</span>
+                <span class="s1">select(some_other_table).order_by(some_other_table.c.id)</span>
+            <span class="s1">).fetchall()</span><span class="s4">,</span>
+            <span class="s1">[(</span><span class="s5">1</span><span class="s4">, </span><span class="s3">&quot;d1&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(</span><span class="s5">5</span><span class="s4">, </span><span class="s3">&quot;d5&quot;</span><span class="s4">, </span><span class="s5">3</span><span class="s1">)]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+</pre>
+</body>
+</html>

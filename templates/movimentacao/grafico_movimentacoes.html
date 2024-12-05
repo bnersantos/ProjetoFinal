@@ -1,0 +1,68 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+<h2>Gráfico de Movimentações por Produto</h2>
+<canvas id="graficoMovimentacoes"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    const data = {{ data | tojson }};
+    const labels = Object.keys(data); // Nomes dos produtos
+    const entradaData = labels.map(produto => data[produto].entrada || 0);
+    const saidaData = labels.map(produto => data[produto].saida || 0);
+
+    const ctx = document.getElementById('graficoMovimentacoes').getContext('2d');
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Entrada',
+                    data: entradaData,
+                    backgroundColor: '#4CAF50',
+                    borderColor: '#388E3C',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Saída',
+                    data: saidaData,
+                    backgroundColor: '#FF5733',
+                    borderColor: '#C70039',
+                    borderWidth: 1
+                }
+            ]
+        },
+        options: {
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        afterLabel: function(tooltipItem) {
+                            const produto = tooltipItem.label;
+                            const funcionario = data[produto].funcionario;
+                            const fornecedor = data[produto].fornecedor;
+                            return `Funcionário: ${funcionario}\nFornecedor: ${fornecedor}`;
+                        }
+                    }
+                }
+            },
+            responsive: true,
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Produtos'
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Quantidade'
+                    }
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,1096 @@
+<html>
+<head>
+<title>mutable.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #717ed3; font-style: italic;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+mutable.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># ext/mutable.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">r&quot;&quot;&quot;Provide support for tracking of in-place changes to scalar values, 
+which are propagated into ORM change events on owning parent objects. 
+ 
+.. _mutable_scalars: 
+ 
+Establishing Mutability on Scalar Column Values 
+=============================================== 
+ 
+A typical example of a &quot;mutable&quot; structure is a Python dictionary. 
+Following the example introduced in :ref:`types_toplevel`, we 
+begin with a custom type that marshals Python dictionaries into 
+JSON strings before being persisted:: 
+ 
+    from sqlalchemy.types import TypeDecorator, VARCHAR 
+    import json 
+ 
+    class JSONEncodedDict(TypeDecorator): 
+        &quot;Represents an immutable structure as a json-encoded string.&quot; 
+ 
+        impl = VARCHAR 
+ 
+        def process_bind_param(self, value, dialect): 
+            if value is not None: 
+                value = json.dumps(value) 
+            return value 
+ 
+        def process_result_value(self, value, dialect): 
+            if value is not None: 
+                value = json.loads(value) 
+            return value 
+ 
+The usage of ``json`` is only for the purposes of example. The 
+:mod:`sqlalchemy.ext.mutable` extension can be used 
+with any type whose target Python type may be mutable, including 
+:class:`.PickleType`, :class:`_postgresql.ARRAY`, etc. 
+ 
+When using the :mod:`sqlalchemy.ext.mutable` extension, the value itself 
+tracks all parents which reference it.  Below, we illustrate a simple 
+version of the :class:`.MutableDict` dictionary object, which applies 
+the :class:`.Mutable` mixin to a plain Python dictionary:: 
+ 
+    from sqlalchemy.ext.mutable import Mutable 
+ 
+    class MutableDict(Mutable, dict): 
+        @classmethod 
+        def coerce(cls, key, value): 
+            &quot;Convert plain dictionaries to MutableDict.&quot; 
+ 
+            if not isinstance(value, MutableDict): 
+                if isinstance(value, dict): 
+                    return MutableDict(value) 
+ 
+                # this call will raise ValueError 
+                return Mutable.coerce(key, value) 
+            else: 
+                return value 
+ 
+        def __setitem__(self, key, value): 
+            &quot;Detect dictionary set events and emit change events.&quot; 
+ 
+            dict.__setitem__(self, key, value) 
+            self.changed() 
+ 
+        def __delitem__(self, key): 
+            &quot;Detect dictionary del events and emit change events.&quot; 
+ 
+            dict.__delitem__(self, key) 
+            self.changed() 
+ 
+The above dictionary class takes the approach of subclassing the Python 
+built-in ``dict`` to produce a dict 
+subclass which routes all mutation events through ``__setitem__``.  There are 
+variants on this approach, such as subclassing ``UserDict.UserDict`` or 
+``collections.MutableMapping``; the part that's important to this example is 
+that the :meth:`.Mutable.changed` method is called whenever an in-place 
+change to the datastructure takes place. 
+ 
+We also redefine the :meth:`.Mutable.coerce` method which will be used to 
+convert any values that are not instances of ``MutableDict``, such 
+as the plain dictionaries returned by the ``json`` module, into the 
+appropriate type.  Defining this method is optional; we could just as well 
+created our ``JSONEncodedDict`` such that it always returns an instance 
+of ``MutableDict``, and additionally ensured that all calling code 
+uses ``MutableDict`` explicitly.  When :meth:`.Mutable.coerce` is not 
+overridden, any values applied to a parent object which are not instances 
+of the mutable type will raise a ``ValueError``. 
+ 
+Our new ``MutableDict`` type offers a class method 
+:meth:`~.Mutable.as_mutable` which we can use within column metadata 
+to associate with types. This method grabs the given type object or 
+class and associates a listener that will detect all future mappings 
+of this type, applying event listening instrumentation to the mapped 
+attribute. Such as, with classical table metadata:: 
+ 
+    from sqlalchemy import Table, Column, Integer 
+ 
+    my_data = Table('my_data', metadata, 
+        Column('id', Integer, primary_key=True), 
+        Column('data', MutableDict.as_mutable(JSONEncodedDict)) 
+    ) 
+ 
+Above, :meth:`~.Mutable.as_mutable` returns an instance of ``JSONEncodedDict`` 
+(if the type object was not an instance already), which will intercept any 
+attributes which are mapped against this type.  Below we establish a simple 
+mapping against the ``my_data`` table:: 
+ 
+    from sqlalchemy.orm import DeclarativeBase 
+    from sqlalchemy.orm import Mapped 
+    from sqlalchemy.orm import mapped_column 
+ 
+    class Base(DeclarativeBase): 
+        pass 
+ 
+    class MyDataClass(Base): 
+        __tablename__ = 'my_data' 
+        id: Mapped[int] = mapped_column(primary_key=True) 
+        data: Mapped[dict[str, str]] = mapped_column(MutableDict.as_mutable(JSONEncodedDict)) 
+ 
+The ``MyDataClass.data`` member will now be notified of in place changes 
+to its value. 
+ 
+Any in-place changes to the ``MyDataClass.data`` member 
+will flag the attribute as &quot;dirty&quot; on the parent object:: 
+ 
+    &gt;&gt;&gt; from sqlalchemy.orm import Session 
+ 
+    &gt;&gt;&gt; sess = Session(some_engine) 
+    &gt;&gt;&gt; m1 = MyDataClass(data={'value1':'foo'}) 
+    &gt;&gt;&gt; sess.add(m1) 
+    &gt;&gt;&gt; sess.commit() 
+ 
+    &gt;&gt;&gt; m1.data['value1'] = 'bar' 
+    &gt;&gt;&gt; assert m1 in sess.dirty 
+    True 
+ 
+The ``MutableDict`` can be associated with all future instances 
+of ``JSONEncodedDict`` in one step, using 
+:meth:`~.Mutable.associate_with`.  This is similar to 
+:meth:`~.Mutable.as_mutable` except it will intercept all occurrences 
+of ``MutableDict`` in all mappings unconditionally, without 
+the need to declare it individually:: 
+ 
+    from sqlalchemy.orm import DeclarativeBase 
+    from sqlalchemy.orm import Mapped 
+    from sqlalchemy.orm import mapped_column 
+ 
+    MutableDict.associate_with(JSONEncodedDict) 
+ 
+    class Base(DeclarativeBase): 
+        pass 
+ 
+    class MyDataClass(Base): 
+        __tablename__ = 'my_data' 
+        id: Mapped[int] = mapped_column(primary_key=True) 
+        data: Mapped[dict[str, str]] = mapped_column(JSONEncodedDict) 
+ 
+ 
+Supporting Pickling 
+-------------------- 
+ 
+The key to the :mod:`sqlalchemy.ext.mutable` extension relies upon the 
+placement of a ``weakref.WeakKeyDictionary`` upon the value object, which 
+stores a mapping of parent mapped objects keyed to the attribute name under 
+which they are associated with this value. ``WeakKeyDictionary`` objects are 
+not picklable, due to the fact that they contain weakrefs and function 
+callbacks. In our case, this is a good thing, since if this dictionary were 
+picklable, it could lead to an excessively large pickle size for our value 
+objects that are pickled by themselves outside of the context of the parent. 
+The developer responsibility here is only to provide a ``__getstate__`` method 
+that excludes the :meth:`~MutableBase._parents` collection from the pickle 
+stream:: 
+ 
+    class MyMutableType(Mutable): 
+        def __getstate__(self): 
+            d = self.__dict__.copy() 
+            d.pop('_parents', None) 
+            return d 
+ 
+With our dictionary example, we need to return the contents of the dict itself 
+(and also restore them on __setstate__):: 
+ 
+    class MutableDict(Mutable, dict): 
+        # .... 
+ 
+        def __getstate__(self): 
+            return dict(self) 
+ 
+        def __setstate__(self, state): 
+            self.update(state) 
+ 
+In the case that our mutable value object is pickled as it is attached to one 
+or more parent objects that are also part of the pickle, the :class:`.Mutable` 
+mixin will re-establish the :attr:`.Mutable._parents` collection on each value 
+object as the owning parents themselves are unpickled. 
+ 
+Receiving Events 
+---------------- 
+ 
+The :meth:`.AttributeEvents.modified` event handler may be used to receive 
+an event when a mutable scalar emits a change event.  This event handler 
+is called when the :func:`.attributes.flag_modified` function is called 
+from within the mutable extension:: 
+ 
+    from sqlalchemy.orm import DeclarativeBase 
+    from sqlalchemy.orm import Mapped 
+    from sqlalchemy.orm import mapped_column 
+    from sqlalchemy import event 
+ 
+    class Base(DeclarativeBase): 
+        pass 
+ 
+    class MyDataClass(Base): 
+        __tablename__ = 'my_data' 
+        id: Mapped[int] = mapped_column(primary_key=True) 
+        data: Mapped[dict[str, str]] = mapped_column(MutableDict.as_mutable(JSONEncodedDict)) 
+ 
+    @event.listens_for(MyDataClass.data, &quot;modified&quot;) 
+    def modified_json(instance, initiator): 
+        print(&quot;json value modified:&quot;, instance.data) 
+ 
+.. _mutable_composites: 
+ 
+Establishing Mutability on Composites 
+===================================== 
+ 
+Composites are a special ORM feature which allow a single scalar attribute to 
+be assigned an object value which represents information &quot;composed&quot; from one 
+or more columns from the underlying mapped table. The usual example is that of 
+a geometric &quot;point&quot;, and is introduced in :ref:`mapper_composite`. 
+ 
+As is the case with :class:`.Mutable`, the user-defined composite class 
+subclasses :class:`.MutableComposite` as a mixin, and detects and delivers 
+change events to its parents via the :meth:`.MutableComposite.changed` method. 
+In the case of a composite class, the detection is usually via the usage of the 
+special Python method ``__setattr__()``. In the example below, we expand upon the ``Point`` 
+class introduced in :ref:`mapper_composite` to include 
+:class:`.MutableComposite` in its bases and to route attribute set events via 
+``__setattr__`` to the :meth:`.MutableComposite.changed` method:: 
+ 
+    import dataclasses 
+    from sqlalchemy.ext.mutable import MutableComposite 
+ 
+    @dataclasses.dataclass 
+    class Point(MutableComposite): 
+        x: int 
+        y: int 
+ 
+        def __setattr__(self, key, value): 
+            &quot;Intercept set events&quot; 
+ 
+            # set the attribute 
+            object.__setattr__(self, key, value) 
+ 
+            # alert all parents to the change 
+            self.changed() 
+ 
+ 
+The :class:`.MutableComposite` class makes use of class mapping events to 
+automatically establish listeners for any usage of :func:`_orm.composite` that 
+specifies our ``Point`` type. Below, when ``Point`` is mapped to the ``Vertex`` 
+class, listeners are established which will route change events from ``Point`` 
+objects to each of the ``Vertex.start`` and ``Vertex.end`` attributes:: 
+ 
+    from sqlalchemy.orm import DeclarativeBase, Mapped 
+    from sqlalchemy.orm import composite, mapped_column 
+ 
+    class Base(DeclarativeBase): 
+        pass 
+ 
+ 
+    class Vertex(Base): 
+        __tablename__ = &quot;vertices&quot; 
+ 
+        id: Mapped[int] = mapped_column(primary_key=True) 
+ 
+        start: Mapped[Point] = composite(mapped_column(&quot;x1&quot;), mapped_column(&quot;y1&quot;)) 
+        end: Mapped[Point] = composite(mapped_column(&quot;x2&quot;), mapped_column(&quot;y2&quot;)) 
+ 
+        def __repr__(self): 
+            return f&quot;Vertex(start={self.start}, end={self.end})&quot; 
+ 
+Any in-place changes to the ``Vertex.start`` or ``Vertex.end`` members 
+will flag the attribute as &quot;dirty&quot; on the parent object: 
+ 
+.. sourcecode:: python+sql 
+ 
+    &gt;&gt;&gt; from sqlalchemy.orm import Session 
+    &gt;&gt;&gt; sess = Session(engine) 
+    &gt;&gt;&gt; v1 = Vertex(start=Point(3, 4), end=Point(12, 15)) 
+    &gt;&gt;&gt; sess.add(v1) 
+    {sql}&gt;&gt;&gt; sess.flush() 
+    BEGIN (implicit) 
+    INSERT INTO vertices (x1, y1, x2, y2) VALUES (?, ?, ?, ?) 
+    [...] (3, 4, 12, 15) 
+ 
+    {stop}&gt;&gt;&gt; v1.end.x = 8 
+    &gt;&gt;&gt; assert v1 in sess.dirty 
+    True 
+    {sql}&gt;&gt;&gt; sess.commit() 
+    UPDATE vertices SET x2=? WHERE vertices.id = ? 
+    [...] (8, 1) 
+    COMMIT 
+ 
+Coercing Mutable Composites 
+--------------------------- 
+ 
+The :meth:`.MutableBase.coerce` method is also supported on composite types. 
+In the case of :class:`.MutableComposite`, the :meth:`.MutableBase.coerce` 
+method is only called for attribute set operations, not load operations. 
+Overriding the :meth:`.MutableBase.coerce` method is essentially equivalent 
+to using a :func:`.validates` validation routine for all attributes which 
+make use of the custom composite type:: 
+ 
+    @dataclasses.dataclass 
+    class Point(MutableComposite): 
+        # other Point methods 
+        # ... 
+ 
+        def coerce(cls, key, value): 
+            if isinstance(value, tuple): 
+                value = Point(*value) 
+            elif not isinstance(value, Point): 
+                raise ValueError(&quot;tuple or Point expected&quot;) 
+            return value 
+ 
+Supporting Pickling 
+-------------------- 
+ 
+As is the case with :class:`.Mutable`, the :class:`.MutableComposite` helper 
+class uses a ``weakref.WeakKeyDictionary`` available via the 
+:meth:`MutableBase._parents` attribute which isn't picklable. If we need to 
+pickle instances of ``Point`` or its owning class ``Vertex``, we at least need 
+to define a ``__getstate__`` that doesn't include the ``_parents`` dictionary. 
+Below we define both a ``__getstate__`` and a ``__setstate__`` that package up 
+the minimal form of our ``Point`` class:: 
+ 
+    @dataclasses.dataclass 
+    class Point(MutableComposite): 
+        # ... 
+ 
+        def __getstate__(self): 
+            return self.x, self.y 
+ 
+        def __setstate__(self, state): 
+            self.x, self.y = state 
+ 
+As with :class:`.Mutable`, the :class:`.MutableComposite` augments the 
+pickling process of the parent's object-relational state so that the 
+:meth:`MutableBase._parents` collection is restored to all ``Point`` objects. 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa: E501</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">collections </span><span class="s3">import </span><span class="s1">defaultdict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">AbstractSet</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">weakref</span>
+<span class="s3">from </span><span class="s1">weakref </span><span class="s3">import </span><span class="s1">WeakKeyDictionary</span>
+
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">event</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">inspect</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">types</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..orm </span><span class="s3">import </span><span class="s1">Mapper</span>
+<span class="s3">from </span><span class="s1">..orm._typing </span><span class="s3">import </span><span class="s1">_ExternalEntityType</span>
+<span class="s3">from </span><span class="s1">..orm._typing </span><span class="s3">import </span><span class="s1">_O</span>
+<span class="s3">from </span><span class="s1">..orm._typing </span><span class="s3">import </span><span class="s1">_T</span>
+<span class="s3">from </span><span class="s1">..orm.attributes </span><span class="s3">import </span><span class="s1">AttributeEventToken</span>
+<span class="s3">from </span><span class="s1">..orm.attributes </span><span class="s3">import </span><span class="s1">flag_modified</span>
+<span class="s3">from </span><span class="s1">..orm.attributes </span><span class="s3">import </span><span class="s1">InstrumentedAttribute</span>
+<span class="s3">from </span><span class="s1">..orm.attributes </span><span class="s3">import </span><span class="s1">QueryableAttribute</span>
+<span class="s3">from </span><span class="s1">..orm.context </span><span class="s3">import </span><span class="s1">QueryContext</span>
+<span class="s3">from </span><span class="s1">..orm.decl_api </span><span class="s3">import </span><span class="s1">DeclarativeAttributeIntercept</span>
+<span class="s3">from </span><span class="s1">..orm.state </span><span class="s3">import </span><span class="s1">InstanceState</span>
+<span class="s3">from </span><span class="s1">..orm.unitofwork </span><span class="s3">import </span><span class="s1">UOWTransaction</span>
+<span class="s3">from </span><span class="s1">..sql.base </span><span class="s3">import </span><span class="s1">SchemaEventTarget</span>
+<span class="s3">from </span><span class="s1">..sql.schema </span><span class="s3">import </span><span class="s1">Column</span>
+<span class="s3">from </span><span class="s1">..sql.type_api </span><span class="s3">import </span><span class="s1">TypeEngine</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">memoized_property</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">SupportsIndex</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">TypeGuard</span>
+
+<span class="s1">_KT = TypeVar(</span><span class="s2">&quot;_KT&quot;</span><span class="s1">)  </span><span class="s0"># Key type.</span>
+<span class="s1">_VT = TypeVar(</span><span class="s2">&quot;_VT&quot;</span><span class="s1">)  </span><span class="s0"># Value type.</span>
+
+
+<span class="s3">class </span><span class="s1">MutableBase:</span>
+    <span class="s4">&quot;&quot;&quot;Common base class to :class:`.Mutable` 
+    and :class:`.MutableComposite`. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@memoized_property</span>
+    <span class="s3">def </span><span class="s1">_parents(self) -&gt; WeakKeyDictionary[Any</span><span class="s5">, </span><span class="s1">Any]:</span>
+        <span class="s4">&quot;&quot;&quot;Dictionary of parent object's :class:`.InstanceState`-&gt;attribute 
+        name on the parent. 
+ 
+        This attribute is a so-called &quot;memoized&quot; property.  It initializes 
+        itself with a new ``weakref.WeakKeyDictionary`` the first time 
+        it is accessed, returning the same object upon subsequent access. 
+ 
+        .. versionchanged:: 1.4 the :class:`.InstanceState` is now used 
+           as the key in the weak dictionary rather than the instance 
+           itself. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">weakref.WeakKeyDictionary()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">coerce(cls</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">value: Any) -&gt; Optional[Any]:</span>
+        <span class="s4">&quot;&quot;&quot;Given a value, coerce it into the target type. 
+ 
+        Can be overridden by custom subclasses to coerce incoming 
+        data into a particular type. 
+ 
+        By default, raises ``ValueError``. 
+ 
+        This method is called in different scenarios depending on if 
+        the parent class is of type :class:`.Mutable` or of type 
+        :class:`.MutableComposite`.  In the case of the former, it is called 
+        for both attribute-set operations as well as during ORM loading 
+        operations.  For the latter, it is only called during attribute-set 
+        operations; the mechanics of the :func:`.composite` construct 
+        handle coercion during load operations. 
+ 
+ 
+        :param key: string name of the ORM-mapped attribute being set. 
+        :param value: the incoming value. 
+        :return: the method should return the coerced value, or raise 
+         ``ValueError`` if the coercion cannot be completed. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">value </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+        <span class="s1">msg = </span><span class="s2">&quot;Attribute '%s' does not accept objects of type %s&quot;</span>
+        <span class="s3">raise </span><span class="s1">ValueError(msg % (key</span><span class="s5">, </span><span class="s1">type(value)))</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_get_listen_keys(cls</span><span class="s5">, </span><span class="s1">attribute: QueryableAttribute[Any]) -&gt; Set[str]:</span>
+        <span class="s4">&quot;&quot;&quot;Given a descriptor attribute, return a ``set()`` of the attribute 
+        keys which indicate a change in the state of this attribute. 
+ 
+        This is normally just ``set([attribute.key])``, but can be overridden 
+        to provide for additional keys.  E.g. a :class:`.MutableComposite` 
+        augments this set with the attribute keys associated with the columns 
+        that comprise the composite value. 
+ 
+        This collection is consulted in the case of intercepting the 
+        :meth:`.InstanceEvents.refresh` and 
+        :meth:`.InstanceEvents.refresh_flush` events, which pass along a list 
+        of attribute names that have been refreshed; the list is compared 
+        against this set to determine if action needs to be taken. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">{attribute.key}</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_listen_on_attribute(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">attribute: QueryableAttribute[Any]</span><span class="s5">,</span>
+        <span class="s1">coerce: bool</span><span class="s5">,</span>
+        <span class="s1">parent_cls: _ExternalEntityType[Any]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Establish this type as a mutation listener for the given 
+        mapped descriptor. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">key = attribute.key</span>
+        <span class="s3">if </span><span class="s1">parent_cls </span><span class="s3">is not </span><span class="s1">attribute.class_:</span>
+            <span class="s3">return</span>
+
+        <span class="s0"># rely on &quot;propagate&quot; here</span>
+        <span class="s1">parent_cls = attribute.class_</span>
+
+        <span class="s1">listen_keys = cls._get_listen_keys(attribute)</span>
+
+        <span class="s3">def </span><span class="s1">load(state: InstanceState[_O]</span><span class="s5">, </span><span class="s1">*args: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s4">&quot;&quot;&quot;Listen for objects loaded or refreshed. 
+ 
+            Wrap the target data member's value with 
+            ``Mutable``. 
+ 
+            &quot;&quot;&quot;</span>
+            <span class="s1">val = state.dict.get(key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">val </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">coerce:</span>
+                    <span class="s1">val = cls.coerce(key</span><span class="s5">, </span><span class="s1">val)</span>
+                    <span class="s1">state.dict[key] = val</span>
+                <span class="s1">val._parents[state] = key</span>
+
+        <span class="s3">def </span><span class="s1">load_attrs(</span>
+            <span class="s1">state: InstanceState[_O]</span><span class="s5">,</span>
+            <span class="s1">ctx: Union[object</span><span class="s5">, </span><span class="s1">QueryContext</span><span class="s5">, </span><span class="s1">UOWTransaction]</span><span class="s5">,</span>
+            <span class="s1">attrs: Iterable[Any]</span><span class="s5">,</span>
+        <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s3">if not </span><span class="s1">attrs </span><span class="s3">or </span><span class="s1">listen_keys.intersection(attrs):</span>
+                <span class="s1">load(state)</span>
+
+        <span class="s3">def </span><span class="s1">set_(</span>
+            <span class="s1">target: InstanceState[_O]</span><span class="s5">,</span>
+            <span class="s1">value: MutableBase | </span><span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">oldvalue: MutableBase | </span><span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">initiator: AttributeEventToken</span><span class="s5">,</span>
+        <span class="s1">) -&gt; MutableBase | </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s4">&quot;&quot;&quot;Listen for set/replace events on the target 
+            data member. 
+ 
+            Establish a weak reference to the parent object 
+            on the incoming value, remove it for the one 
+            outgoing. 
+ 
+            &quot;&quot;&quot;</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is </span><span class="s1">oldvalue:</span>
+                <span class="s3">return </span><span class="s1">value</span>
+
+            <span class="s3">if not </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">cls):</span>
+                <span class="s1">value = cls.coerce(key</span><span class="s5">, </span><span class="s1">value)</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">value._parents[target] = key</span>
+            <span class="s3">if </span><span class="s1">isinstance(oldvalue</span><span class="s5">, </span><span class="s1">cls):</span>
+                <span class="s1">oldvalue._parents.pop(inspect(target)</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">def </span><span class="s1">pickle(</span>
+            <span class="s1">state: InstanceState[_O]</span><span class="s5">, </span><span class="s1">state_dict: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span>
+        <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s1">val = state.dict.get(key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">val </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s2">&quot;ext.mutable.values&quot; </span><span class="s3">not in </span><span class="s1">state_dict:</span>
+                    <span class="s1">state_dict[</span><span class="s2">&quot;ext.mutable.values&quot;</span><span class="s1">] = defaultdict(list)</span>
+                <span class="s1">state_dict[</span><span class="s2">&quot;ext.mutable.values&quot;</span><span class="s1">][key].append(val)</span>
+
+        <span class="s3">def </span><span class="s1">unpickle(</span>
+            <span class="s1">state: InstanceState[_O]</span><span class="s5">, </span><span class="s1">state_dict: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span>
+        <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s2">&quot;ext.mutable.values&quot; </span><span class="s3">in </span><span class="s1">state_dict:</span>
+                <span class="s1">collection = state_dict[</span><span class="s2">&quot;ext.mutable.values&quot;</span><span class="s1">]</span>
+                <span class="s3">if </span><span class="s1">isinstance(collection</span><span class="s5">, </span><span class="s1">list):</span>
+                    <span class="s0"># legacy format</span>
+                    <span class="s3">for </span><span class="s1">val </span><span class="s3">in </span><span class="s1">collection:</span>
+                        <span class="s1">val._parents[state] = key</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">for </span><span class="s1">val </span><span class="s3">in </span><span class="s1">state_dict[</span><span class="s2">&quot;ext.mutable.values&quot;</span><span class="s1">][key]:</span>
+                        <span class="s1">val._parents[state] = key</span>
+
+        <span class="s1">event.listen(</span>
+            <span class="s1">parent_cls</span><span class="s5">,</span>
+            <span class="s2">&quot;_sa_event_merge_wo_load&quot;</span><span class="s5">,</span>
+            <span class="s1">load</span><span class="s5">,</span>
+            <span class="s1">raw=</span><span class="s3">True</span><span class="s5">,</span>
+            <span class="s1">propagate=</span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">event.listen(parent_cls</span><span class="s5">, </span><span class="s2">&quot;load&quot;</span><span class="s5">, </span><span class="s1">load</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">propagate=</span><span class="s3">True</span><span class="s1">)</span>
+        <span class="s1">event.listen(</span>
+            <span class="s1">parent_cls</span><span class="s5">, </span><span class="s2">&quot;refresh&quot;</span><span class="s5">, </span><span class="s1">load_attrs</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">propagate=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+        <span class="s1">event.listen(</span>
+            <span class="s1">parent_cls</span><span class="s5">, </span><span class="s2">&quot;refresh_flush&quot;</span><span class="s5">, </span><span class="s1">load_attrs</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">propagate=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+        <span class="s1">event.listen(</span>
+            <span class="s1">attribute</span><span class="s5">, </span><span class="s2">&quot;set&quot;</span><span class="s5">, </span><span class="s1">set_</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">retval=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">propagate=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+        <span class="s1">event.listen(parent_cls</span><span class="s5">, </span><span class="s2">&quot;pickle&quot;</span><span class="s5">, </span><span class="s1">pickle</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">propagate=</span><span class="s3">True</span><span class="s1">)</span>
+        <span class="s1">event.listen(</span>
+            <span class="s1">parent_cls</span><span class="s5">, </span><span class="s2">&quot;unpickle&quot;</span><span class="s5">, </span><span class="s1">unpickle</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">propagate=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">Mutable(MutableBase):</span>
+    <span class="s4">&quot;&quot;&quot;Mixin that defines transparent propagation of change 
+    events to a parent object. 
+ 
+    See the example in :ref:`mutable_scalars` for usage information. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">changed(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Subclasses should call this method whenever change events occur.&quot;&quot;&quot;</span>
+
+        <span class="s3">for </span><span class="s1">parent</span><span class="s5">, </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._parents.items():</span>
+            <span class="s1">flag_modified(parent.obj()</span><span class="s5">, </span><span class="s1">key)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">associate_with_attribute(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">attribute: InstrumentedAttribute[_O]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Establish this type as a mutation listener for the given 
+        mapped descriptor. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">cls._listen_on_attribute(attribute</span><span class="s5">, </span><span class="s3">True</span><span class="s5">, </span><span class="s1">attribute.class_)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">associate_with(cls</span><span class="s5">, </span><span class="s1">sqltype: type) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Associate this wrapper with all future mapped columns 
+        of the given type. 
+ 
+        This is a convenience method that calls 
+        ``associate_with_attribute`` automatically. 
+ 
+        .. warning:: 
+ 
+           The listeners established by this method are *global* 
+           to all mappers, and are *not* garbage collected.   Only use 
+           :meth:`.associate_with` for types that are permanent to an 
+           application, not with ad-hoc types else this will cause unbounded 
+           growth in memory usage. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">listen_for_type(mapper: Mapper[_O]</span><span class="s5">, </span><span class="s1">class_: type) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">mapper.non_primary:</span>
+                <span class="s3">return</span>
+            <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">mapper.column_attrs:</span>
+                <span class="s3">if </span><span class="s1">isinstance(prop.columns[</span><span class="s6">0</span><span class="s1">].type</span><span class="s5">, </span><span class="s1">sqltype):</span>
+                    <span class="s1">cls.associate_with_attribute(getattr(class_</span><span class="s5">, </span><span class="s1">prop.key))</span>
+
+        <span class="s1">event.listen(Mapper</span><span class="s5">, </span><span class="s2">&quot;mapper_configured&quot;</span><span class="s5">, </span><span class="s1">listen_for_type)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">as_mutable(cls</span><span class="s5">, </span><span class="s1">sqltype: TypeEngine[_T]) -&gt; TypeEngine[_T]:</span>
+        <span class="s4">&quot;&quot;&quot;Associate a SQL type with this mutable Python type. 
+ 
+        This establishes listeners that will detect ORM mappings against 
+        the given type, adding mutation event trackers to those mappings. 
+ 
+        The type is returned, unconditionally as an instance, so that 
+        :meth:`.as_mutable` can be used inline:: 
+ 
+            Table('mytable', metadata, 
+                Column('id', Integer, primary_key=True), 
+                Column('data', MyMutableType.as_mutable(PickleType)) 
+            ) 
+ 
+        Note that the returned type is always an instance, even if a class 
+        is given, and that only columns which are declared specifically with 
+        that type instance receive additional instrumentation. 
+ 
+        To associate a particular mutable type with all occurrences of a 
+        particular type, use the :meth:`.Mutable.associate_with` classmethod 
+        of the particular :class:`.Mutable` subclass to establish a global 
+        association. 
+ 
+        .. warning:: 
+ 
+           The listeners established by this method are *global* 
+           to all mappers, and are *not* garbage collected.   Only use 
+           :meth:`.as_mutable` for types that are permanent to an application, 
+           not with ad-hoc types else this will cause unbounded growth 
+           in memory usage. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">sqltype = types.to_instance(sqltype)</span>
+
+        <span class="s0"># a SchemaType will be copied when the Column is copied,</span>
+        <span class="s0"># and we'll lose our ability to link that type back to the original.</span>
+        <span class="s0"># so track our original type w/ columns</span>
+        <span class="s3">if </span><span class="s1">isinstance(sqltype</span><span class="s5">, </span><span class="s1">SchemaEventTarget):</span>
+
+            <span class="s1">@event.listens_for(sqltype</span><span class="s5">, </span><span class="s2">&quot;before_parent_attach&quot;</span><span class="s1">)</span>
+            <span class="s3">def </span><span class="s1">_add_column_memo(</span>
+                <span class="s1">sqltyp: TypeEngine[Any]</span><span class="s5">,</span>
+                <span class="s1">parent: Column[_T]</span><span class="s5">,</span>
+            <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s1">parent.info[</span><span class="s2">&quot;_ext_mutable_orig_type&quot;</span><span class="s1">] = sqltyp</span>
+
+            <span class="s1">schema_event_check = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">schema_event_check = </span><span class="s3">False</span>
+
+        <span class="s3">def </span><span class="s1">listen_for_type(</span>
+            <span class="s1">mapper: Mapper[_T]</span><span class="s5">,</span>
+            <span class="s1">class_: Union[DeclarativeAttributeIntercept</span><span class="s5">, </span><span class="s1">type]</span><span class="s5">,</span>
+        <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">mapper.non_primary:</span>
+                <span class="s3">return</span>
+            <span class="s1">_APPLIED_KEY = </span><span class="s2">&quot;_ext_mutable_listener_applied&quot;</span>
+
+            <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">mapper.column_attrs:</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s0"># all Mutable types refer to a Column that's mapped,</span>
+                    <span class="s0"># since this is the only kind of Core target the ORM can</span>
+                    <span class="s0"># &quot;mutate&quot;</span>
+                    <span class="s1">isinstance(prop.expression</span><span class="s5">, </span><span class="s1">Column)</span>
+                    <span class="s3">and </span><span class="s1">(</span>
+                        <span class="s1">(</span>
+                            <span class="s1">schema_event_check</span>
+                            <span class="s3">and </span><span class="s1">prop.expression.info.get(</span>
+                                <span class="s2">&quot;_ext_mutable_orig_type&quot;</span>
+                            <span class="s1">)</span>
+                            <span class="s3">is </span><span class="s1">sqltype</span>
+                        <span class="s1">)</span>
+                        <span class="s3">or </span><span class="s1">prop.expression.type </span><span class="s3">is </span><span class="s1">sqltype</span>
+                    <span class="s1">)</span>
+                <span class="s1">):</span>
+                    <span class="s3">if not </span><span class="s1">prop.expression.info.get(_APPLIED_KEY</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+                        <span class="s1">prop.expression.info[_APPLIED_KEY] = </span><span class="s3">True</span>
+                        <span class="s1">cls.associate_with_attribute(getattr(class_</span><span class="s5">, </span><span class="s1">prop.key))</span>
+
+        <span class="s1">event.listen(Mapper</span><span class="s5">, </span><span class="s2">&quot;mapper_configured&quot;</span><span class="s5">, </span><span class="s1">listen_for_type)</span>
+
+        <span class="s3">return </span><span class="s1">sqltype</span>
+
+
+<span class="s3">class </span><span class="s1">MutableComposite(MutableBase):</span>
+    <span class="s4">&quot;&quot;&quot;Mixin that defines transparent propagation of change 
+    events on a SQLAlchemy &quot;composite&quot; object to its 
+    owning parent or parents. 
+ 
+    See the example in :ref:`mutable_composites` for usage information. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_get_listen_keys(cls</span><span class="s5">, </span><span class="s1">attribute: QueryableAttribute[_O]) -&gt; Set[str]:</span>
+        <span class="s3">return </span><span class="s1">{attribute.key}.union(attribute.property._attribute_keys)</span>
+
+    <span class="s3">def </span><span class="s1">changed(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Subclasses should call this method whenever change events occur.&quot;&quot;&quot;</span>
+
+        <span class="s3">for </span><span class="s1">parent</span><span class="s5">, </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._parents.items():</span>
+            <span class="s1">prop = parent.mapper.get_property(key)</span>
+            <span class="s3">for </span><span class="s1">value</span><span class="s5">, </span><span class="s1">attr_name </span><span class="s3">in </span><span class="s1">zip(</span>
+                <span class="s1">prop._composite_values_from_instance(self)</span><span class="s5">,</span>
+                <span class="s1">prop._attribute_keys</span><span class="s5">,</span>
+            <span class="s1">):</span>
+                <span class="s1">setattr(parent.obj()</span><span class="s5">, </span><span class="s1">attr_name</span><span class="s5">, </span><span class="s1">value)</span>
+
+
+<span class="s3">def </span><span class="s1">_setup_composite_listener() -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s3">def </span><span class="s1">_listen_for_type(mapper: Mapper[_T]</span><span class="s5">, </span><span class="s1">class_: type) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">mapper.iterate_properties:</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">hasattr(prop</span><span class="s5">, </span><span class="s2">&quot;composite_class&quot;</span><span class="s1">)</span>
+                <span class="s3">and </span><span class="s1">isinstance(prop.composite_class</span><span class="s5">, </span><span class="s1">type)</span>
+                <span class="s3">and </span><span class="s1">issubclass(prop.composite_class</span><span class="s5">, </span><span class="s1">MutableComposite)</span>
+            <span class="s1">):</span>
+                <span class="s1">prop.composite_class._listen_on_attribute(</span>
+                    <span class="s1">getattr(class_</span><span class="s5">, </span><span class="s1">prop.key)</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">class_</span>
+                <span class="s1">)</span>
+
+    <span class="s3">if not </span><span class="s1">event.contains(Mapper</span><span class="s5">, </span><span class="s2">&quot;mapper_configured&quot;</span><span class="s5">, </span><span class="s1">_listen_for_type):</span>
+        <span class="s1">event.listen(Mapper</span><span class="s5">, </span><span class="s2">&quot;mapper_configured&quot;</span><span class="s5">, </span><span class="s1">_listen_for_type)</span>
+
+
+<span class="s1">_setup_composite_listener()</span>
+
+
+<span class="s3">class </span><span class="s1">MutableDict(Mutable</span><span class="s5">, </span><span class="s1">Dict[_KT</span><span class="s5">, </span><span class="s1">_VT]):</span>
+    <span class="s4">&quot;&quot;&quot;A dictionary type that implements :class:`.Mutable`. 
+ 
+    The :class:`.MutableDict` object implements a dictionary that will 
+    emit change events to the underlying mapping when the contents of 
+    the dictionary are altered, including when values are added or removed. 
+ 
+    Note that :class:`.MutableDict` does **not** apply mutable tracking to  the 
+    *values themselves* inside the dictionary. Therefore it is not a sufficient 
+    solution for the use case of tracking deep changes to a *recursive* 
+    dictionary structure, such as a JSON structure.  To support this use case, 
+    build a subclass of  :class:`.MutableDict` that provides appropriate 
+    coercion to the values placed in the dictionary so that they too are 
+    &quot;mutable&quot;, and emit events up to their parent structure. 
+ 
+    .. seealso:: 
+ 
+        :class:`.MutableList` 
+ 
+        :class:`.MutableSet` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__setitem__(self</span><span class="s5">, </span><span class="s1">key: _KT</span><span class="s5">, </span><span class="s1">value: _VT) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Detect dictionary set events and emit change events.&quot;&quot;&quot;</span>
+        <span class="s1">super().__setitem__(key</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s0"># from https://github.com/python/mypy/issues/14858</span>
+
+        <span class="s1">@overload</span>
+        <span class="s3">def </span><span class="s1">setdefault(</span>
+            <span class="s1">self: MutableDict[_KT</span><span class="s5">, </span><span class="s1">Optional[_T]]</span><span class="s5">, </span><span class="s1">key: _KT</span><span class="s5">, </span><span class="s1">value: </span><span class="s3">None </span><span class="s1">= </span><span class="s3">None</span>
+        <span class="s1">) -&gt; Optional[_T]: ...</span>
+
+        <span class="s1">@overload</span>
+        <span class="s3">def </span><span class="s1">setdefault(self</span><span class="s5">, </span><span class="s1">key: _KT</span><span class="s5">, </span><span class="s1">value: _VT) -&gt; _VT: ...</span>
+
+        <span class="s3">def </span><span class="s1">setdefault(self</span><span class="s5">, </span><span class="s1">key: _KT</span><span class="s5">, </span><span class="s1">value: object = </span><span class="s3">None</span><span class="s1">) -&gt; object: ...</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+
+        <span class="s3">def </span><span class="s1">setdefault(self</span><span class="s5">, </span><span class="s1">*arg):  </span><span class="s0"># noqa: F811</span>
+            <span class="s1">result = super().setdefault(*arg)</span>
+            <span class="s1">self.changed()</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">__delitem__(self</span><span class="s5">, </span><span class="s1">key: _KT) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Detect dictionary del events and emit change events.&quot;&quot;&quot;</span>
+        <span class="s1">super().__delitem__(key)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">update(self</span><span class="s5">, </span><span class="s1">*a: Any</span><span class="s5">, </span><span class="s1">**kw: _VT) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().update(*a</span><span class="s5">, </span><span class="s1">**kw)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s1">@overload</span>
+        <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">__key: _KT) -&gt; _VT: ...</span>
+
+        <span class="s1">@overload</span>
+        <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">__key: _KT</span><span class="s5">, </span><span class="s1">__default: _VT | _T) -&gt; _VT | _T: ...</span>
+
+        <span class="s3">def </span><span class="s1">pop(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">__key: _KT</span><span class="s5">, </span><span class="s1">__default: _VT | _T | </span><span class="s3">None </span><span class="s1">= </span><span class="s3">None</span>
+        <span class="s1">) -&gt; _VT | _T: ...</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+
+        <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">*arg):  </span><span class="s0"># noqa: F811</span>
+            <span class="s1">result = super().pop(*arg)</span>
+            <span class="s1">self.changed()</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">popitem(self) -&gt; Tuple[_KT</span><span class="s5">, </span><span class="s1">_VT]:</span>
+        <span class="s1">result = super().popitem()</span>
+        <span class="s1">self.changed()</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().clear()</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">coerce(cls</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">value: Any) -&gt; MutableDict[_KT</span><span class="s5">, </span><span class="s1">_VT] | </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Convert plain dictionary to instance of this class.&quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">cls):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">dict):</span>
+                <span class="s3">return </span><span class="s1">cls(value)</span>
+            <span class="s3">return </span><span class="s1">Mutable.coerce(key</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self) -&gt; Dict[_KT</span><span class="s5">, </span><span class="s1">_VT]:</span>
+        <span class="s3">return </span><span class="s1">dict(self)</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">state: Union[Dict[str</span><span class="s5">, </span><span class="s1">int]</span><span class="s5">, </span><span class="s1">Dict[str</span><span class="s5">, </span><span class="s1">str]]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.update(state)</span>
+
+
+<span class="s3">class </span><span class="s1">MutableList(Mutable</span><span class="s5">, </span><span class="s1">List[_T]):</span>
+    <span class="s4">&quot;&quot;&quot;A list type that implements :class:`.Mutable`. 
+ 
+    The :class:`.MutableList` object implements a list that will 
+    emit change events to the underlying mapping when the contents of 
+    the list are altered, including when values are added or removed. 
+ 
+    Note that :class:`.MutableList` does **not** apply mutable tracking to  the 
+    *values themselves* inside the list. Therefore it is not a sufficient 
+    solution for the use case of tracking deep changes to a *recursive* 
+    mutable structure, such as a JSON structure.  To support this use case, 
+    build a subclass of  :class:`.MutableList` that provides appropriate 
+    coercion to the values placed in the dictionary so that they too are 
+    &quot;mutable&quot;, and emit events up to their parent structure. 
+ 
+    .. seealso:: 
+ 
+        :class:`.MutableDict` 
+ 
+        :class:`.MutableSet` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__reduce_ex__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">proto: SupportsIndex</span>
+    <span class="s1">) -&gt; Tuple[type</span><span class="s5">, </span><span class="s1">Tuple[List[int]]]:</span>
+        <span class="s3">return </span><span class="s1">(self.__class__</span><span class="s5">, </span><span class="s1">(list(self)</span><span class="s5">,</span><span class="s1">))</span>
+
+    <span class="s0"># needed for backwards compatibility with</span>
+    <span class="s0"># older pickles</span>
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self[:] = state</span>
+
+    <span class="s3">def </span><span class="s1">is_scalar(self</span><span class="s5">, </span><span class="s1">value: _T | Iterable[_T]) -&gt; TypeGuard[_T]:</span>
+        <span class="s3">return not </span><span class="s1">util.is_non_string_iterable(value)</span>
+
+    <span class="s3">def </span><span class="s1">is_iterable(self</span><span class="s5">, </span><span class="s1">value: _T | Iterable[_T]) -&gt; TypeGuard[Iterable[_T]]:</span>
+        <span class="s3">return </span><span class="s1">util.is_non_string_iterable(value)</span>
+
+    <span class="s3">def </span><span class="s1">__setitem__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">index: SupportsIndex | slice</span><span class="s5">, </span><span class="s1">value: _T | Iterable[_T]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Detect list set events and emit change events.&quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">isinstance(index</span><span class="s5">, </span><span class="s1">SupportsIndex) </span><span class="s3">and </span><span class="s1">self.is_scalar(value):</span>
+            <span class="s1">super().__setitem__(index</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s3">elif </span><span class="s1">isinstance(index</span><span class="s5">, </span><span class="s1">slice) </span><span class="s3">and </span><span class="s1">self.is_iterable(value):</span>
+            <span class="s1">super().__setitem__(index</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">__delitem__(self</span><span class="s5">, </span><span class="s1">index: SupportsIndex | slice) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Detect list del events and emit change events.&quot;&quot;&quot;</span>
+        <span class="s1">super().__delitem__(index)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">*arg: SupportsIndex) -&gt; _T:</span>
+        <span class="s1">result = super().pop(*arg)</span>
+        <span class="s1">self.changed()</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">x: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().append(x)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">extend(self</span><span class="s5">, </span><span class="s1">x: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().extend(x)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">__iadd__(self</span><span class="s5">, </span><span class="s1">x: Iterable[_T]) -&gt; MutableList[_T]:  </span><span class="s0"># type: ignore[override,misc] # noqa: E501</span>
+        <span class="s1">self.extend(x)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">insert(self</span><span class="s5">, </span><span class="s1">i: SupportsIndex</span><span class="s5">, </span><span class="s1">x: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().insert(i</span><span class="s5">, </span><span class="s1">x)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">i: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().remove(i)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().clear()</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">sort(self</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().sort(**kw)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">reverse(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().reverse()</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">coerce(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">value: MutableList[_T] | _T</span>
+    <span class="s1">) -&gt; Optional[MutableList[_T]]:</span>
+        <span class="s4">&quot;&quot;&quot;Convert plain list to instance of this class.&quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">cls):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">list):</span>
+                <span class="s3">return </span><span class="s1">cls(value)</span>
+            <span class="s3">return </span><span class="s1">Mutable.coerce(key</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+
+<span class="s3">class </span><span class="s1">MutableSet(Mutable</span><span class="s5">, </span><span class="s1">Set[_T]):</span>
+    <span class="s4">&quot;&quot;&quot;A set type that implements :class:`.Mutable`. 
+ 
+    The :class:`.MutableSet` object implements a set that will 
+    emit change events to the underlying mapping when the contents of 
+    the set are altered, including when values are added or removed. 
+ 
+    Note that :class:`.MutableSet` does **not** apply mutable tracking to  the 
+    *values themselves* inside the set. Therefore it is not a sufficient 
+    solution for the use case of tracking deep changes to a *recursive* 
+    mutable structure.  To support this use case, 
+    build a subclass of  :class:`.MutableSet` that provides appropriate 
+    coercion to the values placed in the dictionary so that they too are 
+    &quot;mutable&quot;, and emit events up to their parent structure. 
+ 
+    .. seealso:: 
+ 
+        :class:`.MutableDict` 
+ 
+        :class:`.MutableList` 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">update(self</span><span class="s5">, </span><span class="s1">*arg: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().update(*arg)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">intersection_update(self</span><span class="s5">, </span><span class="s1">*arg: Iterable[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().intersection_update(*arg)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">difference_update(self</span><span class="s5">, </span><span class="s1">*arg: Iterable[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().difference_update(*arg)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">symmetric_difference_update(self</span><span class="s5">, </span><span class="s1">*arg: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().symmetric_difference_update(*arg)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">__ior__(self</span><span class="s5">, </span><span class="s1">other: AbstractSet[_T]) -&gt; MutableSet[_T]:  </span><span class="s0"># type: ignore[override,misc] # noqa: E501</span>
+        <span class="s1">self.update(other)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__iand__(self</span><span class="s5">, </span><span class="s1">other: AbstractSet[object]) -&gt; MutableSet[_T]:</span>
+        <span class="s1">self.intersection_update(other)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__ixor__(self</span><span class="s5">, </span><span class="s1">other: AbstractSet[_T]) -&gt; MutableSet[_T]:  </span><span class="s0"># type: ignore[override,misc] # noqa: E501</span>
+        <span class="s1">self.symmetric_difference_update(other)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__isub__(self</span><span class="s5">, </span><span class="s1">other: AbstractSet[object]) -&gt; MutableSet[_T]:  </span><span class="s0"># type: ignore[misc] # noqa: E501</span>
+        <span class="s1">self.difference_update(other)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">add(self</span><span class="s5">, </span><span class="s1">elem: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().add(elem)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">elem: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().remove(elem)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">discard(self</span><span class="s5">, </span><span class="s1">elem: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().discard(elem)</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">*arg: Any) -&gt; _T:</span>
+        <span class="s1">result = super().pop(*arg)</span>
+        <span class="s1">self.changed()</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().clear()</span>
+        <span class="s1">self.changed()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">coerce(cls</span><span class="s5">, </span><span class="s1">index: str</span><span class="s5">, </span><span class="s1">value: Any) -&gt; Optional[MutableSet[_T]]:</span>
+        <span class="s4">&quot;&quot;&quot;Convert plain set to instance of this class.&quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">cls):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">set):</span>
+                <span class="s3">return </span><span class="s1">cls(value)</span>
+            <span class="s3">return </span><span class="s1">Mutable.coerce(index</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self) -&gt; Set[_T]:</span>
+        <span class="s3">return </span><span class="s1">set(self)</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.update(state)</span>
+
+    <span class="s3">def </span><span class="s1">__reduce_ex__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">proto: SupportsIndex</span>
+    <span class="s1">) -&gt; Tuple[type</span><span class="s5">, </span><span class="s1">Tuple[List[int]]]:</span>
+        <span class="s3">return </span><span class="s1">(self.__class__</span><span class="s5">, </span><span class="s1">(list(self)</span><span class="s5">,</span><span class="s1">))</span>
+</pre>
+</body>
+</html>

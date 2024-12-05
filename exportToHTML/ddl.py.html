@@ -1,0 +1,1402 @@
+<html>
+<head>
+<title>ddl.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ddl.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/ddl.py</span>
+<span class="s0"># Copyright (C) 2009-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">&quot;&quot;&quot; 
+Provides the hierarchy of DDL-defining schema items as well as routines 
+to invoke them for a create/drop call. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">contextlib</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence </span><span class="s3">as </span><span class="s1">typing_Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">roles</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_generative</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">Executable</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">SchemaVisitor</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">ClauseElement</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">topological</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Protocol</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Self</span>
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.compiler </span><span class="s3">import </span><span class="s1">Compiled</span>
+    <span class="s3">from </span><span class="s1">.compiler </span><span class="s3">import </span><span class="s1">DDLCompiler</span>
+    <span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">BindParameter</span>
+    <span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">Constraint</span>
+    <span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">ForeignKeyConstraint</span>
+    <span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">SchemaItem</span>
+    <span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">Sequence</span>
+    <span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">Table</span>
+    <span class="s3">from </span><span class="s1">.selectable </span><span class="s3">import </span><span class="s1">TableClause</span>
+    <span class="s3">from </span><span class="s1">..engine.base </span><span class="s3">import </span><span class="s1">Connection</span>
+    <span class="s3">from </span><span class="s1">..engine.interfaces </span><span class="s3">import </span><span class="s1">CacheStats</span>
+    <span class="s3">from </span><span class="s1">..engine.interfaces </span><span class="s3">import </span><span class="s1">CompiledCacheType</span>
+    <span class="s3">from </span><span class="s1">..engine.interfaces </span><span class="s3">import </span><span class="s1">Dialect</span>
+    <span class="s3">from </span><span class="s1">..engine.interfaces </span><span class="s3">import </span><span class="s1">SchemaTranslateMapType</span>
+
+
+<span class="s3">class </span><span class="s1">BaseDDLElement(ClauseElement):</span>
+    <span class="s2">&quot;&quot;&quot;The root of DDL constructs, including those that are sub-elements 
+    within the &quot;create table&quot; and other processes. 
+ 
+    .. versionadded:: 2.0 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_hierarchy_supports_caching = </span><span class="s3">False</span>
+    <span class="s4">&quot;&quot;&quot;disable cache warnings for all _DDLCompiles subclasses. &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">_compiler(self</span><span class="s5">, </span><span class="s1">dialect</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s2">&quot;&quot;&quot;Return a compiler appropriate for this ClauseElement, given a 
+        Dialect.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">dialect.ddl_compiler(dialect</span><span class="s5">, </span><span class="s1">self</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">_compile_w_cache(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">dialect: Dialect</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">compiled_cache: Optional[CompiledCacheType]</span><span class="s5">,</span>
+        <span class="s1">column_keys: List[str]</span><span class="s5">,</span>
+        <span class="s1">for_executemany: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">schema_translate_map: Optional[SchemaTranslateMapType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Tuple[</span>
+        <span class="s1">Compiled</span><span class="s5">, </span><span class="s1">Optional[typing_Sequence[BindParameter[Any]]]</span><span class="s5">, </span><span class="s1">CacheStats</span>
+    <span class="s1">]:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s3">class </span><span class="s1">DDLIfCallable(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">ddl: BaseDDLElement</span><span class="s5">,</span>
+        <span class="s1">target: SchemaItem</span><span class="s5">,</span>
+        <span class="s1">bind: Optional[Connection]</span><span class="s5">,</span>
+        <span class="s1">tables: Optional[List[Table]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">state: Optional[Any] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">dialect: Dialect</span><span class="s5">,</span>
+        <span class="s1">compiler: Optional[DDLCompiler] = ...</span><span class="s5">,</span>
+        <span class="s1">checkfirst: bool</span><span class="s5">,</span>
+    <span class="s1">) -&gt; bool: ...</span>
+
+
+<span class="s3">class </span><span class="s1">DDLIf(typing.NamedTuple):</span>
+    <span class="s1">dialect: Optional[str]</span>
+    <span class="s1">callable_: Optional[DDLIfCallable]</span>
+    <span class="s1">state: Optional[Any]</span>
+
+    <span class="s3">def </span><span class="s1">_should_execute(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">ddl: BaseDDLElement</span><span class="s5">,</span>
+        <span class="s1">target: SchemaItem</span><span class="s5">,</span>
+        <span class="s1">bind: Optional[Connection]</span><span class="s5">,</span>
+        <span class="s1">compiler: Optional[DDLCompiler] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s3">if </span><span class="s1">bind </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">dialect = bind.dialect</span>
+        <span class="s3">elif </span><span class="s1">compiler </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">dialect = compiler.dialect</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">assert False</span><span class="s5">, </span><span class="s4">&quot;compiler or dialect is required&quot;</span>
+
+        <span class="s3">if </span><span class="s1">isinstance(self.dialect</span><span class="s5">, </span><span class="s1">str):</span>
+            <span class="s3">if </span><span class="s1">self.dialect != dialect.name:</span>
+                <span class="s3">return False</span>
+        <span class="s3">elif </span><span class="s1">isinstance(self.dialect</span><span class="s5">, </span><span class="s1">(tuple</span><span class="s5">, </span><span class="s1">list</span><span class="s5">, </span><span class="s1">set)):</span>
+            <span class="s3">if </span><span class="s1">dialect.name </span><span class="s3">not in </span><span class="s1">self.dialect:</span>
+                <span class="s3">return False</span>
+        <span class="s3">if </span><span class="s1">self.callable_ </span><span class="s3">is not None and not </span><span class="s1">self.callable_(</span>
+            <span class="s1">ddl</span><span class="s5">,</span>
+            <span class="s1">target</span><span class="s5">,</span>
+            <span class="s1">bind</span><span class="s5">,</span>
+            <span class="s1">state=self.state</span><span class="s5">,</span>
+            <span class="s1">dialect=dialect</span><span class="s5">,</span>
+            <span class="s1">compiler=compiler</span><span class="s5">,</span>
+            <span class="s1">**kw</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s3">return False</span>
+
+        <span class="s3">return True</span>
+
+
+<span class="s3">class </span><span class="s1">ExecutableDDLElement(roles.DDLRole</span><span class="s5">, </span><span class="s1">Executable</span><span class="s5">, </span><span class="s1">BaseDDLElement):</span>
+    <span class="s2">&quot;&quot;&quot;Base class for standalone executable DDL expression constructs. 
+ 
+    This class is the base for the general purpose :class:`.DDL` class, 
+    as well as the various create/drop clause constructs such as 
+    :class:`.CreateTable`, :class:`.DropTable`, :class:`.AddConstraint`, 
+    etc. 
+ 
+    .. versionchanged:: 2.0  :class:`.ExecutableDDLElement` is renamed from 
+       :class:`.DDLElement`, which still exists for backwards compatibility. 
+ 
+    :class:`.ExecutableDDLElement` integrates closely with SQLAlchemy events, 
+    introduced in :ref:`event_toplevel`.  An instance of one is 
+    itself an event receiving callable:: 
+ 
+        event.listen( 
+            users, 
+            'after_create', 
+            AddConstraint(constraint).execute_if(dialect='postgresql') 
+        ) 
+ 
+    .. seealso:: 
+ 
+        :class:`.DDL` 
+ 
+        :class:`.DDLEvents` 
+ 
+        :ref:`event_toplevel` 
+ 
+        :ref:`schema_ddl_sequences` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_ddl_if: Optional[DDLIf] = </span><span class="s3">None</span>
+    <span class="s1">target: Optional[SchemaItem] = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">_execute_on_connection(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">distilled_params</span><span class="s5">, </span><span class="s1">execution_options</span>
+    <span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">connection._execute_ddl(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">distilled_params</span><span class="s5">, </span><span class="s1">execution_options</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s3">def </span><span class="s1">against(self</span><span class="s5">, </span><span class="s1">target: SchemaItem) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;Return a copy of this :class:`_schema.ExecutableDDLElement` which 
+        will include the given target. 
+ 
+        This essentially applies the given item to the ``.target`` attribute of 
+        the returned :class:`_schema.ExecutableDDLElement` object. This target 
+        is then usable by event handlers and compilation routines in order to 
+        provide services such as tokenization of a DDL string in terms of a 
+        particular :class:`_schema.Table`. 
+ 
+        When a :class:`_schema.ExecutableDDLElement` object is established as 
+        an event handler for the :meth:`_events.DDLEvents.before_create` or 
+        :meth:`_events.DDLEvents.after_create` events, and the event then 
+        occurs for a given target such as a :class:`_schema.Constraint` or 
+        :class:`_schema.Table`, that target is established with a copy of the 
+        :class:`_schema.ExecutableDDLElement` object using this method, which 
+        then proceeds to the :meth:`_schema.ExecutableDDLElement.execute` 
+        method in order to invoke the actual DDL instruction. 
+ 
+        :param target: a :class:`_schema.SchemaItem` that will be the subject 
+         of a DDL operation. 
+ 
+        :return: a copy of this :class:`_schema.ExecutableDDLElement` with the 
+         ``.target`` attribute assigned to the given 
+         :class:`_schema.SchemaItem`. 
+ 
+        .. seealso:: 
+ 
+            :class:`_schema.DDL` - uses tokenization against the &quot;target&quot; when 
+            processing the DDL string. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.target = target</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s3">def </span><span class="s1">execute_if(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">dialect: Optional[str] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">callable_: Optional[DDLIfCallable] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">state: Optional[Any] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Self:</span>
+        <span class="s2">r&quot;&quot;&quot;Return a callable that will execute this 
+        :class:`_ddl.ExecutableDDLElement` conditionally within an event 
+        handler. 
+ 
+        Used to provide a wrapper for event listening:: 
+ 
+            event.listen( 
+                        metadata, 
+                        'before_create', 
+                        DDL(&quot;my_ddl&quot;).execute_if(dialect='postgresql') 
+                    ) 
+ 
+        :param dialect: May be a string or tuple of strings. 
+          If a string, it will be compared to the name of the 
+          executing database dialect:: 
+ 
+            DDL('something').execute_if(dialect='postgresql') 
+ 
+          If a tuple, specifies multiple dialect names:: 
+ 
+            DDL('something').execute_if(dialect=('postgresql', 'mysql')) 
+ 
+        :param callable\_: A callable, which will be invoked with 
+          three positional arguments as well as optional keyword 
+          arguments: 
+ 
+            :ddl: 
+              This DDL element. 
+ 
+            :target: 
+              The :class:`_schema.Table` or :class:`_schema.MetaData` 
+              object which is the 
+              target of this event. May be None if the DDL is executed 
+              explicitly. 
+ 
+            :bind: 
+              The :class:`_engine.Connection` being used for DDL execution. 
+              May be None if this construct is being created inline within 
+              a table, in which case ``compiler`` will be present. 
+ 
+            :tables: 
+              Optional keyword argument - a list of Table objects which are to 
+              be created/ dropped within a MetaData.create_all() or drop_all() 
+              method call. 
+ 
+            :dialect: keyword argument, but always present - the 
+              :class:`.Dialect` involved in the operation. 
+ 
+            :compiler: keyword argument.  Will be ``None`` for an engine 
+              level DDL invocation, but will refer to a :class:`.DDLCompiler` 
+              if this DDL element is being created inline within a table. 
+ 
+            :state: 
+              Optional keyword argument - will be the ``state`` argument 
+              passed to this function. 
+ 
+            :checkfirst: 
+             Keyword argument, will be True if the 'checkfirst' flag was 
+             set during the call to ``create()``, ``create_all()``, 
+             ``drop()``, ``drop_all()``. 
+ 
+          If the callable returns a True value, the DDL statement will be 
+          executed. 
+ 
+        :param state: any value which will be passed to the callable\_ 
+          as the ``state`` keyword argument. 
+ 
+        .. seealso:: 
+ 
+            :meth:`.SchemaItem.ddl_if` 
+ 
+            :class:`.DDLEvents` 
+ 
+            :ref:`event_toplevel` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._ddl_if = DDLIf(dialect</span><span class="s5">, </span><span class="s1">callable_</span><span class="s5">, </span><span class="s1">state)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_should_execute(self</span><span class="s5">, </span><span class="s1">target</span><span class="s5">, </span><span class="s1">bind</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">if </span><span class="s1">self._ddl_if </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._ddl_if._should_execute(self</span><span class="s5">, </span><span class="s1">target</span><span class="s5">, </span><span class="s1">bind</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">_invoke_with(self</span><span class="s5">, </span><span class="s1">bind):</span>
+        <span class="s3">if </span><span class="s1">self._should_execute(self.target</span><span class="s5">, </span><span class="s1">bind):</span>
+            <span class="s3">return </span><span class="s1">bind.execute(self)</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">target</span><span class="s5">, </span><span class="s1">bind</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s2">&quot;&quot;&quot;Execute the DDL as a ddl_listener.&quot;&quot;&quot;</span>
+
+        <span class="s1">self.against(target)._invoke_with(bind)</span>
+
+    <span class="s3">def </span><span class="s1">_generate(self):</span>
+        <span class="s1">s = self.__class__.__new__(self.__class__)</span>
+        <span class="s1">s.__dict__ = self.__dict__.copy()</span>
+        <span class="s3">return </span><span class="s1">s</span>
+
+
+<span class="s1">DDLElement = ExecutableDDLElement</span>
+<span class="s4">&quot;&quot;&quot;:class:`.DDLElement` is renamed to :class:`.ExecutableDDLElement`.&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">DDL(ExecutableDDLElement):</span>
+    <span class="s2">&quot;&quot;&quot;A literal DDL statement. 
+ 
+    Specifies literal SQL DDL to be executed by the database.  DDL objects 
+    function as DDL event listeners, and can be subscribed to those events 
+    listed in :class:`.DDLEvents`, using either :class:`_schema.Table` or 
+    :class:`_schema.MetaData` objects as targets. 
+    Basic templating support allows 
+    a single DDL instance to handle repetitive tasks for multiple tables. 
+ 
+    Examples:: 
+ 
+      from sqlalchemy import event, DDL 
+ 
+      tbl = Table('users', metadata, Column('uid', Integer)) 
+      event.listen(tbl, 'before_create', DDL('DROP TRIGGER users_trigger')) 
+ 
+      spow = DDL('ALTER TABLE %(table)s SET secretpowers TRUE') 
+      event.listen(tbl, 'after_create', spow.execute_if(dialect='somedb')) 
+ 
+      drop_spow = DDL('ALTER TABLE users SET secretpowers FALSE') 
+      connection.execute(drop_spow) 
+ 
+    When operating on Table events, the following ``statement`` 
+    string substitutions are available:: 
+ 
+      %(table)s  - the Table name, with any required quoting applied 
+      %(schema)s - the schema name, with any required quoting applied 
+      %(fullname)s - the Table name including schema, quoted if needed 
+ 
+    The DDL's &quot;context&quot;, if any, will be combined with the standard 
+    substitutions noted above.  Keys present in the context will override 
+    the standard substitutions. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;ddl&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">context=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Create a DDL statement. 
+ 
+        :param statement: 
+          A string or unicode string to be executed.  Statements will be 
+          processed with Python's string formatting operator using 
+          a fixed set of string substitutions, as well as additional 
+          substitutions provided by the optional :paramref:`.DDL.context` 
+          parameter. 
+ 
+          A literal '%' in a statement must be escaped as '%%'. 
+ 
+          SQL bind parameters are not available in DDL statements. 
+ 
+        :param context: 
+          Optional dictionary, defaults to None.  These values will be 
+          available for use in string substitutions on the DDL statement. 
+ 
+        .. seealso:: 
+ 
+            :class:`.DDLEvents` 
+ 
+            :ref:`event_toplevel` 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if not </span><span class="s1">isinstance(statement</span><span class="s5">, </span><span class="s1">str):</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;Expected a string or unicode SQL statement, got '%r'&quot;</span>
+                <span class="s1">% statement</span>
+            <span class="s1">)</span>
+
+        <span class="s1">self.statement = statement</span>
+        <span class="s1">self.context = context </span><span class="s3">or </span><span class="s1">{}</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self):</span>
+        <span class="s1">parts = [repr(self.statement)]</span>
+        <span class="s3">if </span><span class="s1">self.context:</span>
+            <span class="s1">parts.append(</span><span class="s4">f&quot;context=</span><span class="s6">{</span><span class="s1">self.context</span><span class="s6">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s4">&quot;&lt;%s@%s; %s&gt;&quot; </span><span class="s1">% (</span>
+            <span class="s1">type(self).__name__</span><span class="s5">,</span>
+            <span class="s1">id(self)</span><span class="s5">,</span>
+            <span class="s4">&quot;, &quot;</span><span class="s1">.join(parts)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_CreateDropBase(ExecutableDDLElement):</span>
+    <span class="s2">&quot;&quot;&quot;Base class for DDL constructs that represent CREATE and DROP or 
+    equivalents. 
+ 
+    The common theme of _CreateDropBase is a single 
+    ``element`` attribute which refers to the element 
+    to be created or dropped. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">element</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.element = self.target = element</span>
+        <span class="s1">self._ddl_if = getattr(element</span><span class="s5">, </span><span class="s4">&quot;_ddl_if&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">stringify_dialect(self):</span>
+        <span class="s3">return </span><span class="s1">self.element.create_drop_stringify_dialect</span>
+
+    <span class="s3">def </span><span class="s1">_create_rule_disable(self</span><span class="s5">, </span><span class="s1">compiler):</span>
+        <span class="s2">&quot;&quot;&quot;Allow disable of _create_rule using a callable. 
+ 
+        Pass to _create_rule using 
+        util.portable_instancemethod(self._create_rule_disable) 
+        to retain serializability. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return False</span>
+
+
+<span class="s3">class </span><span class="s1">_CreateBase(_CreateDropBase):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element</span><span class="s5">, </span><span class="s1">if_not_exists=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s1">super().__init__(element)</span>
+        <span class="s1">self.if_not_exists = if_not_exists</span>
+
+
+<span class="s3">class </span><span class="s1">_DropBase(_CreateDropBase):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element</span><span class="s5">, </span><span class="s1">if_exists=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s1">super().__init__(element)</span>
+        <span class="s1">self.if_exists = if_exists</span>
+
+
+<span class="s3">class </span><span class="s1">CreateSchema(_CreateBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a CREATE SCHEMA statement. 
+ 
+    The argument here is the string name of the schema. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;create_schema&quot;</span>
+
+    <span class="s1">stringify_dialect = </span><span class="s4">&quot;default&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">name: str</span><span class="s5">,</span>
+        <span class="s1">if_not_exists: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Create a new :class:`.CreateSchema` construct.&quot;&quot;&quot;</span>
+
+        <span class="s1">super().__init__(element=name</span><span class="s5">, </span><span class="s1">if_not_exists=if_not_exists)</span>
+
+
+<span class="s3">class </span><span class="s1">DropSchema(_DropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a DROP SCHEMA statement. 
+ 
+    The argument here is the string name of the schema. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;drop_schema&quot;</span>
+
+    <span class="s1">stringify_dialect = </span><span class="s4">&quot;default&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">name: str</span><span class="s5">,</span>
+        <span class="s1">cascade: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">if_exists: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Create a new :class:`.DropSchema` construct.&quot;&quot;&quot;</span>
+
+        <span class="s1">super().__init__(element=name</span><span class="s5">, </span><span class="s1">if_exists=if_exists)</span>
+        <span class="s1">self.cascade = cascade</span>
+
+
+<span class="s3">class </span><span class="s1">CreateTable(_CreateBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a CREATE TABLE statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;create_table&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">element: Table</span><span class="s5">,</span>
+        <span class="s1">include_foreign_key_constraints: Optional[</span>
+            <span class="s1">typing_Sequence[ForeignKeyConstraint]</span>
+        <span class="s1">] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">if_not_exists: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Create a :class:`.CreateTable` construct. 
+ 
+        :param element: a :class:`_schema.Table` that's the subject 
+         of the CREATE 
+        :param on: See the description for 'on' in :class:`.DDL`. 
+        :param include_foreign_key_constraints: optional sequence of 
+         :class:`_schema.ForeignKeyConstraint` objects that will be included 
+         inline within the CREATE construct; if omitted, all foreign key 
+         constraints that do not specify use_alter=True are included. 
+ 
+        :param if_not_exists: if True, an IF NOT EXISTS operator will be 
+         applied to the construct. 
+ 
+         .. versionadded:: 1.4.0b2 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">super().__init__(element</span><span class="s5">, </span><span class="s1">if_not_exists=if_not_exists)</span>
+        <span class="s1">self.columns = [CreateColumn(column) </span><span class="s3">for </span><span class="s1">column </span><span class="s3">in </span><span class="s1">element.columns]</span>
+        <span class="s1">self.include_foreign_key_constraints = include_foreign_key_constraints</span>
+
+
+<span class="s3">class </span><span class="s1">_DropView(_DropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Semi-public 'DROP VIEW' construct. 
+ 
+    Used by the test suite for dialect-agnostic drops of views. 
+    This object will eventually be part of a public &quot;view&quot; API. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;drop_view&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">CreateConstraint(BaseDDLElement):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element: Constraint):</span>
+        <span class="s1">self.element = element</span>
+
+
+<span class="s3">class </span><span class="s1">CreateColumn(BaseDDLElement):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a :class:`_schema.Column` 
+    as rendered in a CREATE TABLE statement, 
+    via the :class:`.CreateTable` construct. 
+ 
+    This is provided to support custom column DDL within the generation 
+    of CREATE TABLE statements, by using the 
+    compiler extension documented in :ref:`sqlalchemy.ext.compiler_toplevel` 
+    to extend :class:`.CreateColumn`. 
+ 
+    Typical integration is to examine the incoming :class:`_schema.Column` 
+    object, and to redirect compilation if a particular flag or condition 
+    is found:: 
+ 
+        from sqlalchemy import schema 
+        from sqlalchemy.ext.compiler import compiles 
+ 
+        @compiles(schema.CreateColumn) 
+        def compile(element, compiler, **kw): 
+            column = element.element 
+ 
+            if &quot;special&quot; not in column.info: 
+                return compiler.visit_create_column(element, **kw) 
+ 
+            text = &quot;%s SPECIAL DIRECTIVE %s&quot; % ( 
+                    column.name, 
+                    compiler.type_compiler.process(column.type) 
+                ) 
+            default = compiler.get_column_default_string(column) 
+            if default is not None: 
+                text += &quot; DEFAULT &quot; + default 
+ 
+            if not column.nullable: 
+                text += &quot; NOT NULL&quot; 
+ 
+            if column.constraints: 
+                text += &quot; &quot;.join( 
+                            compiler.process(const) 
+                            for const in column.constraints) 
+            return text 
+ 
+    The above construct can be applied to a :class:`_schema.Table` 
+    as follows:: 
+ 
+        from sqlalchemy import Table, Metadata, Column, Integer, String 
+        from sqlalchemy import schema 
+ 
+        metadata = MetaData() 
+ 
+        table = Table('mytable', MetaData(), 
+                Column('x', Integer, info={&quot;special&quot;:True}, primary_key=True), 
+                Column('y', String(50)), 
+                Column('z', String(20), info={&quot;special&quot;:True}) 
+            ) 
+ 
+        metadata.create_all(conn) 
+ 
+    Above, the directives we've added to the :attr:`_schema.Column.info` 
+    collection 
+    will be detected by our custom compilation scheme:: 
+ 
+        CREATE TABLE mytable ( 
+                x SPECIAL DIRECTIVE INTEGER NOT NULL, 
+                y VARCHAR(50), 
+                z SPECIAL DIRECTIVE VARCHAR(20), 
+            PRIMARY KEY (x) 
+        ) 
+ 
+    The :class:`.CreateColumn` construct can also be used to skip certain 
+    columns when producing a ``CREATE TABLE``.  This is accomplished by 
+    creating a compilation rule that conditionally returns ``None``. 
+    This is essentially how to produce the same effect as using the 
+    ``system=True`` argument on :class:`_schema.Column`, which marks a column 
+    as an implicitly-present &quot;system&quot; column. 
+ 
+    For example, suppose we wish to produce a :class:`_schema.Table` 
+    which skips 
+    rendering of the PostgreSQL ``xmin`` column against the PostgreSQL 
+    backend, but on other backends does render it, in anticipation of a 
+    triggered rule.  A conditional compilation rule could skip this name only 
+    on PostgreSQL:: 
+ 
+        from sqlalchemy.schema import CreateColumn 
+ 
+        @compiles(CreateColumn, &quot;postgresql&quot;) 
+        def skip_xmin(element, compiler, **kw): 
+            if element.element.name == 'xmin': 
+                return None 
+            else: 
+                return compiler.visit_create_column(element, **kw) 
+ 
+ 
+        my_table = Table('mytable', metadata, 
+                    Column('id', Integer, primary_key=True), 
+                    Column('xmin', Integer) 
+                ) 
+ 
+    Above, a :class:`.CreateTable` construct will generate a ``CREATE TABLE`` 
+    which only includes the ``id`` column in the string; the ``xmin`` column 
+    will be omitted, but only against the PostgreSQL backend. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;create_column&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element):</span>
+        <span class="s1">self.element = element</span>
+
+
+<span class="s3">class </span><span class="s1">DropTable(_DropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a DROP TABLE statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;drop_table&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element: Table</span><span class="s5">, </span><span class="s1">if_exists: bool = </span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Create a :class:`.DropTable` construct. 
+ 
+        :param element: a :class:`_schema.Table` that's the subject 
+         of the DROP. 
+        :param on: See the description for 'on' in :class:`.DDL`. 
+        :param if_exists: if True, an IF EXISTS operator will be applied to the 
+         construct. 
+ 
+         .. versionadded:: 1.4.0b2 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">super().__init__(element</span><span class="s5">, </span><span class="s1">if_exists=if_exists)</span>
+
+
+<span class="s3">class </span><span class="s1">CreateSequence(_CreateBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a CREATE SEQUENCE statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;create_sequence&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element: Sequence</span><span class="s5">, </span><span class="s1">if_not_exists: bool = </span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s1">super().__init__(element</span><span class="s5">, </span><span class="s1">if_not_exists=if_not_exists)</span>
+
+
+<span class="s3">class </span><span class="s1">DropSequence(_DropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a DROP SEQUENCE statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;drop_sequence&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element: Sequence</span><span class="s5">, </span><span class="s1">if_exists: bool = </span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s1">super().__init__(element</span><span class="s5">, </span><span class="s1">if_exists=if_exists)</span>
+
+
+<span class="s3">class </span><span class="s1">CreateIndex(_CreateBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a CREATE INDEX statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;create_index&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element</span><span class="s5">, </span><span class="s1">if_not_exists=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Create a :class:`.Createindex` construct. 
+ 
+        :param element: a :class:`_schema.Index` that's the subject 
+         of the CREATE. 
+        :param if_not_exists: if True, an IF NOT EXISTS operator will be 
+         applied to the construct. 
+ 
+         .. versionadded:: 1.4.0b2 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">super().__init__(element</span><span class="s5">, </span><span class="s1">if_not_exists=if_not_exists)</span>
+
+
+<span class="s3">class </span><span class="s1">DropIndex(_DropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a DROP INDEX statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;drop_index&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element</span><span class="s5">, </span><span class="s1">if_exists=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Create a :class:`.DropIndex` construct. 
+ 
+        :param element: a :class:`_schema.Index` that's the subject 
+         of the DROP. 
+        :param if_exists: if True, an IF EXISTS operator will be applied to the 
+         construct. 
+ 
+         .. versionadded:: 1.4.0b2 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">super().__init__(element</span><span class="s5">, </span><span class="s1">if_exists=if_exists)</span>
+
+
+<span class="s3">class </span><span class="s1">AddConstraint(_CreateBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent an ALTER TABLE ADD CONSTRAINT statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;add_constraint&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element):</span>
+        <span class="s1">super().__init__(element)</span>
+        <span class="s1">element._create_rule = util.portable_instancemethod(</span>
+            <span class="s1">self._create_rule_disable</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">DropConstraint(_DropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent an ALTER TABLE DROP CONSTRAINT statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;drop_constraint&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">element</span><span class="s5">, </span><span class="s1">cascade=</span><span class="s3">False</span><span class="s5">, </span><span class="s1">if_exists=</span><span class="s3">False</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s1">self.cascade = cascade</span>
+        <span class="s1">super().__init__(element</span><span class="s5">, </span><span class="s1">if_exists=if_exists</span><span class="s5">, </span><span class="s1">**kw)</span>
+        <span class="s1">element._create_rule = util.portable_instancemethod(</span>
+            <span class="s1">self._create_rule_disable</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">SetTableComment(_CreateDropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a COMMENT ON TABLE IS statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;set_table_comment&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">DropTableComment(_CreateDropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a COMMENT ON TABLE '' statement. 
+ 
+    Note this varies a lot across database backends. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;drop_table_comment&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">SetColumnComment(_CreateDropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a COMMENT ON COLUMN IS statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;set_column_comment&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">DropColumnComment(_CreateDropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a COMMENT ON COLUMN IS NULL statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;drop_column_comment&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">SetConstraintComment(_CreateDropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a COMMENT ON CONSTRAINT IS statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;set_constraint_comment&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">DropConstraintComment(_CreateDropBase):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a COMMENT ON CONSTRAINT IS NULL statement.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s4">&quot;drop_constraint_comment&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">InvokeDDLBase(SchemaVisitor):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s1">self.connection = connection</span>
+
+    <span class="s1">@contextlib.contextmanager</span>
+    <span class="s3">def </span><span class="s1">with_ddl_events(self</span><span class="s5">, </span><span class="s1">target</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s2">&quot;&quot;&quot;helper context manager that will apply appropriate DDL events 
+        to a CREATE or DROP operation.&quot;&quot;&quot;</span>
+
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s3">class </span><span class="s1">InvokeCreateDDLBase(InvokeDDLBase):</span>
+    <span class="s1">@contextlib.contextmanager</span>
+    <span class="s3">def </span><span class="s1">with_ddl_events(self</span><span class="s5">, </span><span class="s1">target</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s2">&quot;&quot;&quot;helper context manager that will apply appropriate DDL events 
+        to a CREATE or DROP operation.&quot;&quot;&quot;</span>
+
+        <span class="s1">target.dispatch.before_create(</span>
+            <span class="s1">target</span><span class="s5">, </span><span class="s1">self.connection</span><span class="s5">, </span><span class="s1">_ddl_runner=self</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+        <span class="s3">yield</span>
+        <span class="s1">target.dispatch.after_create(</span>
+            <span class="s1">target</span><span class="s5">, </span><span class="s1">self.connection</span><span class="s5">, </span><span class="s1">_ddl_runner=self</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">InvokeDropDDLBase(InvokeDDLBase):</span>
+    <span class="s1">@contextlib.contextmanager</span>
+    <span class="s3">def </span><span class="s1">with_ddl_events(self</span><span class="s5">, </span><span class="s1">target</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s2">&quot;&quot;&quot;helper context manager that will apply appropriate DDL events 
+        to a CREATE or DROP operation.&quot;&quot;&quot;</span>
+
+        <span class="s1">target.dispatch.before_drop(</span>
+            <span class="s1">target</span><span class="s5">, </span><span class="s1">self.connection</span><span class="s5">, </span><span class="s1">_ddl_runner=self</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+        <span class="s3">yield</span>
+        <span class="s1">target.dispatch.after_drop(</span>
+            <span class="s1">target</span><span class="s5">, </span><span class="s1">self.connection</span><span class="s5">, </span><span class="s1">_ddl_runner=self</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">SchemaGenerator(InvokeCreateDDLBase):</span>
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">dialect</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">checkfirst=</span><span class="s3">False</span><span class="s5">, </span><span class="s1">tables=</span><span class="s3">None</span><span class="s5">, </span><span class="s1">**kwargs</span>
+    <span class="s1">):</span>
+        <span class="s1">super().__init__(connection</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">self.checkfirst = checkfirst</span>
+        <span class="s1">self.tables = tables</span>
+        <span class="s1">self.preparer = dialect.identifier_preparer</span>
+        <span class="s1">self.dialect = dialect</span>
+        <span class="s1">self.memo = {}</span>
+
+    <span class="s3">def </span><span class="s1">_can_create_table(self</span><span class="s5">, </span><span class="s1">table):</span>
+        <span class="s1">self.dialect.validate_identifier(table.name)</span>
+        <span class="s1">effective_schema = self.connection.schema_for_object(table)</span>
+        <span class="s3">if </span><span class="s1">effective_schema:</span>
+            <span class="s1">self.dialect.validate_identifier(effective_schema)</span>
+        <span class="s3">return not </span><span class="s1">self.checkfirst </span><span class="s3">or not </span><span class="s1">self.dialect.has_table(</span>
+            <span class="s1">self.connection</span><span class="s5">, </span><span class="s1">table.name</span><span class="s5">, </span><span class="s1">schema=effective_schema</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_can_create_index(self</span><span class="s5">, </span><span class="s1">index):</span>
+        <span class="s1">effective_schema = self.connection.schema_for_object(index.table)</span>
+        <span class="s3">if </span><span class="s1">effective_schema:</span>
+            <span class="s1">self.dialect.validate_identifier(effective_schema)</span>
+        <span class="s3">return not </span><span class="s1">self.checkfirst </span><span class="s3">or not </span><span class="s1">self.dialect.has_index(</span>
+            <span class="s1">self.connection</span><span class="s5">,</span>
+            <span class="s1">index.table.name</span><span class="s5">,</span>
+            <span class="s1">index.name</span><span class="s5">,</span>
+            <span class="s1">schema=effective_schema</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_can_create_sequence(self</span><span class="s5">, </span><span class="s1">sequence):</span>
+        <span class="s1">effective_schema = self.connection.schema_for_object(sequence)</span>
+
+        <span class="s3">return </span><span class="s1">self.dialect.supports_sequences </span><span class="s3">and </span><span class="s1">(</span>
+            <span class="s1">(</span><span class="s3">not </span><span class="s1">self.dialect.sequences_optional </span><span class="s3">or not </span><span class="s1">sequence.optional)</span>
+            <span class="s3">and </span><span class="s1">(</span>
+                <span class="s3">not </span><span class="s1">self.checkfirst</span>
+                <span class="s3">or not </span><span class="s1">self.dialect.has_sequence(</span>
+                    <span class="s1">self.connection</span><span class="s5">, </span><span class="s1">sequence.name</span><span class="s5">, </span><span class="s1">schema=effective_schema</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">visit_metadata(self</span><span class="s5">, </span><span class="s1">metadata):</span>
+        <span class="s3">if </span><span class="s1">self.tables </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">tables = self.tables</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">tables = list(metadata.tables.values())</span>
+
+        <span class="s1">collection = sort_tables_and_constraints(</span>
+            <span class="s1">[t </span><span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">tables </span><span class="s3">if </span><span class="s1">self._can_create_table(t)]</span>
+        <span class="s1">)</span>
+
+        <span class="s1">seq_coll = [</span>
+            <span class="s1">s</span>
+            <span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">metadata._sequences.values()</span>
+            <span class="s3">if </span><span class="s1">s.column </span><span class="s3">is None and </span><span class="s1">self._can_create_sequence(s)</span>
+        <span class="s1">]</span>
+
+        <span class="s1">event_collection = [t </span><span class="s3">for </span><span class="s1">(t</span><span class="s5">, </span><span class="s1">fks) </span><span class="s3">in </span><span class="s1">collection </span><span class="s3">if </span><span class="s1">t </span><span class="s3">is not None</span><span class="s1">]</span>
+
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(</span>
+            <span class="s1">metadata</span><span class="s5">,</span>
+            <span class="s1">tables=event_collection</span><span class="s5">,</span>
+            <span class="s1">checkfirst=self.checkfirst</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s3">for </span><span class="s1">seq </span><span class="s3">in </span><span class="s1">seq_coll:</span>
+                <span class="s1">self.traverse_single(seq</span><span class="s5">, </span><span class="s1">create_ok=</span><span class="s3">True</span><span class="s1">)</span>
+
+            <span class="s3">for </span><span class="s1">table</span><span class="s5">, </span><span class="s1">fkcs </span><span class="s3">in </span><span class="s1">collection:</span>
+                <span class="s3">if </span><span class="s1">table </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s1">self.traverse_single(</span>
+                        <span class="s1">table</span><span class="s5">,</span>
+                        <span class="s1">create_ok=</span><span class="s3">True</span><span class="s5">,</span>
+                        <span class="s1">include_foreign_key_constraints=fkcs</span><span class="s5">,</span>
+                        <span class="s1">_is_metadata_operation=</span><span class="s3">True</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">for </span><span class="s1">fkc </span><span class="s3">in </span><span class="s1">fkcs:</span>
+                        <span class="s1">self.traverse_single(fkc)</span>
+
+    <span class="s3">def </span><span class="s1">visit_table(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">table</span><span class="s5">,</span>
+        <span class="s1">create_ok=</span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">include_foreign_key_constraints=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">_is_metadata_operation=</span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">create_ok </span><span class="s3">and not </span><span class="s1">self._can_create_table(table):</span>
+            <span class="s3">return</span>
+
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(</span>
+            <span class="s1">table</span><span class="s5">,</span>
+            <span class="s1">checkfirst=self.checkfirst</span><span class="s5">,</span>
+            <span class="s1">_is_metadata_operation=_is_metadata_operation</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s3">for </span><span class="s1">column </span><span class="s3">in </span><span class="s1">table.columns:</span>
+                <span class="s3">if </span><span class="s1">column.default </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s1">self.traverse_single(column.default)</span>
+
+            <span class="s3">if not </span><span class="s1">self.dialect.supports_alter:</span>
+                <span class="s0"># e.g., don't omit any foreign key constraints</span>
+                <span class="s1">include_foreign_key_constraints = </span><span class="s3">None</span>
+
+            <span class="s1">CreateTable(</span>
+                <span class="s1">table</span><span class="s5">,</span>
+                <span class="s1">include_foreign_key_constraints=(</span>
+                    <span class="s1">include_foreign_key_constraints</span>
+                <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)._invoke_with(self.connection)</span>
+
+            <span class="s3">if </span><span class="s1">hasattr(table</span><span class="s5">, </span><span class="s4">&quot;indexes&quot;</span><span class="s1">):</span>
+                <span class="s3">for </span><span class="s1">index </span><span class="s3">in </span><span class="s1">table.indexes:</span>
+                    <span class="s1">self.traverse_single(index</span><span class="s5">, </span><span class="s1">create_ok=</span><span class="s3">True</span><span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">self.dialect.supports_comments</span>
+                <span class="s3">and not </span><span class="s1">self.dialect.inline_comments</span>
+            <span class="s1">):</span>
+                <span class="s3">if </span><span class="s1">table.comment </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s1">SetTableComment(table)._invoke_with(self.connection)</span>
+
+                <span class="s3">for </span><span class="s1">column </span><span class="s3">in </span><span class="s1">table.columns:</span>
+                    <span class="s3">if </span><span class="s1">column.comment </span><span class="s3">is not None</span><span class="s1">:</span>
+                        <span class="s1">SetColumnComment(column)._invoke_with(self.connection)</span>
+
+                <span class="s3">if </span><span class="s1">self.dialect.supports_constraint_comments:</span>
+                    <span class="s3">for </span><span class="s1">constraint </span><span class="s3">in </span><span class="s1">table.constraints:</span>
+                        <span class="s3">if </span><span class="s1">constraint.comment </span><span class="s3">is not None</span><span class="s1">:</span>
+                            <span class="s1">self.connection.execute(</span>
+                                <span class="s1">SetConstraintComment(constraint)</span>
+                            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">visit_foreign_key_constraint(self</span><span class="s5">, </span><span class="s1">constraint):</span>
+        <span class="s3">if not </span><span class="s1">self.dialect.supports_alter:</span>
+            <span class="s3">return</span>
+
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(constraint):</span>
+            <span class="s1">AddConstraint(constraint)._invoke_with(self.connection)</span>
+
+    <span class="s3">def </span><span class="s1">visit_sequence(self</span><span class="s5">, </span><span class="s1">sequence</span><span class="s5">, </span><span class="s1">create_ok=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">create_ok </span><span class="s3">and not </span><span class="s1">self._can_create_sequence(sequence):</span>
+            <span class="s3">return</span>
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(sequence):</span>
+            <span class="s1">CreateSequence(sequence)._invoke_with(self.connection)</span>
+
+    <span class="s3">def </span><span class="s1">visit_index(self</span><span class="s5">, </span><span class="s1">index</span><span class="s5">, </span><span class="s1">create_ok=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">create_ok </span><span class="s3">and not </span><span class="s1">self._can_create_index(index):</span>
+            <span class="s3">return</span>
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(index):</span>
+            <span class="s1">CreateIndex(index)._invoke_with(self.connection)</span>
+
+
+<span class="s3">class </span><span class="s1">SchemaDropper(InvokeDropDDLBase):</span>
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">dialect</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">checkfirst=</span><span class="s3">False</span><span class="s5">, </span><span class="s1">tables=</span><span class="s3">None</span><span class="s5">, </span><span class="s1">**kwargs</span>
+    <span class="s1">):</span>
+        <span class="s1">super().__init__(connection</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">self.checkfirst = checkfirst</span>
+        <span class="s1">self.tables = tables</span>
+        <span class="s1">self.preparer = dialect.identifier_preparer</span>
+        <span class="s1">self.dialect = dialect</span>
+        <span class="s1">self.memo = {}</span>
+
+    <span class="s3">def </span><span class="s1">visit_metadata(self</span><span class="s5">, </span><span class="s1">metadata):</span>
+        <span class="s3">if </span><span class="s1">self.tables </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">tables = self.tables</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">tables = list(metadata.tables.values())</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">unsorted_tables = [t </span><span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">tables </span><span class="s3">if </span><span class="s1">self._can_drop_table(t)]</span>
+            <span class="s1">collection = list(</span>
+                <span class="s1">reversed(</span>
+                    <span class="s1">sort_tables_and_constraints(</span>
+                        <span class="s1">unsorted_tables</span><span class="s5">,</span>
+                        <span class="s1">filter_fn=</span><span class="s3">lambda </span><span class="s1">constraint: (</span>
+                            <span class="s3">False</span>
+                            <span class="s3">if not </span><span class="s1">self.dialect.supports_alter</span>
+                            <span class="s3">or </span><span class="s1">constraint.name </span><span class="s3">is None</span>
+                            <span class="s3">else None</span>
+                        <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">exc.CircularDependencyError </span><span class="s3">as </span><span class="s1">err2:</span>
+            <span class="s3">if not </span><span class="s1">self.dialect.supports_alter:</span>
+                <span class="s1">util.warn(</span>
+                    <span class="s4">&quot;Can't sort tables for DROP; an &quot;</span>
+                    <span class="s4">&quot;unresolvable foreign key &quot;</span>
+                    <span class="s4">&quot;dependency exists between tables: %s; and backend does &quot;</span>
+                    <span class="s4">&quot;not support ALTER.  To restore at least a partial sort, &quot;</span>
+                    <span class="s4">&quot;apply use_alter=True to ForeignKey and &quot;</span>
+                    <span class="s4">&quot;ForeignKeyConstraint &quot;</span>
+                    <span class="s4">&quot;objects involved in the cycle to mark these as known &quot;</span>
+                    <span class="s4">&quot;cycles that will be ignored.&quot;</span>
+                    <span class="s1">% (</span><span class="s4">&quot;, &quot;</span><span class="s1">.join(sorted([t.fullname </span><span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">err2.cycles])))</span>
+                <span class="s1">)</span>
+                <span class="s1">collection = [(t</span><span class="s5">, </span><span class="s1">()) </span><span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">unsorted_tables]</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">exc.CircularDependencyError(</span>
+                    <span class="s1">err2.args[</span><span class="s7">0</span><span class="s1">]</span><span class="s5">,</span>
+                    <span class="s1">err2.cycles</span><span class="s5">,</span>
+                    <span class="s1">err2.edges</span><span class="s5">,</span>
+                    <span class="s1">msg=</span><span class="s4">&quot;Can't sort tables for DROP; an &quot;</span>
+                    <span class="s4">&quot;unresolvable foreign key &quot;</span>
+                    <span class="s4">&quot;dependency exists between tables: %s.  Please ensure &quot;</span>
+                    <span class="s4">&quot;that the ForeignKey and ForeignKeyConstraint objects &quot;</span>
+                    <span class="s4">&quot;involved in the cycle have &quot;</span>
+                    <span class="s4">&quot;names so that they can be dropped using &quot;</span>
+                    <span class="s4">&quot;DROP CONSTRAINT.&quot;</span>
+                    <span class="s1">% (</span><span class="s4">&quot;, &quot;</span><span class="s1">.join(sorted([t.fullname </span><span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">err2.cycles])))</span><span class="s5">,</span>
+                <span class="s1">) </span><span class="s3">from </span><span class="s1">err2</span>
+
+        <span class="s1">seq_coll = [</span>
+            <span class="s1">s</span>
+            <span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">metadata._sequences.values()</span>
+            <span class="s3">if </span><span class="s1">self._can_drop_sequence(s)</span>
+        <span class="s1">]</span>
+
+        <span class="s1">event_collection = [t </span><span class="s3">for </span><span class="s1">(t</span><span class="s5">, </span><span class="s1">fks) </span><span class="s3">in </span><span class="s1">collection </span><span class="s3">if </span><span class="s1">t </span><span class="s3">is not None</span><span class="s1">]</span>
+
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(</span>
+            <span class="s1">metadata</span><span class="s5">,</span>
+            <span class="s1">tables=event_collection</span><span class="s5">,</span>
+            <span class="s1">checkfirst=self.checkfirst</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s3">for </span><span class="s1">table</span><span class="s5">, </span><span class="s1">fkcs </span><span class="s3">in </span><span class="s1">collection:</span>
+                <span class="s3">if </span><span class="s1">table </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s1">self.traverse_single(</span>
+                        <span class="s1">table</span><span class="s5">,</span>
+                        <span class="s1">drop_ok=</span><span class="s3">True</span><span class="s5">,</span>
+                        <span class="s1">_is_metadata_operation=</span><span class="s3">True</span><span class="s5">,</span>
+                        <span class="s1">_ignore_sequences=seq_coll</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">for </span><span class="s1">fkc </span><span class="s3">in </span><span class="s1">fkcs:</span>
+                        <span class="s1">self.traverse_single(fkc)</span>
+
+            <span class="s3">for </span><span class="s1">seq </span><span class="s3">in </span><span class="s1">seq_coll:</span>
+                <span class="s1">self.traverse_single(seq</span><span class="s5">, </span><span class="s1">drop_ok=seq.column </span><span class="s3">is None</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_can_drop_table(self</span><span class="s5">, </span><span class="s1">table):</span>
+        <span class="s1">self.dialect.validate_identifier(table.name)</span>
+        <span class="s1">effective_schema = self.connection.schema_for_object(table)</span>
+        <span class="s3">if </span><span class="s1">effective_schema:</span>
+            <span class="s1">self.dialect.validate_identifier(effective_schema)</span>
+        <span class="s3">return not </span><span class="s1">self.checkfirst </span><span class="s3">or </span><span class="s1">self.dialect.has_table(</span>
+            <span class="s1">self.connection</span><span class="s5">, </span><span class="s1">table.name</span><span class="s5">, </span><span class="s1">schema=effective_schema</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_can_drop_index(self</span><span class="s5">, </span><span class="s1">index):</span>
+        <span class="s1">effective_schema = self.connection.schema_for_object(index.table)</span>
+        <span class="s3">if </span><span class="s1">effective_schema:</span>
+            <span class="s1">self.dialect.validate_identifier(effective_schema)</span>
+        <span class="s3">return not </span><span class="s1">self.checkfirst </span><span class="s3">or </span><span class="s1">self.dialect.has_index(</span>
+            <span class="s1">self.connection</span><span class="s5">,</span>
+            <span class="s1">index.table.name</span><span class="s5">,</span>
+            <span class="s1">index.name</span><span class="s5">,</span>
+            <span class="s1">schema=effective_schema</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_can_drop_sequence(self</span><span class="s5">, </span><span class="s1">sequence):</span>
+        <span class="s1">effective_schema = self.connection.schema_for_object(sequence)</span>
+        <span class="s3">return </span><span class="s1">self.dialect.supports_sequences </span><span class="s3">and </span><span class="s1">(</span>
+            <span class="s1">(</span><span class="s3">not </span><span class="s1">self.dialect.sequences_optional </span><span class="s3">or not </span><span class="s1">sequence.optional)</span>
+            <span class="s3">and </span><span class="s1">(</span>
+                <span class="s3">not </span><span class="s1">self.checkfirst</span>
+                <span class="s3">or </span><span class="s1">self.dialect.has_sequence(</span>
+                    <span class="s1">self.connection</span><span class="s5">, </span><span class="s1">sequence.name</span><span class="s5">, </span><span class="s1">schema=effective_schema</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">visit_index(self</span><span class="s5">, </span><span class="s1">index</span><span class="s5">, </span><span class="s1">drop_ok=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">drop_ok </span><span class="s3">and not </span><span class="s1">self._can_drop_index(index):</span>
+            <span class="s3">return</span>
+
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(index):</span>
+            <span class="s1">DropIndex(index)(index</span><span class="s5">, </span><span class="s1">self.connection)</span>
+
+    <span class="s3">def </span><span class="s1">visit_table(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">table</span><span class="s5">,</span>
+        <span class="s1">drop_ok=</span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">_is_metadata_operation=</span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">_ignore_sequences=()</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">drop_ok </span><span class="s3">and not </span><span class="s1">self._can_drop_table(table):</span>
+            <span class="s3">return</span>
+
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(</span>
+            <span class="s1">table</span><span class="s5">,</span>
+            <span class="s1">checkfirst=self.checkfirst</span><span class="s5">,</span>
+            <span class="s1">_is_metadata_operation=_is_metadata_operation</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s1">DropTable(table)._invoke_with(self.connection)</span>
+
+            <span class="s0"># traverse client side defaults which may refer to server-side</span>
+            <span class="s0"># sequences. noting that some of these client side defaults may</span>
+            <span class="s0"># also be set up as server side defaults</span>
+            <span class="s0"># (see https://docs.sqlalchemy.org/en/</span>
+            <span class="s0"># latest/core/defaults.html</span>
+            <span class="s0"># #associating-a-sequence-as-the-server-side-</span>
+            <span class="s0"># default), so have to be dropped after the table is dropped.</span>
+            <span class="s3">for </span><span class="s1">column </span><span class="s3">in </span><span class="s1">table.columns:</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s1">column.default </span><span class="s3">is not None</span>
+                    <span class="s3">and </span><span class="s1">column.default </span><span class="s3">not in </span><span class="s1">_ignore_sequences</span>
+                <span class="s1">):</span>
+                    <span class="s1">self.traverse_single(column.default)</span>
+
+    <span class="s3">def </span><span class="s1">visit_foreign_key_constraint(self</span><span class="s5">, </span><span class="s1">constraint):</span>
+        <span class="s3">if not </span><span class="s1">self.dialect.supports_alter:</span>
+            <span class="s3">return</span>
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(constraint):</span>
+            <span class="s1">DropConstraint(constraint)._invoke_with(self.connection)</span>
+
+    <span class="s3">def </span><span class="s1">visit_sequence(self</span><span class="s5">, </span><span class="s1">sequence</span><span class="s5">, </span><span class="s1">drop_ok=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">drop_ok </span><span class="s3">and not </span><span class="s1">self._can_drop_sequence(sequence):</span>
+            <span class="s3">return</span>
+        <span class="s3">with </span><span class="s1">self.with_ddl_events(sequence):</span>
+            <span class="s1">DropSequence(sequence)._invoke_with(self.connection)</span>
+
+
+<span class="s3">def </span><span class="s1">sort_tables(</span>
+    <span class="s1">tables: Iterable[TableClause]</span><span class="s5">,</span>
+    <span class="s1">skip_fn: Optional[Callable[[ForeignKeyConstraint]</span><span class="s5">, </span><span class="s1">bool]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">extra_dependencies: Optional[</span>
+        <span class="s1">typing_Sequence[Tuple[TableClause</span><span class="s5">, </span><span class="s1">TableClause]]</span>
+    <span class="s1">] = </span><span class="s3">None</span><span class="s5">,</span>
+<span class="s1">) -&gt; List[Table]:</span>
+    <span class="s2">&quot;&quot;&quot;Sort a collection of :class:`_schema.Table` objects based on 
+    dependency. 
+ 
+    This is a dependency-ordered sort which will emit :class:`_schema.Table` 
+    objects such that they will follow their dependent :class:`_schema.Table` 
+    objects. 
+    Tables are dependent on another based on the presence of 
+    :class:`_schema.ForeignKeyConstraint` 
+    objects as well as explicit dependencies 
+    added by :meth:`_schema.Table.add_is_dependent_on`. 
+ 
+    .. warning:: 
+ 
+        The :func:`._schema.sort_tables` function cannot by itself 
+        accommodate automatic resolution of dependency cycles between 
+        tables, which are usually caused by mutually dependent foreign key 
+        constraints. When these cycles are detected, the foreign keys 
+        of these tables are omitted from consideration in the sort. 
+        A warning is emitted when this condition occurs, which will be an 
+        exception raise in a future release.   Tables which are not part 
+        of the cycle will still be returned in dependency order. 
+ 
+        To resolve these cycles, the 
+        :paramref:`_schema.ForeignKeyConstraint.use_alter` parameter may be 
+        applied to those constraints which create a cycle.  Alternatively, 
+        the :func:`_schema.sort_tables_and_constraints` function will 
+        automatically return foreign key constraints in a separate 
+        collection when cycles are detected so that they may be applied 
+        to a schema separately. 
+ 
+        .. versionchanged:: 1.3.17 - a warning is emitted when 
+           :func:`_schema.sort_tables` cannot perform a proper sort due to 
+           cyclical dependencies.  This will be an exception in a future 
+           release.  Additionally, the sort will continue to return 
+           other tables not involved in the cycle in dependency order 
+           which was not the case previously. 
+ 
+    :param tables: a sequence of :class:`_schema.Table` objects. 
+ 
+    :param skip_fn: optional callable which will be passed a 
+     :class:`_schema.ForeignKeyConstraint` object; if it returns True, this 
+     constraint will not be considered as a dependency.  Note this is 
+     **different** from the same parameter in 
+     :func:`.sort_tables_and_constraints`, which is 
+     instead passed the owning :class:`_schema.ForeignKeyConstraint` object. 
+ 
+    :param extra_dependencies: a sequence of 2-tuples of tables which will 
+     also be considered as dependent on each other. 
+ 
+    .. seealso:: 
+ 
+        :func:`.sort_tables_and_constraints` 
+ 
+        :attr:`_schema.MetaData.sorted_tables` - uses this function to sort 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">skip_fn </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">fixed_skip_fn = skip_fn</span>
+
+        <span class="s3">def </span><span class="s1">_skip_fn(fkc):</span>
+            <span class="s3">for </span><span class="s1">fk </span><span class="s3">in </span><span class="s1">fkc.elements:</span>
+                <span class="s3">if </span><span class="s1">fixed_skip_fn(fk):</span>
+                    <span class="s3">return True</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">_skip_fn = </span><span class="s3">None  </span><span class="s0"># type: ignore</span>
+
+    <span class="s3">return </span><span class="s1">[</span>
+        <span class="s1">t</span>
+        <span class="s3">for </span><span class="s1">(t</span><span class="s5">, </span><span class="s1">fkcs) </span><span class="s3">in </span><span class="s1">sort_tables_and_constraints(</span>
+            <span class="s1">tables</span><span class="s5">,</span>
+            <span class="s1">filter_fn=_skip_fn</span><span class="s5">,</span>
+            <span class="s1">extra_dependencies=extra_dependencies</span><span class="s5">,</span>
+            <span class="s1">_warn_for_cycles=</span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">t </span><span class="s3">is not None</span>
+    <span class="s1">]</span>
+
+
+<span class="s3">def </span><span class="s1">sort_tables_and_constraints(</span>
+    <span class="s1">tables</span><span class="s5">, </span><span class="s1">filter_fn=</span><span class="s3">None</span><span class="s5">, </span><span class="s1">extra_dependencies=</span><span class="s3">None</span><span class="s5">, </span><span class="s1">_warn_for_cycles=</span><span class="s3">False</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Sort a collection of :class:`_schema.Table`  / 
+    :class:`_schema.ForeignKeyConstraint` 
+    objects. 
+ 
+    This is a dependency-ordered sort which will emit tuples of 
+    ``(Table, [ForeignKeyConstraint, ...])`` such that each 
+    :class:`_schema.Table` follows its dependent :class:`_schema.Table` 
+    objects. 
+    Remaining :class:`_schema.ForeignKeyConstraint` 
+    objects that are separate due to 
+    dependency rules not satisfied by the sort are emitted afterwards 
+    as ``(None, [ForeignKeyConstraint ...])``. 
+ 
+    Tables are dependent on another based on the presence of 
+    :class:`_schema.ForeignKeyConstraint` objects, explicit dependencies 
+    added by :meth:`_schema.Table.add_is_dependent_on`, 
+    as well as dependencies 
+    stated here using the :paramref:`~.sort_tables_and_constraints.skip_fn` 
+    and/or :paramref:`~.sort_tables_and_constraints.extra_dependencies` 
+    parameters. 
+ 
+    :param tables: a sequence of :class:`_schema.Table` objects. 
+ 
+    :param filter_fn: optional callable which will be passed a 
+     :class:`_schema.ForeignKeyConstraint` object, 
+     and returns a value based on 
+     whether this constraint should definitely be included or excluded as 
+     an inline constraint, or neither.   If it returns False, the constraint 
+     will definitely be included as a dependency that cannot be subject 
+     to ALTER; if True, it will **only** be included as an ALTER result at 
+     the end.   Returning None means the constraint is included in the 
+     table-based result unless it is detected as part of a dependency cycle. 
+ 
+    :param extra_dependencies: a sequence of 2-tuples of tables which will 
+     also be considered as dependent on each other. 
+ 
+    .. seealso:: 
+ 
+        :func:`.sort_tables` 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">fixed_dependencies = set()</span>
+    <span class="s1">mutable_dependencies = set()</span>
+
+    <span class="s3">if </span><span class="s1">extra_dependencies </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">fixed_dependencies.update(extra_dependencies)</span>
+
+    <span class="s1">remaining_fkcs = set()</span>
+    <span class="s3">for </span><span class="s1">table </span><span class="s3">in </span><span class="s1">tables:</span>
+        <span class="s3">for </span><span class="s1">fkc </span><span class="s3">in </span><span class="s1">table.foreign_key_constraints:</span>
+            <span class="s3">if </span><span class="s1">fkc.use_alter </span><span class="s3">is True</span><span class="s1">:</span>
+                <span class="s1">remaining_fkcs.add(fkc)</span>
+                <span class="s3">continue</span>
+
+            <span class="s3">if </span><span class="s1">filter_fn:</span>
+                <span class="s1">filtered = filter_fn(fkc)</span>
+
+                <span class="s3">if </span><span class="s1">filtered </span><span class="s3">is True</span><span class="s1">:</span>
+                    <span class="s1">remaining_fkcs.add(fkc)</span>
+                    <span class="s3">continue</span>
+
+            <span class="s1">dependent_on = fkc.referred_table</span>
+            <span class="s3">if </span><span class="s1">dependent_on </span><span class="s3">is not </span><span class="s1">table:</span>
+                <span class="s1">mutable_dependencies.add((dependent_on</span><span class="s5">, </span><span class="s1">table))</span>
+
+        <span class="s1">fixed_dependencies.update(</span>
+            <span class="s1">(parent</span><span class="s5">, </span><span class="s1">table) </span><span class="s3">for </span><span class="s1">parent </span><span class="s3">in </span><span class="s1">table._extra_dependencies</span>
+        <span class="s1">)</span>
+
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">candidate_sort = list(</span>
+            <span class="s1">topological.sort(</span>
+                <span class="s1">fixed_dependencies.union(mutable_dependencies)</span><span class="s5">,</span>
+                <span class="s1">tables</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+    <span class="s3">except </span><span class="s1">exc.CircularDependencyError </span><span class="s3">as </span><span class="s1">err:</span>
+        <span class="s3">if </span><span class="s1">_warn_for_cycles:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">&quot;Cannot correctly sort tables; there are unresolvable cycles &quot;</span>
+                <span class="s4">'between tables &quot;%s&quot;, which is usually caused by mutually '</span>
+                <span class="s4">&quot;dependent foreign key constraints.  Foreign key constraints &quot;</span>
+                <span class="s4">&quot;involving these tables will not be considered; this warning &quot;</span>
+                <span class="s4">&quot;may raise an error in a future release.&quot;</span>
+                <span class="s1">% (</span><span class="s4">&quot;, &quot;</span><span class="s1">.join(sorted(t.fullname </span><span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">err.cycles))</span><span class="s5">,</span><span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s3">for </span><span class="s1">edge </span><span class="s3">in </span><span class="s1">err.edges:</span>
+            <span class="s3">if </span><span class="s1">edge </span><span class="s3">in </span><span class="s1">mutable_dependencies:</span>
+                <span class="s1">table = edge[</span><span class="s7">1</span><span class="s1">]</span>
+                <span class="s3">if </span><span class="s1">table </span><span class="s3">not in </span><span class="s1">err.cycles:</span>
+                    <span class="s3">continue</span>
+                <span class="s1">can_remove = [</span>
+                    <span class="s1">fkc</span>
+                    <span class="s3">for </span><span class="s1">fkc </span><span class="s3">in </span><span class="s1">table.foreign_key_constraints</span>
+                    <span class="s3">if </span><span class="s1">filter_fn </span><span class="s3">is None or </span><span class="s1">filter_fn(fkc) </span><span class="s3">is not False</span>
+                <span class="s1">]</span>
+                <span class="s1">remaining_fkcs.update(can_remove)</span>
+                <span class="s3">for </span><span class="s1">fkc </span><span class="s3">in </span><span class="s1">can_remove:</span>
+                    <span class="s1">dependent_on = fkc.referred_table</span>
+                    <span class="s3">if </span><span class="s1">dependent_on </span><span class="s3">is not </span><span class="s1">table:</span>
+                        <span class="s1">mutable_dependencies.discard((dependent_on</span><span class="s5">, </span><span class="s1">table))</span>
+        <span class="s1">candidate_sort = list(</span>
+            <span class="s1">topological.sort(</span>
+                <span class="s1">fixed_dependencies.union(mutable_dependencies)</span><span class="s5">,</span>
+                <span class="s1">tables</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">return </span><span class="s1">[</span>
+        <span class="s1">(table</span><span class="s5">, </span><span class="s1">table.foreign_key_constraints.difference(remaining_fkcs))</span>
+        <span class="s3">for </span><span class="s1">table </span><span class="s3">in </span><span class="s1">candidate_sort</span>
+    <span class="s1">] + [(</span><span class="s3">None</span><span class="s5">, </span><span class="s1">list(remaining_fkcs))]</span>
+</pre>
+</body>
+</html>

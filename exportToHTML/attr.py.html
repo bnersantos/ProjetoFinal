@@ -1,0 +1,679 @@
+<html>
+<head>
+<title>attr.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+attr.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># event/attr.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Attribute implementation for _Dispatch classes. 
+ 
+The various listener targets for a particular event class are represented 
+as attributes, which refer to collections of listeners to be fired off. 
+These collections can exist at the class level as well as at the instance 
+level.  An event is fired off using code like this:: 
+ 
+    some_object.dispatch.first_connect(arg1, arg2) 
+ 
+Above, ``some_object.dispatch`` would be an instance of ``_Dispatch`` and 
+``first_connect`` is typically an instance of ``_ListenerCollection`` 
+if event listeners are present, or ``_EmptyListener`` if none are present. 
+ 
+The attribute mechanics here spend effort trying to ensure listener functions 
+are available with a minimum of function call overhead, that unnecessary 
+objects aren't created (i.e. many empty per-instance listener collections), 
+as well as that everything is garbage collectable when owning references are 
+lost.  Other features such as &quot;propagation&quot; of listener functions across 
+many ``_Dispatch`` instances, &quot;joining&quot; of multiple ``_Dispatch`` instances, 
+as well as support for subclass propagation (e.g. events assigned to 
+``Pool`` vs. ``QueuePool``) are all implemented here. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">collections</span>
+<span class="s3">from </span><span class="s1">itertools </span><span class="s3">import </span><span class="s1">chain</span>
+<span class="s3">import </span><span class="s1">threading</span>
+<span class="s3">from </span><span class="s1">types </span><span class="s3">import </span><span class="s1">TracebackType</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Collection</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Deque</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">FrozenSet</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generic</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">MutableMapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">MutableSequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">weakref</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">legacy</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">registry</span>
+<span class="s3">from </span><span class="s1">.registry </span><span class="s3">import </span><span class="s1">_ET</span>
+<span class="s3">from </span><span class="s1">.registry </span><span class="s3">import </span><span class="s1">_EventKey</span>
+<span class="s3">from </span><span class="s1">.registry </span><span class="s3">import </span><span class="s1">_ListenerFnType</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..util.concurrency </span><span class="s3">import </span><span class="s1">AsyncAdaptedLock</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Protocol</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_Dispatch</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_DispatchCommon</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_HasEventsDispatch</span>
+
+
+<span class="s3">class </span><span class="s1">RefCollection(util.MemoizedSlots</span><span class="s5">, </span><span class="s1">Generic[_ET]):</span>
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;ref&quot;</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s1">ref: weakref.ref[RefCollection[_ET]]</span>
+
+    <span class="s3">def </span><span class="s1">_memoized_attr_ref(self) -&gt; weakref.ref[RefCollection[_ET]]:</span>
+        <span class="s3">return </span><span class="s1">weakref.ref(self</span><span class="s5">, </span><span class="s1">registry._collection_gced)</span>
+
+
+<span class="s3">class </span><span class="s1">_empty_collection(Collection[_T]):</span>
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">element: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">appendleft(self</span><span class="s5">, </span><span class="s1">element: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">extend(self</span><span class="s5">, </span><span class="s1">other: Sequence[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">element: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">element: Any) -&gt; bool:</span>
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[_T]:</span>
+        <span class="s3">return </span><span class="s1">iter([])</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s6">0</span>
+
+
+<span class="s1">_ListenerFnSequenceType = Union[Deque[_T]</span><span class="s5">, </span><span class="s1">_empty_collection[_T]]</span>
+
+
+<span class="s3">class </span><span class="s1">_ClsLevelDispatch(RefCollection[_ET]):</span>
+    <span class="s2">&quot;&quot;&quot;Class-level events on :class:`._Dispatch` classes.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;clsname&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;name&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;arg_names&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;has_kw&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;legacy_signatures&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_clslevel&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;__weakref__&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">clsname: str</span>
+    <span class="s1">name: str</span>
+    <span class="s1">arg_names: Sequence[str]</span>
+    <span class="s1">has_kw: bool</span>
+    <span class="s1">legacy_signatures: MutableSequence[legacy._LegacySignatureType]</span>
+    <span class="s1">_clslevel: MutableMapping[</span>
+        <span class="s1">Type[_ET]</span><span class="s5">, </span><span class="s1">_ListenerFnSequenceType[_ListenerFnType]</span>
+    <span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent_dispatch_cls: Type[_HasEventsDispatch[_ET]]</span><span class="s5">,</span>
+        <span class="s1">fn: _ListenerFnType</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.name = fn.__name__</span>
+        <span class="s1">self.clsname = parent_dispatch_cls.__name__</span>
+        <span class="s1">argspec = util.inspect_getfullargspec(fn)</span>
+        <span class="s1">self.arg_names = argspec.args[</span><span class="s6">1</span><span class="s1">:]</span>
+        <span class="s1">self.has_kw = bool(argspec.varkw)</span>
+        <span class="s1">self.legacy_signatures = list(</span>
+            <span class="s1">reversed(</span>
+                <span class="s1">sorted(</span>
+                    <span class="s1">getattr(fn</span><span class="s5">, </span><span class="s4">&quot;_legacy_signatures&quot;</span><span class="s5">, </span><span class="s1">[])</span><span class="s5">, </span><span class="s1">key=</span><span class="s3">lambda </span><span class="s1">s: s[</span><span class="s6">0</span><span class="s1">]</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">fn.__doc__ = legacy._augment_fn_docs(self</span><span class="s5">, </span><span class="s1">parent_dispatch_cls</span><span class="s5">, </span><span class="s1">fn)</span>
+
+        <span class="s1">self._clslevel = weakref.WeakKeyDictionary()</span>
+
+    <span class="s3">def </span><span class="s1">_adjust_fn_spec(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">fn: _ListenerFnType</span><span class="s5">, </span><span class="s1">named: bool</span>
+    <span class="s1">) -&gt; _ListenerFnType:</span>
+        <span class="s3">if </span><span class="s1">named:</span>
+            <span class="s1">fn = self._wrap_fn_for_kw(fn)</span>
+        <span class="s3">if </span><span class="s1">self.legacy_signatures:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">argspec = util.get_callable_argspec(fn</span><span class="s5">, </span><span class="s1">no_self=</span><span class="s3">True</span><span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">TypeError:</span>
+                <span class="s3">pass</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">fn = legacy._wrap_fn_for_legacy(self</span><span class="s5">, </span><span class="s1">fn</span><span class="s5">, </span><span class="s1">argspec)</span>
+        <span class="s3">return </span><span class="s1">fn</span>
+
+    <span class="s3">def </span><span class="s1">_wrap_fn_for_kw(self</span><span class="s5">, </span><span class="s1">fn: _ListenerFnType) -&gt; _ListenerFnType:</span>
+        <span class="s3">def </span><span class="s1">wrap_kw(*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; Any:</span>
+            <span class="s1">argdict = dict(zip(self.arg_names</span><span class="s5">, </span><span class="s1">args))</span>
+            <span class="s1">argdict.update(kw)</span>
+            <span class="s3">return </span><span class="s1">fn(**argdict)</span>
+
+        <span class="s3">return </span><span class="s1">wrap_kw</span>
+
+    <span class="s3">def </span><span class="s1">_do_insert_or_append(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]</span><span class="s5">, </span><span class="s1">is_append: bool</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">target = event_key.dispatch_target</span>
+        <span class="s3">assert </span><span class="s1">isinstance(</span>
+            <span class="s1">target</span><span class="s5">, </span><span class="s1">type</span>
+        <span class="s1">)</span><span class="s5">, </span><span class="s4">&quot;Class-level Event targets must be classes.&quot;</span>
+        <span class="s3">if not </span><span class="s1">getattr(target</span><span class="s5">, </span><span class="s4">&quot;_sa_propagate_class_events&quot;</span><span class="s5">, </span><span class="s3">True</span><span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;Can't assign an event directly to the </span><span class="s7">{</span><span class="s1">target</span><span class="s7">} </span><span class="s4">class&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">cls: Type[_ET]</span>
+
+        <span class="s3">for </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">util.walk_subclasses(target):</span>
+            <span class="s3">if </span><span class="s1">cls </span><span class="s3">is not </span><span class="s1">target </span><span class="s3">and </span><span class="s1">cls </span><span class="s3">not in </span><span class="s1">self._clslevel:</span>
+                <span class="s1">self.update_subclass(cls)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">cls </span><span class="s3">not in </span><span class="s1">self._clslevel:</span>
+                    <span class="s1">self.update_subclass(cls)</span>
+                <span class="s3">if </span><span class="s1">is_append:</span>
+                    <span class="s1">self._clslevel[cls].append(event_key._listen_fn)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">self._clslevel[cls].appendleft(event_key._listen_fn)</span>
+        <span class="s1">registry._stored_in_collection(event_key</span><span class="s5">, </span><span class="s1">self)</span>
+
+    <span class="s3">def </span><span class="s1">insert(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]</span><span class="s5">, </span><span class="s1">propagate: bool) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._do_insert_or_append(event_key</span><span class="s5">, </span><span class="s1">is_append=</span><span class="s3">False</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]</span><span class="s5">, </span><span class="s1">propagate: bool) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._do_insert_or_append(event_key</span><span class="s5">, </span><span class="s1">is_append=</span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">update_subclass(self</span><span class="s5">, </span><span class="s1">target: Type[_ET]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">target </span><span class="s3">not in </span><span class="s1">self._clslevel:</span>
+            <span class="s3">if </span><span class="s1">getattr(target</span><span class="s5">, </span><span class="s4">&quot;_sa_propagate_class_events&quot;</span><span class="s5">, </span><span class="s3">True</span><span class="s1">):</span>
+                <span class="s1">self._clslevel[target] = collections.deque()</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self._clslevel[target] = _empty_collection()</span>
+
+        <span class="s1">clslevel = self._clslevel[target]</span>
+        <span class="s1">cls: Type[_ET]</span>
+        <span class="s3">for </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">target.__mro__[</span><span class="s6">1</span><span class="s1">:]:</span>
+            <span class="s3">if </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">self._clslevel:</span>
+                <span class="s1">clslevel.extend(</span>
+                    <span class="s1">[fn </span><span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">self._clslevel[cls] </span><span class="s3">if </span><span class="s1">fn </span><span class="s3">not in </span><span class="s1">clslevel]</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">target = event_key.dispatch_target</span>
+        <span class="s1">cls: Type[_ET]</span>
+        <span class="s3">for </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">util.walk_subclasses(target):</span>
+            <span class="s3">if </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">self._clslevel:</span>
+                <span class="s1">self._clslevel[cls].remove(event_key._listen_fn)</span>
+        <span class="s1">registry._removed_from_collection(event_key</span><span class="s5">, </span><span class="s1">self)</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Clear all class level listeners&quot;&quot;&quot;</span>
+
+        <span class="s1">to_clear: Set[_ListenerFnType] = set()</span>
+        <span class="s3">for </span><span class="s1">dispatcher </span><span class="s3">in </span><span class="s1">self._clslevel.values():</span>
+            <span class="s1">to_clear.update(dispatcher)</span>
+            <span class="s1">dispatcher.clear()</span>
+        <span class="s1">registry._clear(self</span><span class="s5">, </span><span class="s1">to_clear)</span>
+
+    <span class="s3">def </span><span class="s1">for_modify(self</span><span class="s5">, </span><span class="s1">obj: _Dispatch[_ET]) -&gt; _ClsLevelDispatch[_ET]:</span>
+        <span class="s2">&quot;&quot;&quot;Return an event collection which can be modified. 
+ 
+        For _ClsLevelDispatch at the class level of 
+        a dispatcher, this returns self. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+
+<span class="s3">class </span><span class="s1">_InstanceLevelDispatch(RefCollection[_ET]</span><span class="s5">, </span><span class="s1">Collection[_ListenerFnType]):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">parent: _ClsLevelDispatch[_ET]</span>
+
+    <span class="s3">def </span><span class="s1">_adjust_fn_spec(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">fn: _ListenerFnType</span><span class="s5">, </span><span class="s1">named: bool</span>
+    <span class="s1">) -&gt; _ListenerFnType:</span>
+        <span class="s3">return </span><span class="s1">self.parent._adjust_fn_spec(fn</span><span class="s5">, </span><span class="s1">named)</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">item: Any) -&gt; bool:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[_ListenerFnType]:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">__bool__(self) -&gt; bool:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">exec_once(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">exec_once_unless_exception(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">_exec_w_sync_on_first_run(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">insert(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]</span><span class="s5">, </span><span class="s1">propagate: bool) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]</span><span class="s5">, </span><span class="s1">propagate: bool) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">for_modify(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">obj: _DispatchCommon[_ET]</span>
+    <span class="s1">) -&gt; _InstanceLevelDispatch[_ET]:</span>
+        <span class="s2">&quot;&quot;&quot;Return an event collection which can be modified. 
+ 
+        For _ClsLevelDispatch at the class level of 
+        a dispatcher, this returns self. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+
+<span class="s3">class </span><span class="s1">_EmptyListener(_InstanceLevelDispatch[_ET]):</span>
+    <span class="s2">&quot;&quot;&quot;Serves as a proxy interface to the events 
+    served by a _ClsLevelDispatch, when there are no 
+    instance-level events present. 
+ 
+    Is replaced by _ListenerCollection when instance-level 
+    events are added. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = </span><span class="s4">&quot;parent&quot;</span><span class="s5">, </span><span class="s4">&quot;parent_listeners&quot;</span><span class="s5">, </span><span class="s4">&quot;name&quot;</span>
+
+    <span class="s1">propagate: FrozenSet[_ListenerFnType] = frozenset()</span>
+    <span class="s1">listeners: Tuple[()] = ()</span>
+    <span class="s1">parent: _ClsLevelDispatch[_ET]</span>
+    <span class="s1">parent_listeners: _ListenerFnSequenceType[_ListenerFnType]</span>
+    <span class="s1">name: str</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">parent: _ClsLevelDispatch[_ET]</span><span class="s5">, </span><span class="s1">target_cls: Type[_ET]):</span>
+        <span class="s3">if </span><span class="s1">target_cls </span><span class="s3">not in </span><span class="s1">parent._clslevel:</span>
+            <span class="s1">parent.update_subclass(target_cls)</span>
+        <span class="s1">self.parent = parent</span>
+        <span class="s1">self.parent_listeners = parent._clslevel[target_cls]</span>
+        <span class="s1">self.name = parent.name</span>
+
+    <span class="s3">def </span><span class="s1">for_modify(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">obj: _DispatchCommon[_ET]</span>
+    <span class="s1">) -&gt; _ListenerCollection[_ET]:</span>
+        <span class="s2">&quot;&quot;&quot;Return an event collection which can be modified. 
+ 
+        For _EmptyListener at the instance level of 
+        a dispatcher, this generates a new 
+        _ListenerCollection, applies it to the instance, 
+        and returns it. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">obj = cast(</span><span class="s4">&quot;_Dispatch[_ET]&quot;</span><span class="s5">, </span><span class="s1">obj)</span>
+
+        <span class="s3">assert </span><span class="s1">obj._instance_cls </span><span class="s3">is not None</span>
+        <span class="s1">result = _ListenerCollection(self.parent</span><span class="s5">, </span><span class="s1">obj._instance_cls)</span>
+        <span class="s3">if </span><span class="s1">getattr(obj</span><span class="s5">, </span><span class="s1">self.name) </span><span class="s3">is </span><span class="s1">self:</span>
+            <span class="s1">setattr(obj</span><span class="s5">, </span><span class="s1">self.name</span><span class="s5">, </span><span class="s1">result)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">assert </span><span class="s1">isinstance(getattr(obj</span><span class="s5">, </span><span class="s1">self.name)</span><span class="s5">, </span><span class="s1">_JoinedListener)</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">_needs_modify(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;need to call for_modify()&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">exec_once(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._needs_modify(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">exec_once_unless_exception(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._needs_modify(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">insert(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._needs_modify(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._needs_modify(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._needs_modify(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">clear(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._needs_modify(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Execute this event.&quot;&quot;&quot;</span>
+
+        <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">self.parent_listeners:</span>
+            <span class="s1">fn(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">item: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">item </span><span class="s3">in </span><span class="s1">self.parent_listeners</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self.parent_listeners)</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[_ListenerFnType]:</span>
+        <span class="s3">return </span><span class="s1">iter(self.parent_listeners)</span>
+
+    <span class="s3">def </span><span class="s1">__bool__(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">bool(self.parent_listeners)</span>
+
+
+<span class="s3">class </span><span class="s1">_MutexProtocol(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__enter__(self) -&gt; bool: ...</span>
+
+    <span class="s3">def </span><span class="s1">__exit__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">exc_type: Optional[Type[BaseException]]</span><span class="s5">,</span>
+        <span class="s1">exc_val: Optional[BaseException]</span><span class="s5">,</span>
+        <span class="s1">exc_tb: Optional[TracebackType]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Optional[bool]: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_CompoundListener(_InstanceLevelDispatch[_ET]):</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;_exec_once_mutex&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_exec_once&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_exec_w_sync_once&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_is_asyncio&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">_exec_once_mutex: _MutexProtocol</span>
+    <span class="s1">parent_listeners: Collection[_ListenerFnType]</span>
+    <span class="s1">listeners: Collection[_ListenerFnType]</span>
+    <span class="s1">_exec_once: bool</span>
+    <span class="s1">_exec_w_sync_once: bool</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">*arg: Any</span><span class="s5">, </span><span class="s1">**kw: Any):</span>
+        <span class="s1">super().__init__(*arg</span><span class="s5">, </span><span class="s1">**kw)</span>
+        <span class="s1">self._is_asyncio = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">_set_asyncio(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._is_asyncio = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">_memoized_attr__exec_once_mutex(self) -&gt; _MutexProtocol:</span>
+        <span class="s3">if </span><span class="s1">self._is_asyncio:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdaptedLock()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">threading.Lock()</span>
+
+    <span class="s3">def </span><span class="s1">_exec_once_impl(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">retry_on_exception: bool</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">with </span><span class="s1">self._exec_once_mutex:</span>
+            <span class="s3">if not </span><span class="s1">self._exec_once:</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">self(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+                    <span class="s1">exception = </span><span class="s3">False</span>
+                <span class="s3">except</span><span class="s1">:</span>
+                    <span class="s1">exception = </span><span class="s3">True</span>
+                    <span class="s3">raise</span>
+                <span class="s3">finally</span><span class="s1">:</span>
+                    <span class="s3">if not </span><span class="s1">exception </span><span class="s3">or not </span><span class="s1">retry_on_exception:</span>
+                        <span class="s1">self._exec_once = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">exec_once(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Execute this event, but only if it has not been 
+        executed already for this collection.&quot;&quot;&quot;</span>
+
+        <span class="s3">if not </span><span class="s1">self._exec_once:</span>
+            <span class="s1">self._exec_once_impl(</span><span class="s3">False</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">exec_once_unless_exception(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Execute this event, but only if it has not been 
+        executed already for this collection, or was called 
+        by a previous exec_once_unless_exception call and 
+        raised an exception. 
+ 
+        If exec_once was already called, then this method will never run 
+        the callable regardless of whether it raised or not. 
+ 
+        .. versionadded:: 1.3.8 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">self._exec_once:</span>
+            <span class="s1">self._exec_once_impl(</span><span class="s3">True</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">_exec_w_sync_on_first_run(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Execute this event, and use a mutex if it has not been 
+        executed already for this collection, or was called 
+        by a previous _exec_w_sync_on_first_run call and 
+        raised an exception. 
+ 
+        If _exec_w_sync_on_first_run was already called and didn't raise an 
+        exception, then a mutex is not used. 
+ 
+        .. versionadded:: 1.4.11 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">self._exec_w_sync_once:</span>
+            <span class="s3">with </span><span class="s1">self._exec_once_mutex:</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">self(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+                <span class="s3">except</span><span class="s1">:</span>
+                    <span class="s3">raise</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">self._exec_w_sync_once = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Execute this event.&quot;&quot;&quot;</span>
+
+        <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">self.parent_listeners:</span>
+            <span class="s1">fn(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+        <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">self.listeners:</span>
+            <span class="s1">fn(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">item: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">item </span><span class="s3">in </span><span class="s1">self.parent_listeners </span><span class="s3">or </span><span class="s1">item </span><span class="s3">in </span><span class="s1">self.listeners</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self.parent_listeners) + len(self.listeners)</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[_ListenerFnType]:</span>
+        <span class="s3">return </span><span class="s1">chain(self.parent_listeners</span><span class="s5">, </span><span class="s1">self.listeners)</span>
+
+    <span class="s3">def </span><span class="s1">__bool__(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">bool(self.listeners </span><span class="s3">or </span><span class="s1">self.parent_listeners)</span>
+
+
+<span class="s3">class </span><span class="s1">_ListenerCollection(_CompoundListener[_ET]):</span>
+    <span class="s2">&quot;&quot;&quot;Instance-level attributes on instances of :class:`._Dispatch`. 
+ 
+    Represents a collection of listeners. 
+ 
+    As of 0.7.9, _ListenerCollection is only first 
+    created via the _EmptyListener.for_modify() method. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;parent_listeners&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;parent&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;name&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;listeners&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;propagate&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;__weakref__&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">parent_listeners: Collection[_ListenerFnType]</span>
+    <span class="s1">parent: _ClsLevelDispatch[_ET]</span>
+    <span class="s1">name: str</span>
+    <span class="s1">listeners: Deque[_ListenerFnType]</span>
+    <span class="s1">propagate: Set[_ListenerFnType]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">parent: _ClsLevelDispatch[_ET]</span><span class="s5">, </span><span class="s1">target_cls: Type[_ET]):</span>
+        <span class="s1">super().__init__()</span>
+        <span class="s3">if </span><span class="s1">target_cls </span><span class="s3">not in </span><span class="s1">parent._clslevel:</span>
+            <span class="s1">parent.update_subclass(target_cls)</span>
+        <span class="s1">self._exec_once = </span><span class="s3">False</span>
+        <span class="s1">self._exec_w_sync_once = </span><span class="s3">False</span>
+        <span class="s1">self.parent_listeners = parent._clslevel[target_cls]</span>
+        <span class="s1">self.parent = parent</span>
+        <span class="s1">self.name = parent.name</span>
+        <span class="s1">self.listeners = collections.deque()</span>
+        <span class="s1">self.propagate = set()</span>
+
+    <span class="s3">def </span><span class="s1">for_modify(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">obj: _DispatchCommon[_ET]</span>
+    <span class="s1">) -&gt; _ListenerCollection[_ET]:</span>
+        <span class="s2">&quot;&quot;&quot;Return an event collection which can be modified. 
+ 
+        For _ListenerCollection at the instance level of 
+        a dispatcher, this returns self. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_update(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">other: _ListenerCollection[_ET]</span><span class="s5">, </span><span class="s1">only_propagate: bool = </span><span class="s3">True</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Populate from the listeners in another :class:`_Dispatch` 
+        object.&quot;&quot;&quot;</span>
+        <span class="s1">existing_listeners = self.listeners</span>
+        <span class="s1">existing_listener_set = set(existing_listeners)</span>
+        <span class="s1">self.propagate.update(other.propagate)</span>
+        <span class="s1">other_listeners = [</span>
+            <span class="s1">l</span>
+            <span class="s3">for </span><span class="s1">l </span><span class="s3">in </span><span class="s1">other.listeners</span>
+            <span class="s3">if </span><span class="s1">l </span><span class="s3">not in </span><span class="s1">existing_listener_set</span>
+            <span class="s3">and not </span><span class="s1">only_propagate</span>
+            <span class="s3">or </span><span class="s1">l </span><span class="s3">in </span><span class="s1">self.propagate</span>
+        <span class="s1">]</span>
+
+        <span class="s1">existing_listeners.extend(other_listeners)</span>
+
+        <span class="s3">if </span><span class="s1">other._is_asyncio:</span>
+            <span class="s1">self._set_asyncio()</span>
+
+        <span class="s1">to_associate = other.propagate.union(other_listeners)</span>
+        <span class="s1">registry._stored_in_collection_multi(self</span><span class="s5">, </span><span class="s1">other</span><span class="s5">, </span><span class="s1">to_associate)</span>
+
+    <span class="s3">def </span><span class="s1">insert(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]</span><span class="s5">, </span><span class="s1">propagate: bool) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">event_key.prepend_to_list(self</span><span class="s5">, </span><span class="s1">self.listeners):</span>
+            <span class="s3">if </span><span class="s1">propagate:</span>
+                <span class="s1">self.propagate.add(event_key._listen_fn)</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]</span><span class="s5">, </span><span class="s1">propagate: bool) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">event_key.append_to_list(self</span><span class="s5">, </span><span class="s1">self.listeners):</span>
+            <span class="s3">if </span><span class="s1">propagate:</span>
+                <span class="s1">self.propagate.add(event_key._listen_fn)</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.listeners.remove(event_key._listen_fn)</span>
+        <span class="s1">self.propagate.discard(event_key._listen_fn)</span>
+        <span class="s1">registry._removed_from_collection(event_key</span><span class="s5">, </span><span class="s1">self)</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">registry._clear(self</span><span class="s5">, </span><span class="s1">self.listeners)</span>
+        <span class="s1">self.propagate.clear()</span>
+        <span class="s1">self.listeners.clear()</span>
+
+
+<span class="s3">class </span><span class="s1">_JoinedListener(_CompoundListener[_ET]):</span>
+    <span class="s1">__slots__ = </span><span class="s4">&quot;parent_dispatch&quot;</span><span class="s5">, </span><span class="s4">&quot;name&quot;</span><span class="s5">, </span><span class="s4">&quot;local&quot;</span><span class="s5">, </span><span class="s4">&quot;parent_listeners&quot;</span>
+
+    <span class="s1">parent_dispatch: _DispatchCommon[_ET]</span>
+    <span class="s1">name: str</span>
+    <span class="s1">local: _InstanceLevelDispatch[_ET]</span>
+    <span class="s1">parent_listeners: Collection[_ListenerFnType]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent_dispatch: _DispatchCommon[_ET]</span><span class="s5">,</span>
+        <span class="s1">name: str</span><span class="s5">,</span>
+        <span class="s1">local: _EmptyListener[_ET]</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self._exec_once = </span><span class="s3">False</span>
+        <span class="s1">self.parent_dispatch = parent_dispatch</span>
+        <span class="s1">self.name = name</span>
+        <span class="s1">self.local = local</span>
+        <span class="s1">self.parent_listeners = self.local</span>
+
+    <span class="s3">if not </span><span class="s1">typing.TYPE_CHECKING:</span>
+        <span class="s0"># first error, I don't really understand:</span>
+        <span class="s0"># Signature of &quot;listeners&quot; incompatible with</span>
+        <span class="s0"># supertype &quot;_CompoundListener&quot;  [override]</span>
+        <span class="s0"># the name / return type are exactly the same</span>
+        <span class="s0"># second error is getattr_isn't typed, the cast() here</span>
+        <span class="s0"># adds too much method overhead</span>
+        <span class="s1">@property</span>
+        <span class="s3">def </span><span class="s1">listeners(self) -&gt; Collection[_ListenerFnType]:</span>
+            <span class="s3">return </span><span class="s1">getattr(self.parent_dispatch</span><span class="s5">, </span><span class="s1">self.name)</span>
+
+    <span class="s3">def </span><span class="s1">_adjust_fn_spec(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">fn: _ListenerFnType</span><span class="s5">, </span><span class="s1">named: bool</span>
+    <span class="s1">) -&gt; _ListenerFnType:</span>
+        <span class="s3">return </span><span class="s1">self.local._adjust_fn_spec(fn</span><span class="s5">, </span><span class="s1">named)</span>
+
+    <span class="s3">def </span><span class="s1">for_modify(self</span><span class="s5">, </span><span class="s1">obj: _DispatchCommon[_ET]) -&gt; _JoinedListener[_ET]:</span>
+        <span class="s1">self.local = self.parent_listeners = self.local.for_modify(obj)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">insert(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]</span><span class="s5">, </span><span class="s1">propagate: bool) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.local.insert(event_key</span><span class="s5">, </span><span class="s1">propagate)</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]</span><span class="s5">, </span><span class="s1">propagate: bool) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.local.append(event_key</span><span class="s5">, </span><span class="s1">propagate)</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">event_key: _EventKey[_ET]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.local.remove(event_key)</span>
+
+    <span class="s3">def </span><span class="s1">clear(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+</pre>
+</body>
+</html>

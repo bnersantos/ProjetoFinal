@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TESTE</title>
+    <link rel="stylesheet" href="/static/base.css">
+</head>
+<body>
+  <div class="nav-bar">
+    <ul class="menu">
+        <div class="usuario-btn">
+              <a href="{{ url_for('login') }}">
+                  <button id="usuario-btn">Login</button>
+              </a>
+        </div>
+        <li><a href="{{ url_for('home') }}">MENU</a></li>
+        <li><a href="{{ url_for('gerenciamento') }}">GERENCIAMENTO</a></li>
+        <li><a href="{{ url_for('grafico_movimentacoes') }}">RELATORIO</a></li>
+    </ul>
+    <span class="search-icon" id="search-icon">
+        <i class="fas fa-search"></i> <!-- Ícone de lupa do Font Awesome -->
+    </span>
+    <div class="search-box" id="search-box">
+        <input type="text" id="search-input" placeholder="Buscar...">
+        <button id="search-btn">Buscar</button>
+    </div>
+</div>
+<header class="header-banner">
+    {% block conteudoNav %}
+        <!-- Conteúdo do cabeçalho pode ser dinâmico -->
+    {% endblock %}
+</header>
+
+
+
+    <main>
+        {% block conteudo %}
+        <!-- Conteúdo principal será inserido aqui -->
+        {% endblock %}
+    </main>
+</body>
+</html>

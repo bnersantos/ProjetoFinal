@@ -1,0 +1,22 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+<h1>Gerenciar Fornecedores</h1>
+
+<div class="card-container2">
+    <div class="card2">
+        <h3>Criar Fornecedor</h3>
+        <p>Adicione um novo fornecedor à plataforma.</p>
+        <a href="{{ url_for('criar_fornecedor') }}" class="btn">Criar Fornecedor</a>
+    </div>
+
+    <div class="card2">
+        <h3>Listar Fornecedores</h3>
+        <p>Visualize todos os fornecedores cadastrados.</p>
+        <a href="{{ url_for('listar_fornecedores') }}" class="btn">Listar Fornecedores</a>
+    </div>
+</div>
+
+<a href="{{ url_for('gerenciamento') }}" class="btn voltar2">Voltar</a>
+
+{% endblock %}

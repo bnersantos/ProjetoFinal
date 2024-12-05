@@ -1,0 +1,423 @@
+<html>
+<head>
+<title>row.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+row.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># engine/row.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Define row constructs including :class:`.Row`.&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">abc </span><span class="s3">import </span><span class="s1">ABC</span>
+<span class="s3">import </span><span class="s1">collections.abc </span><span class="s3">as </span><span class="s1">collections_abc</span>
+<span class="s3">import </span><span class="s1">operator</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generic</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">sql_util</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">deprecated</span>
+<span class="s3">from </span><span class="s1">..util._has_cy </span><span class="s3">import </span><span class="s1">HAS_CYEXTENSION</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING </span><span class="s3">or not </span><span class="s1">HAS_CYEXTENSION:</span>
+    <span class="s3">from </span><span class="s1">._py_row </span><span class="s3">import </span><span class="s1">BaseRow </span><span class="s3">as </span><span class="s1">BaseRow</span>
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s3">from </span><span class="s1">sqlalchemy.cyextension.resultproxy </span><span class="s3">import </span><span class="s1">BaseRow </span><span class="s3">as </span><span class="s1">BaseRow</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">_KeyType</span>
+    <span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">_ProcessorsType</span>
+    <span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">RMKeyView</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_TP = TypeVar(</span><span class="s4">&quot;_TP&quot;</span><span class="s5">, </span><span class="s1">bound=Tuple[Any</span><span class="s5">, </span><span class="s1">...])</span>
+
+
+<span class="s3">class </span><span class="s1">Row(BaseRow</span><span class="s5">, </span><span class="s1">Sequence[Any]</span><span class="s5">, </span><span class="s1">Generic[_TP]):</span>
+    <span class="s2">&quot;&quot;&quot;Represent a single result row. 
+ 
+    The :class:`.Row` object represents a row of a database result.  It is 
+    typically associated in the 1.x series of SQLAlchemy with the 
+    :class:`_engine.CursorResult` object, however is also used by the ORM for 
+    tuple-like results as of SQLAlchemy 1.4. 
+ 
+    The :class:`.Row` object seeks to act as much like a Python named 
+    tuple as possible.   For mapping (i.e. dictionary) behavior on a row, 
+    such as testing for containment of keys, refer to the :attr:`.Row._mapping` 
+    attribute. 
+ 
+    .. seealso:: 
+ 
+        :ref:`tutorial_selecting_data` - includes examples of selecting 
+        rows from SELECT statements. 
+ 
+    .. versionchanged:: 1.4 
+ 
+        Renamed ``RowProxy`` to :class:`.Row`. :class:`.Row` is no longer a 
+        &quot;proxy&quot; object in that it contains the final form of data within it, 
+        and now acts mostly like a named tuple. Mapping-like functionality is 
+        moved to the :attr:`.Row._mapping` attribute. See 
+        :ref:`change_4710_core` for background on this change. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">__setattr__(self</span><span class="s5">, </span><span class="s1">name: str</span><span class="s5">, </span><span class="s1">value: Any) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">AttributeError(</span><span class="s4">&quot;can't set attribute&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__delattr__(self</span><span class="s5">, </span><span class="s1">name: str) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">AttributeError(</span><span class="s4">&quot;can't delete attribute&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_tuple(self) -&gt; _TP:</span>
+        <span class="s2">&quot;&quot;&quot;Return a 'tuple' form of this :class:`.Row`. 
+ 
+        At runtime, this method returns &quot;self&quot;; the :class:`.Row` object is 
+        already a named tuple. However, at the typing level, if this 
+        :class:`.Row` is typed, the &quot;tuple&quot; return type will be a :pep:`484` 
+        ``Tuple`` datatype that contains typing information about individual 
+        elements, supporting typed unpacking and attribute access. 
+ 
+        .. versionadded:: 2.0.19 - The :meth:`.Row._tuple` method supersedes 
+           the previous :meth:`.Row.tuple` method, which is now underscored 
+           to avoid name conflicts with column names in the same way as other 
+           named-tuple methods on :class:`.Row`. 
+ 
+        .. seealso:: 
+ 
+            :attr:`.Row._t` - shorthand attribute notation 
+ 
+            :meth:`.Result.tuples` 
+ 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self  </span><span class="s0"># type: ignore</span>
+
+    <span class="s1">@deprecated(</span>
+        <span class="s4">&quot;2.0.19&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;The :meth:`.Row.tuple` method is deprecated in favor of &quot;</span>
+        <span class="s4">&quot;:meth:`.Row._tuple`; all :class:`.Row` &quot;</span>
+        <span class="s4">&quot;methods and library-level attributes are intended to be underscored &quot;</span>
+        <span class="s4">&quot;to avoid name conflicts.  Please use :meth:`Row._tuple`.&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">tuple(self) -&gt; _TP:</span>
+        <span class="s2">&quot;&quot;&quot;Return a 'tuple' form of this :class:`.Row`. 
+ 
+        .. versionadded:: 2.0 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._tuple()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_t(self) -&gt; _TP:</span>
+        <span class="s2">&quot;&quot;&quot;A synonym for :meth:`.Row._tuple`. 
+ 
+        .. versionadded:: 2.0.19 - The :attr:`.Row._t` attribute supersedes 
+           the previous :attr:`.Row.t` attribute, which is now underscored 
+           to avoid name conflicts with column names in the same way as other 
+           named-tuple methods on :class:`.Row`. 
+ 
+        .. seealso:: 
+ 
+            :attr:`.Result.t` 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self  </span><span class="s0"># type: ignore</span>
+
+    <span class="s1">@property</span>
+    <span class="s1">@deprecated(</span>
+        <span class="s4">&quot;2.0.19&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;The :attr:`.Row.t` attribute is deprecated in favor of &quot;</span>
+        <span class="s4">&quot;:attr:`.Row._t`; all :class:`.Row` &quot;</span>
+        <span class="s4">&quot;methods and library-level attributes are intended to be underscored &quot;</span>
+        <span class="s4">&quot;to avoid name conflicts.  Please use :attr:`Row._t`.&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">t(self) -&gt; _TP:</span>
+        <span class="s2">&quot;&quot;&quot;A synonym for :meth:`.Row._tuple`. 
+ 
+        .. versionadded:: 2.0 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._t</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_mapping(self) -&gt; RowMapping:</span>
+        <span class="s2">&quot;&quot;&quot;Return a :class:`.RowMapping` for this :class:`.Row`. 
+ 
+        This object provides a consistent Python mapping (i.e. dictionary) 
+        interface for the data contained within the row.   The :class:`.Row` 
+        by itself behaves like a named tuple. 
+ 
+        .. seealso:: 
+ 
+            :attr:`.Row._fields` 
+ 
+        .. versionadded:: 1.4 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">RowMapping(self._parent</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">self._key_to_index</span><span class="s5">, </span><span class="s1">self._data)</span>
+
+    <span class="s3">def </span><span class="s1">_filter_on_values(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">processor: Optional[_ProcessorsType]</span>
+    <span class="s1">) -&gt; Row[Any]:</span>
+        <span class="s3">return </span><span class="s1">Row(self._parent</span><span class="s5">, </span><span class="s1">processor</span><span class="s5">, </span><span class="s1">self._key_to_index</span><span class="s5">, </span><span class="s1">self._data)</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">_special_name_accessor(name: str) -&gt; Any:</span>
+            <span class="s2">&quot;&quot;&quot;Handle ambiguous names such as &quot;count&quot; and &quot;index&quot; &quot;&quot;&quot;</span>
+
+            <span class="s1">@property</span>
+            <span class="s3">def </span><span class="s1">go(self: Row) -&gt; Any:</span>
+                <span class="s3">if </span><span class="s1">self._parent._has_key(name):</span>
+                    <span class="s3">return </span><span class="s1">self.__getattr__(name)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+
+                    <span class="s3">def </span><span class="s1">meth(*arg: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; Any:</span>
+                        <span class="s3">return </span><span class="s1">getattr(collections_abc.Sequence</span><span class="s5">, </span><span class="s1">name)(</span>
+                            <span class="s1">self</span><span class="s5">, </span><span class="s1">*arg</span><span class="s5">, </span><span class="s1">**kw</span>
+                        <span class="s1">)</span>
+
+                    <span class="s3">return </span><span class="s1">meth</span>
+
+            <span class="s3">return </span><span class="s1">go</span>
+
+        <span class="s1">count = _special_name_accessor(</span><span class="s4">&quot;count&quot;</span><span class="s1">)</span>
+        <span class="s1">index = _special_name_accessor(</span><span class="s4">&quot;index&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">key: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._data</span>
+
+    <span class="s3">def </span><span class="s1">_op(self</span><span class="s5">, </span><span class="s1">other: Any</span><span class="s5">, </span><span class="s1">op: Callable[[Any</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">bool]) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">op(self._to_tuple_instance()</span><span class="s5">, </span><span class="s1">other._to_tuple_instance())</span>
+            <span class="s3">if </span><span class="s1">isinstance(other</span><span class="s5">, </span><span class="s1">Row)</span>
+            <span class="s3">else </span><span class="s1">op(self._to_tuple_instance()</span><span class="s5">, </span><span class="s1">other)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">__hash__ = BaseRow.__hash__</span>
+
+    <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s1">@overload</span>
+        <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">index: int) -&gt; Any: ...</span>
+
+        <span class="s1">@overload</span>
+        <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">index: slice) -&gt; Sequence[Any]: ...</span>
+
+        <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">index: Union[int</span><span class="s5">, </span><span class="s1">slice]) -&gt; Any: ...</span>
+
+    <span class="s3">def </span><span class="s1">__lt__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self._op(other</span><span class="s5">, </span><span class="s1">operator.lt)</span>
+
+    <span class="s3">def </span><span class="s1">__le__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self._op(other</span><span class="s5">, </span><span class="s1">operator.le)</span>
+
+    <span class="s3">def </span><span class="s1">__ge__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self._op(other</span><span class="s5">, </span><span class="s1">operator.ge)</span>
+
+    <span class="s3">def </span><span class="s1">__gt__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self._op(other</span><span class="s5">, </span><span class="s1">operator.gt)</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self._op(other</span><span class="s5">, </span><span class="s1">operator.eq)</span>
+
+    <span class="s3">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self._op(other</span><span class="s5">, </span><span class="s1">operator.ne)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s1">repr(sql_util._repr_row(self))</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_fields(self) -&gt; Tuple[str</span><span class="s5">, </span><span class="s1">...]:</span>
+        <span class="s2">&quot;&quot;&quot;Return a tuple of string keys as represented by this 
+        :class:`.Row`. 
+ 
+        The keys can represent the labels of the columns returned by a core 
+        statement or the names of the orm classes returned by an orm 
+        execution. 
+ 
+        This attribute is analogous to the Python named tuple ``._fields`` 
+        attribute. 
+ 
+        .. versionadded:: 1.4 
+ 
+        .. seealso:: 
+ 
+            :attr:`.Row._mapping` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">tuple([k </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">self._parent.keys </span><span class="s3">if </span><span class="s1">k </span><span class="s3">is not None</span><span class="s1">])</span>
+
+    <span class="s3">def </span><span class="s1">_asdict(self) -&gt; Dict[str</span><span class="s5">, </span><span class="s1">Any]:</span>
+        <span class="s2">&quot;&quot;&quot;Return a new dict which maps field names to their corresponding 
+        values. 
+ 
+        This method is analogous to the Python named tuple ``._asdict()`` 
+        method, and works by applying the ``dict()`` constructor to the 
+        :attr:`.Row._mapping` attribute. 
+ 
+        .. versionadded:: 1.4 
+ 
+        .. seealso:: 
+ 
+            :attr:`.Row._mapping` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">dict(self._mapping)</span>
+
+
+<span class="s1">BaseRowProxy = BaseRow</span>
+<span class="s1">RowProxy = Row</span>
+
+
+<span class="s3">class </span><span class="s1">ROMappingView(ABC):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_items: Sequence[Any]</span>
+    <span class="s1">_mapping: Mapping[</span><span class="s4">&quot;_KeyType&quot;</span><span class="s5">, </span><span class="s1">Any]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">mapping: Mapping[</span><span class="s4">&quot;_KeyType&quot;</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">items: Sequence[Any]</span>
+    <span class="s1">):</span>
+        <span class="s1">self._mapping = mapping  </span><span class="s0"># type: ignore[misc]</span>
+        <span class="s1">self._items = items  </span><span class="s0"># type: ignore[misc]</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self._items)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s4">&quot;{0.__class__.__name__}({0._mapping!r})&quot;</span><span class="s1">.format(self)</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[Any]:</span>
+        <span class="s3">return </span><span class="s1">iter(self._items)</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">item: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">item </span><span class="s3">in </span><span class="s1">self._items</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">list(other) == list(self)</span>
+
+    <span class="s3">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">list(other) != list(self)</span>
+
+
+<span class="s3">class </span><span class="s1">ROMappingKeysValuesView(</span>
+    <span class="s1">ROMappingView</span><span class="s5">, </span><span class="s1">typing.KeysView[</span><span class="s4">&quot;_KeyType&quot;</span><span class="s1">]</span><span class="s5">, </span><span class="s1">typing.ValuesView[Any]</span>
+<span class="s1">):</span>
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;_items&quot;</span><span class="s5">,</span><span class="s1">)  </span><span class="s0"># mapping slot is provided by KeysView</span>
+
+
+<span class="s3">class </span><span class="s1">ROMappingItemsView(ROMappingView</span><span class="s5">, </span><span class="s1">typing.ItemsView[</span><span class="s4">&quot;_KeyType&quot;</span><span class="s5">, </span><span class="s1">Any]):</span>
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;_items&quot;</span><span class="s5">,</span><span class="s1">)  </span><span class="s0"># mapping slot is provided by ItemsView</span>
+
+
+<span class="s3">class </span><span class="s1">RowMapping(BaseRow</span><span class="s5">, </span><span class="s1">typing.Mapping[</span><span class="s4">&quot;_KeyType&quot;</span><span class="s5">, </span><span class="s1">Any]):</span>
+    <span class="s2">&quot;&quot;&quot;A ``Mapping`` that maps column names and objects to :class:`.Row` 
+    values. 
+ 
+    The :class:`.RowMapping` is available from a :class:`.Row` via the 
+    :attr:`.Row._mapping` attribute, as well as from the iterable interface 
+    provided by the :class:`.MappingResult` object returned by the 
+    :meth:`_engine.Result.mappings` method. 
+ 
+    :class:`.RowMapping` supplies Python mapping (i.e. dictionary) access to 
+    the  contents of the row.   This includes support for testing of 
+    containment of specific keys (string column names or objects), as well 
+    as iteration of keys, values, and items:: 
+ 
+        for row in result: 
+            if 'a' in row._mapping: 
+                print(&quot;Column 'a': %s&quot; % row._mapping['a']) 
+ 
+            print(&quot;Column b: %s&quot; % row._mapping[table.c.b]) 
+ 
+ 
+    .. versionadded:: 1.4 The :class:`.RowMapping` object replaces the 
+       mapping-like access previously provided by a database result row, 
+       which now seeks to behave mostly like a named tuple. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">key: _KeyType) -&gt; Any: ...</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">__getitem__ = BaseRow._get_by_key_impl_mapping</span>
+
+    <span class="s3">def </span><span class="s1">_values_impl(self) -&gt; List[Any]:</span>
+        <span class="s3">return </span><span class="s1">list(self._data)</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[str]:</span>
+        <span class="s3">return </span><span class="s1">(k </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">self._parent.keys </span><span class="s3">if </span><span class="s1">k </span><span class="s3">is not None</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self._data)</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">key: object) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self._parent._has_key(key)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s1">repr(dict(self))</span>
+
+    <span class="s3">def </span><span class="s1">items(self) -&gt; ROMappingItemsView:</span>
+        <span class="s2">&quot;&quot;&quot;Return a view of key/value tuples for the elements in the 
+        underlying :class:`.Row`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">ROMappingItemsView(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">[(key</span><span class="s5">, </span><span class="s1">self[key]) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.keys()]</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">keys(self) -&gt; RMKeyView:</span>
+        <span class="s2">&quot;&quot;&quot;Return a view of 'keys' for string column names represented 
+        by the underlying :class:`.Row`. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">self._parent.keys</span>
+
+    <span class="s3">def </span><span class="s1">values(self) -&gt; ROMappingKeysValuesView:</span>
+        <span class="s2">&quot;&quot;&quot;Return a view of values for the values represented in the 
+        underlying :class:`.Row`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">ROMappingKeysValuesView(self</span><span class="s5">, </span><span class="s1">self._values_impl())</span>
+</pre>
+</body>
+</html>

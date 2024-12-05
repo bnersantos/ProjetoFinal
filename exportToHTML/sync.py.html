@@ -1,0 +1,187 @@
+<html>
+<head>
+<title>sync.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+sync.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/sync.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+
+<span class="s2">&quot;&quot;&quot;private module containing functions used for copying data 
+between instances based on join conditions. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">orm_util</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PassiveFlag</span>
+
+
+<span class="s3">def </span><span class="s1">populate(</span>
+    <span class="s1">source</span><span class="s4">,</span>
+    <span class="s1">source_mapper</span><span class="s4">,</span>
+    <span class="s1">dest</span><span class="s4">,</span>
+    <span class="s1">dest_mapper</span><span class="s4">,</span>
+    <span class="s1">synchronize_pairs</span><span class="s4">,</span>
+    <span class="s1">uowcommit</span><span class="s4">,</span>
+    <span class="s1">flag_cascaded_pks</span><span class="s4">,</span>
+<span class="s1">):</span>
+    <span class="s1">source_dict = source.dict</span>
+    <span class="s1">dest_dict = dest.dict</span>
+
+    <span class="s3">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s3">in </span><span class="s1">synchronize_pairs:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s0"># inline of source_mapper._get_state_attr_by_column</span>
+            <span class="s1">prop = source_mapper._columntoproperty[l]</span>
+            <span class="s1">value = source.manager[prop.key].impl.get(</span>
+                <span class="s1">source</span><span class="s4">, </span><span class="s1">source_dict</span><span class="s4">, </span><span class="s1">PassiveFlag.PASSIVE_OFF</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">exc.UnmappedColumnError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">_raise_col_to_prop(</span><span class="s3">False</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s1">dest_mapper</span><span class="s4">, </span><span class="s1">r</span><span class="s4">, </span><span class="s1">err)</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s0"># inline of dest_mapper._set_state_attr_by_column</span>
+            <span class="s1">prop = dest_mapper._columntoproperty[r]</span>
+            <span class="s1">dest.manager[prop.key].impl.set(dest</span><span class="s4">, </span><span class="s1">dest_dict</span><span class="s4">, </span><span class="s1">value</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">exc.UnmappedColumnError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">_raise_col_to_prop(</span><span class="s3">True</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s1">dest_mapper</span><span class="s4">, </span><span class="s1">r</span><span class="s4">, </span><span class="s1">err)</span>
+
+        <span class="s0"># technically the &quot;r.primary_key&quot; check isn't</span>
+        <span class="s0"># needed here, but we check for this condition to limit</span>
+        <span class="s0"># how often this logic is invoked for memory/performance</span>
+        <span class="s0"># reasons, since we only need this info for a primary key</span>
+        <span class="s0"># destination.</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">flag_cascaded_pks</span>
+            <span class="s3">and </span><span class="s1">l.primary_key</span>
+            <span class="s3">and </span><span class="s1">r.primary_key</span>
+            <span class="s3">and </span><span class="s1">r.references(l)</span>
+        <span class="s1">):</span>
+            <span class="s1">uowcommit.attributes[(</span><span class="s5">&quot;pk_cascaded&quot;</span><span class="s4">, </span><span class="s1">dest</span><span class="s4">, </span><span class="s1">r)] = </span><span class="s3">True</span>
+
+
+<span class="s3">def </span><span class="s1">bulk_populate_inherit_keys(source_dict</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">synchronize_pairs):</span>
+    <span class="s0"># a simplified version of populate() used by bulk insert mode</span>
+    <span class="s3">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s3">in </span><span class="s1">synchronize_pairs:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">prop = source_mapper._columntoproperty[l]</span>
+            <span class="s1">value = source_dict[prop.key]</span>
+        <span class="s3">except </span><span class="s1">exc.UnmappedColumnError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">_raise_col_to_prop(</span><span class="s3">False</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">r</span><span class="s4">, </span><span class="s1">err)</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">prop = source_mapper._columntoproperty[r]</span>
+            <span class="s1">source_dict[prop.key] = value</span>
+        <span class="s3">except </span><span class="s1">exc.UnmappedColumnError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">_raise_col_to_prop(</span><span class="s3">True</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">r</span><span class="s4">, </span><span class="s1">err)</span>
+
+
+<span class="s3">def </span><span class="s1">clear(dest</span><span class="s4">, </span><span class="s1">dest_mapper</span><span class="s4">, </span><span class="s1">synchronize_pairs):</span>
+    <span class="s3">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s3">in </span><span class="s1">synchronize_pairs:</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">r.primary_key</span>
+            <span class="s3">and </span><span class="s1">dest_mapper._get_state_attr_by_column(dest</span><span class="s4">, </span><span class="s1">dest.dict</span><span class="s4">, </span><span class="s1">r)</span>
+            <span class="s3">not in </span><span class="s1">orm_util._none_set</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">AssertionError(</span>
+                <span class="s5">f&quot;Dependency rule on column '</span><span class="s6">{</span><span class="s1">l</span><span class="s6">}</span><span class="s5">' &quot;</span>
+                <span class="s5">&quot;tried to blank-out primary key &quot;</span>
+                <span class="s5">f&quot;column '</span><span class="s6">{</span><span class="s1">r</span><span class="s6">}</span><span class="s5">' on instance '</span><span class="s6">{</span><span class="s1">orm_util.state_str(dest)</span><span class="s6">}</span><span class="s5">'&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">dest_mapper._set_state_attr_by_column(dest</span><span class="s4">, </span><span class="s1">dest.dict</span><span class="s4">, </span><span class="s1">r</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">exc.UnmappedColumnError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">_raise_col_to_prop(</span><span class="s3">True</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s1">dest_mapper</span><span class="s4">, </span><span class="s1">r</span><span class="s4">, </span><span class="s1">err)</span>
+
+
+<span class="s3">def </span><span class="s1">update(source</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">dest</span><span class="s4">, </span><span class="s1">old_prefix</span><span class="s4">, </span><span class="s1">synchronize_pairs):</span>
+    <span class="s3">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s3">in </span><span class="s1">synchronize_pairs:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">oldvalue = source_mapper._get_committed_attr_by_column(</span>
+                <span class="s1">source.obj()</span><span class="s4">, </span><span class="s1">l</span>
+            <span class="s1">)</span>
+            <span class="s1">value = source_mapper._get_state_attr_by_column(</span>
+                <span class="s1">source</span><span class="s4">, </span><span class="s1">source.dict</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s1">passive=PassiveFlag.PASSIVE_OFF</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">exc.UnmappedColumnError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">_raise_col_to_prop(</span><span class="s3">False</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s1">r</span><span class="s4">, </span><span class="s1">err)</span>
+        <span class="s1">dest[r.key] = value</span>
+        <span class="s1">dest[old_prefix + r.key] = oldvalue</span>
+
+
+<span class="s3">def </span><span class="s1">populate_dict(source</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">synchronize_pairs):</span>
+    <span class="s3">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s3">in </span><span class="s1">synchronize_pairs:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">value = source_mapper._get_state_attr_by_column(</span>
+                <span class="s1">source</span><span class="s4">, </span><span class="s1">source.dict</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s1">passive=PassiveFlag.PASSIVE_OFF</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">exc.UnmappedColumnError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">_raise_col_to_prop(</span><span class="s3">False</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s1">r</span><span class="s4">, </span><span class="s1">err)</span>
+
+        <span class="s1">dict_[r.key] = value</span>
+
+
+<span class="s3">def </span><span class="s1">source_modified(uowcommit</span><span class="s4">, </span><span class="s1">source</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">synchronize_pairs):</span>
+    <span class="s2">&quot;&quot;&quot;return true if the source object has changes from an old to a 
+    new value on the given synchronize pairs 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s3">in </span><span class="s1">synchronize_pairs:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">prop = source_mapper._columntoproperty[l]</span>
+        <span class="s3">except </span><span class="s1">exc.UnmappedColumnError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">_raise_col_to_prop(</span><span class="s3">False</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">l</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s1">r</span><span class="s4">, </span><span class="s1">err)</span>
+        <span class="s1">history = uowcommit.get_attribute_history(</span>
+            <span class="s1">source</span><span class="s4">, </span><span class="s1">prop.key</span><span class="s4">, </span><span class="s1">PassiveFlag.PASSIVE_NO_INITIALIZE</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">bool(history.deleted):</span>
+            <span class="s3">return True</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return False</span>
+
+
+<span class="s3">def </span><span class="s1">_raise_col_to_prop(</span>
+    <span class="s1">isdest</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">source_column</span><span class="s4">, </span><span class="s1">dest_mapper</span><span class="s4">, </span><span class="s1">dest_column</span><span class="s4">, </span><span class="s1">err</span>
+<span class="s1">):</span>
+    <span class="s3">if </span><span class="s1">isdest:</span>
+        <span class="s3">raise </span><span class="s1">exc.UnmappedColumnError(</span>
+            <span class="s5">&quot;Can't execute sync rule for &quot;</span>
+            <span class="s5">&quot;destination column '%s'; mapper '%s' does not map &quot;</span>
+            <span class="s5">&quot;this column.  Try using an explicit `foreign_keys` &quot;</span>
+            <span class="s5">&quot;collection which does not include this column (or use &quot;</span>
+            <span class="s5">&quot;a viewonly=True relation).&quot; </span><span class="s1">% (dest_column</span><span class="s4">, </span><span class="s1">dest_mapper)</span>
+        <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">exc.UnmappedColumnError(</span>
+            <span class="s5">&quot;Can't execute sync rule for &quot;</span>
+            <span class="s5">&quot;source column '%s'; mapper '%s' does not map this &quot;</span>
+            <span class="s5">&quot;column.  Try using an explicit `foreign_keys` &quot;</span>
+            <span class="s5">&quot;collection which does not include destination column &quot;</span>
+            <span class="s5">&quot;'%s' (or use a viewonly=True relation).&quot;</span>
+            <span class="s1">% (source_column</span><span class="s4">, </span><span class="s1">source_mapper</span><span class="s4">, </span><span class="s1">dest_column)</span>
+        <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+</pre>
+</body>
+</html>

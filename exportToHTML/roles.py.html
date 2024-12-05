@@ -1,0 +1,345 @@
+<html>
+<head>
+<title>roles.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+roles.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/roles.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Generic</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TypeVar</span>
+
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Literal</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">._typing </span><span class="s2">import </span><span class="s1">_PropagateAttrsType</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">Label</span>
+    <span class="s2">from </span><span class="s1">.selectable </span><span class="s2">import </span><span class="s1">_SelectIterable</span>
+    <span class="s2">from </span><span class="s1">.selectable </span><span class="s2">import </span><span class="s1">FromClause</span>
+    <span class="s2">from </span><span class="s1">.selectable </span><span class="s2">import </span><span class="s1">Subquery</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s3">&quot;_T&quot;</span><span class="s4">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_T_co = TypeVar(</span><span class="s3">&quot;_T_co&quot;</span><span class="s4">, </span><span class="s1">bound=Any</span><span class="s4">, </span><span class="s1">covariant=</span><span class="s2">True</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">SQLRole:</span>
+    <span class="s5">&quot;&quot;&quot;Define a &quot;role&quot; within a SQL statement structure. 
+ 
+    Classes within SQL Core participate within SQLRole hierarchies in order 
+    to more accurately indicate where they may be used within SQL statements 
+    of all types. 
+ 
+    .. versionadded:: 1.4 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">allows_lambda = </span><span class="s2">False</span>
+    <span class="s1">uses_inspection = </span><span class="s2">False</span>
+
+
+<span class="s2">class </span><span class="s1">UsesInspection:</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_post_inspect: Literal[</span><span class="s2">None</span><span class="s1">] = </span><span class="s2">None</span>
+    <span class="s1">uses_inspection = </span><span class="s2">True</span>
+
+
+<span class="s2">class </span><span class="s1">AllowsLambdaRole:</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">allows_lambda = </span><span class="s2">True</span>
+
+
+<span class="s2">class </span><span class="s1">HasCacheKeyRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;Cacheable Core or ORM object&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">ExecutableOptionRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;ExecutionOption Core or ORM object&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">LiteralValueRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;Literal Python value&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">ColumnArgumentRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;Column expression&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">ColumnArgumentOrKeyRole(ColumnArgumentRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;Column expression or string key&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">StrAsPlainColumnRole(ColumnArgumentRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;Column expression or string key&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">ColumnListRole(SQLRole):</span>
+    <span class="s5">&quot;&quot;&quot;Elements suitable for forming comma separated lists of expressions.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">StringRole(SQLRole):</span>
+    <span class="s5">&quot;&quot;&quot;mixin indicating a role that results in strings&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">TruncatedLabelRole(StringRole</span><span class="s4">, </span><span class="s1">SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;String SQL identifier&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">ColumnsClauseRole(AllowsLambdaRole</span><span class="s4">, </span><span class="s1">UsesInspection</span><span class="s4">, </span><span class="s1">ColumnListRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = (</span>
+        <span class="s3">&quot;Column expression, FROM clause, or other columns clause element&quot;</span>
+    <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">_select_iterable(self) -&gt; _SelectIterable:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s2">class </span><span class="s1">TypedColumnsClauseRole(Generic[_T_co]</span><span class="s4">, </span><span class="s1">SQLRole):</span>
+    <span class="s5">&quot;&quot;&quot;element-typed form of ColumnsClauseRole&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">LimitOffsetRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;LIMIT / OFFSET expression&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">ByOfRole(ColumnListRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;GROUP BY / OF / etc. expression&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">GroupByRole(AllowsLambdaRole</span><span class="s4">, </span><span class="s1">UsesInspection</span><span class="s4">, </span><span class="s1">ByOfRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s0"># note there's a special case right now where you can pass a whole</span>
+    <span class="s0"># ORM entity to group_by() and it splits out.   we may not want to keep</span>
+    <span class="s0"># this around</span>
+
+    <span class="s1">_role_name = </span><span class="s3">&quot;GROUP BY expression&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">OrderByRole(AllowsLambdaRole</span><span class="s4">, </span><span class="s1">ByOfRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;ORDER BY expression&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">StructuralRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">StatementOptionRole(StructuralRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;statement sub-expression element&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">OnClauseRole(AllowsLambdaRole</span><span class="s4">, </span><span class="s1">StructuralRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = (</span>
+        <span class="s3">&quot;ON clause, typically a SQL expression or &quot;</span>
+        <span class="s3">&quot;ORM relationship attribute&quot;</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">WhereHavingRole(OnClauseRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;SQL expression for WHERE/HAVING role&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">ExpressionElementRole(TypedColumnsClauseRole[_T_co]):</span>
+    <span class="s0"># note when using generics for ExpressionElementRole,</span>
+    <span class="s0"># the generic type needs to be in</span>
+    <span class="s0"># sqlalchemy.sql.coercions._impl_lookup mapping also.</span>
+    <span class="s0"># these are set up for basic types like int, bool, str, float</span>
+    <span class="s0"># right now</span>
+
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;SQL expression element&quot;</span>
+
+    <span class="s2">def </span><span class="s1">label(self</span><span class="s4">, </span><span class="s1">name: Optional[str]) -&gt; Label[_T]:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s2">class </span><span class="s1">ConstExprRole(ExpressionElementRole[_T]):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;Constant True/False/None expression&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">LabeledColumnExprRole(ExpressionElementRole[_T]):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">BinaryElementRole(ExpressionElementRole[_T]):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;SQL expression element or literal value&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">InElementRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = (</span>
+        <span class="s3">&quot;IN expression list, SELECT construct, or bound parameter object&quot;</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">JoinTargetRole(AllowsLambdaRole</span><span class="s4">, </span><span class="s1">UsesInspection</span><span class="s4">, </span><span class="s1">StructuralRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = (</span>
+        <span class="s3">&quot;Join target, typically a FROM expression, or ORM &quot;</span>
+        <span class="s3">&quot;relationship attribute&quot;</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">FromClauseRole(ColumnsClauseRole</span><span class="s4">, </span><span class="s1">JoinTargetRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;FROM expression, such as a Table or alias() object&quot;</span>
+
+    <span class="s1">_is_subquery = </span><span class="s2">False</span>
+
+    <span class="s1">named_with_column: bool</span>
+
+
+<span class="s2">class </span><span class="s1">StrictFromClauseRole(FromClauseRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s0"># does not allow text() or select() objects</span>
+
+
+<span class="s2">class </span><span class="s1">AnonymizedFromClauseRole(StrictFromClauseRole):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s2">def </span><span class="s1">_anonymous_fromclause(</span>
+            <span class="s1">self</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">name: Optional[str] = </span><span class="s2">None</span><span class="s4">, </span><span class="s1">flat: bool = </span><span class="s2">False</span>
+        <span class="s1">) -&gt; FromClause: ...</span>
+
+
+<span class="s2">class </span><span class="s1">ReturnsRowsRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = (</span>
+        <span class="s3">&quot;Row returning expression such as a SELECT, a FROM clause, or an &quot;</span>
+        <span class="s3">&quot;INSERT/UPDATE/DELETE with RETURNING&quot;</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">StatementRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;Executable SQL or text() construct&quot;</span>
+
+    <span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s1">@util.memoized_property</span>
+        <span class="s2">def </span><span class="s1">_propagate_attrs(self) -&gt; _PropagateAttrsType: ...</span>
+
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">_propagate_attrs = util.EMPTY_DICT</span>
+
+
+<span class="s2">class </span><span class="s1">SelectStatementRole(StatementRole</span><span class="s4">, </span><span class="s1">ReturnsRowsRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;SELECT construct or equivalent text() construct&quot;</span>
+
+    <span class="s2">def </span><span class="s1">subquery(self) -&gt; Subquery:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError(</span>
+            <span class="s3">&quot;All SelectStatementRole objects should implement a &quot;</span>
+            <span class="s3">&quot;.subquery() method.&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">HasCTERole(ReturnsRowsRole):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">IsCTERole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;CTE object&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">CompoundElementRole(AllowsLambdaRole</span><span class="s4">, </span><span class="s1">SQLRole):</span>
+    <span class="s5">&quot;&quot;&quot;SELECT statements inside a CompoundSelect, e.g. UNION, EXTRACT, etc.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = (</span>
+        <span class="s3">&quot;SELECT construct for inclusion in a UNION or other set construct&quot;</span>
+    <span class="s1">)</span>
+
+
+<span class="s0"># TODO: are we using this?</span>
+<span class="s2">class </span><span class="s1">DMLRole(StatementRole):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">DMLTableRole(FromClauseRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;subject table for an INSERT, UPDATE or DELETE&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">DMLColumnRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;SET/VALUES column expression or string key&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">DMLSelectRole(SQLRole):</span>
+    <span class="s5">&quot;&quot;&quot;A SELECT statement embedded in DML, typically INSERT from SELECT&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;SELECT statement or equivalent textual object&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">DDLRole(StatementRole):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">DDLExpressionRole(StructuralRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;SQL expression element for DDL constraint&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">DDLConstraintColumnRole(SQLRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = </span><span class="s3">&quot;String column name or column expression for DDL constraint&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">DDLReferredColumnRole(DDLConstraintColumnRole):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_role_name = (</span>
+        <span class="s3">&quot;String column name or Column object for DDL foreign key constraint&quot;</span>
+    <span class="s1">)</span>
+</pre>
+</body>
+</html>

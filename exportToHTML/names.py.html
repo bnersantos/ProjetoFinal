@@ -1,0 +1,357 @@
+<html>
+<head>
+<title>names.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+names.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># ext/mypy/names.py</span>
+<span class="s0"># Copyright (C) 2021-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">List</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Set</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Tuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">ARG_POS</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">CallExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">ClassDef</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">Decorator</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">Expression</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">FuncDef</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">MemberExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">NameExpr</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">OverloadedFuncDef</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">SymbolNode</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">TypeAlias</span>
+<span class="s2">from </span><span class="s1">mypy.nodes </span><span class="s2">import </span><span class="s1">TypeInfo</span>
+<span class="s2">from </span><span class="s1">mypy.plugin </span><span class="s2">import </span><span class="s1">SemanticAnalyzerPluginInterface</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">CallableType</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">get_proper_type</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">Instance</span>
+<span class="s2">from </span><span class="s1">mypy.types </span><span class="s2">import </span><span class="s1">UnboundType</span>
+
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">util</span>
+
+<span class="s1">COLUMN: int = util.symbol(</span><span class="s3">&quot;COLUMN&quot;</span><span class="s1">)</span>
+<span class="s1">RELATIONSHIP: int = util.symbol(</span><span class="s3">&quot;RELATIONSHIP&quot;</span><span class="s1">)</span>
+<span class="s1">REGISTRY: int = util.symbol(</span><span class="s3">&quot;REGISTRY&quot;</span><span class="s1">)</span>
+<span class="s1">COLUMN_PROPERTY: int = util.symbol(</span><span class="s3">&quot;COLUMN_PROPERTY&quot;</span><span class="s1">)</span>
+<span class="s1">TYPEENGINE: int = util.symbol(</span><span class="s3">&quot;TYPEENGNE&quot;</span><span class="s1">)</span>
+<span class="s1">MAPPED: int = util.symbol(</span><span class="s3">&quot;MAPPED&quot;</span><span class="s1">)</span>
+<span class="s1">DECLARATIVE_BASE: int = util.symbol(</span><span class="s3">&quot;DECLARATIVE_BASE&quot;</span><span class="s1">)</span>
+<span class="s1">DECLARATIVE_META: int = util.symbol(</span><span class="s3">&quot;DECLARATIVE_META&quot;</span><span class="s1">)</span>
+<span class="s1">MAPPED_DECORATOR: int = util.symbol(</span><span class="s3">&quot;MAPPED_DECORATOR&quot;</span><span class="s1">)</span>
+<span class="s1">SYNONYM_PROPERTY: int = util.symbol(</span><span class="s3">&quot;SYNONYM_PROPERTY&quot;</span><span class="s1">)</span>
+<span class="s1">COMPOSITE_PROPERTY: int = util.symbol(</span><span class="s3">&quot;COMPOSITE_PROPERTY&quot;</span><span class="s1">)</span>
+<span class="s1">DECLARED_ATTR: int = util.symbol(</span><span class="s3">&quot;DECLARED_ATTR&quot;</span><span class="s1">)</span>
+<span class="s1">MAPPER_PROPERTY: int = util.symbol(</span><span class="s3">&quot;MAPPER_PROPERTY&quot;</span><span class="s1">)</span>
+<span class="s1">AS_DECLARATIVE: int = util.symbol(</span><span class="s3">&quot;AS_DECLARATIVE&quot;</span><span class="s1">)</span>
+<span class="s1">AS_DECLARATIVE_BASE: int = util.symbol(</span><span class="s3">&quot;AS_DECLARATIVE_BASE&quot;</span><span class="s1">)</span>
+<span class="s1">DECLARATIVE_MIXIN: int = util.symbol(</span><span class="s3">&quot;DECLARATIVE_MIXIN&quot;</span><span class="s1">)</span>
+<span class="s1">QUERY_EXPRESSION: int = util.symbol(</span><span class="s3">&quot;QUERY_EXPRESSION&quot;</span><span class="s1">)</span>
+
+<span class="s0"># names that must succeed with mypy.api.named_type</span>
+<span class="s1">NAMED_TYPE_BUILTINS_OBJECT = </span><span class="s3">&quot;builtins.object&quot;</span>
+<span class="s1">NAMED_TYPE_BUILTINS_STR = </span><span class="s3">&quot;builtins.str&quot;</span>
+<span class="s1">NAMED_TYPE_BUILTINS_LIST = </span><span class="s3">&quot;builtins.list&quot;</span>
+<span class="s1">NAMED_TYPE_SQLA_MAPPED = </span><span class="s3">&quot;sqlalchemy.orm.base.Mapped&quot;</span>
+
+<span class="s1">_RelFullNames = {</span>
+    <span class="s3">&quot;sqlalchemy.orm.relationships.Relationship&quot;</span><span class="s4">,</span>
+    <span class="s3">&quot;sqlalchemy.orm.relationships.RelationshipProperty&quot;</span><span class="s4">,</span>
+    <span class="s3">&quot;sqlalchemy.orm.relationships._RelationshipDeclared&quot;</span><span class="s4">,</span>
+    <span class="s3">&quot;sqlalchemy.orm.Relationship&quot;</span><span class="s4">,</span>
+    <span class="s3">&quot;sqlalchemy.orm.RelationshipProperty&quot;</span><span class="s4">,</span>
+<span class="s1">}</span>
+
+<span class="s1">_lookup: Dict[str</span><span class="s4">, </span><span class="s1">Tuple[int</span><span class="s4">, </span><span class="s1">Set[str]]] = {</span>
+    <span class="s3">&quot;Column&quot;</span><span class="s1">: (</span>
+        <span class="s1">COLUMN</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.sql.schema.Column&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.sql.Column&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;Relationship&quot;</span><span class="s1">: (RELATIONSHIP</span><span class="s4">, </span><span class="s1">_RelFullNames)</span><span class="s4">,</span>
+    <span class="s3">&quot;RelationshipProperty&quot;</span><span class="s1">: (RELATIONSHIP</span><span class="s4">, </span><span class="s1">_RelFullNames)</span><span class="s4">,</span>
+    <span class="s3">&quot;_RelationshipDeclared&quot;</span><span class="s1">: (RELATIONSHIP</span><span class="s4">, </span><span class="s1">_RelFullNames)</span><span class="s4">,</span>
+    <span class="s3">&quot;registry&quot;</span><span class="s1">: (</span>
+        <span class="s1">REGISTRY</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.decl_api.registry&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.registry&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;ColumnProperty&quot;</span><span class="s1">: (</span>
+        <span class="s1">COLUMN_PROPERTY</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.properties.MappedSQLExpression&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.MappedSQLExpression&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.properties.ColumnProperty&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.ColumnProperty&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;MappedSQLExpression&quot;</span><span class="s1">: (</span>
+        <span class="s1">COLUMN_PROPERTY</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.properties.MappedSQLExpression&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.MappedSQLExpression&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.properties.ColumnProperty&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.ColumnProperty&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;Synonym&quot;</span><span class="s1">: (</span>
+        <span class="s1">SYNONYM_PROPERTY</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.descriptor_props.Synonym&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.Synonym&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.descriptor_props.SynonymProperty&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.SynonymProperty&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;SynonymProperty&quot;</span><span class="s1">: (</span>
+        <span class="s1">SYNONYM_PROPERTY</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.descriptor_props.Synonym&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.Synonym&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.descriptor_props.SynonymProperty&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.SynonymProperty&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;Composite&quot;</span><span class="s1">: (</span>
+        <span class="s1">COMPOSITE_PROPERTY</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.descriptor_props.Composite&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.Composite&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.descriptor_props.CompositeProperty&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.CompositeProperty&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;CompositeProperty&quot;</span><span class="s1">: (</span>
+        <span class="s1">COMPOSITE_PROPERTY</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.descriptor_props.Composite&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.Composite&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.descriptor_props.CompositeProperty&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.CompositeProperty&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;MapperProperty&quot;</span><span class="s1">: (</span>
+        <span class="s1">MAPPER_PROPERTY</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.interfaces.MapperProperty&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.MapperProperty&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;TypeEngine&quot;</span><span class="s1">: (TYPEENGINE</span><span class="s4">, </span><span class="s1">{</span><span class="s3">&quot;sqlalchemy.sql.type_api.TypeEngine&quot;</span><span class="s1">})</span><span class="s4">,</span>
+    <span class="s3">&quot;Mapped&quot;</span><span class="s1">: (MAPPED</span><span class="s4">, </span><span class="s1">{NAMED_TYPE_SQLA_MAPPED})</span><span class="s4">,</span>
+    <span class="s3">&quot;declarative_base&quot;</span><span class="s1">: (</span>
+        <span class="s1">DECLARATIVE_BASE</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.ext.declarative.declarative_base&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.declarative_base&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.decl_api.declarative_base&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;DeclarativeMeta&quot;</span><span class="s1">: (</span>
+        <span class="s1">DECLARATIVE_META</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.ext.declarative.DeclarativeMeta&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.DeclarativeMeta&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.decl_api.DeclarativeMeta&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;mapped&quot;</span><span class="s1">: (</span>
+        <span class="s1">MAPPED_DECORATOR</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.decl_api.registry.mapped&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.registry.mapped&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;as_declarative&quot;</span><span class="s1">: (</span>
+        <span class="s1">AS_DECLARATIVE</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.ext.declarative.as_declarative&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.decl_api.as_declarative&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.as_declarative&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;as_declarative_base&quot;</span><span class="s1">: (</span>
+        <span class="s1">AS_DECLARATIVE_BASE</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.decl_api.registry.as_declarative_base&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.registry.as_declarative_base&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;declared_attr&quot;</span><span class="s1">: (</span>
+        <span class="s1">DECLARED_ATTR</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.decl_api.declared_attr&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.declared_attr&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;declarative_mixin&quot;</span><span class="s1">: (</span>
+        <span class="s1">DECLARATIVE_MIXIN</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.decl_api.declarative_mixin&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm.declarative_mixin&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+    <span class="s3">&quot;query_expression&quot;</span><span class="s1">: (</span>
+        <span class="s1">QUERY_EXPRESSION</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;sqlalchemy.orm.query_expression&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;sqlalchemy.orm._orm_constructors.query_expression&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span><span class="s4">,</span>
+<span class="s1">}</span>
+
+
+<span class="s2">def </span><span class="s1">has_base_type_id(info: TypeInfo</span><span class="s4">, </span><span class="s1">type_id: int) -&gt; bool:</span>
+    <span class="s2">for </span><span class="s1">mr </span><span class="s2">in </span><span class="s1">info.mro:</span>
+        <span class="s1">check_type_id</span><span class="s4">, </span><span class="s1">fullnames = _lookup.get(mr.name</span><span class="s4">, </span><span class="s1">(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">))</span>
+        <span class="s2">if </span><span class="s1">check_type_id == type_id:</span>
+            <span class="s2">break</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">if </span><span class="s1">fullnames </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">return </span><span class="s1">mr.fullname </span><span class="s2">in </span><span class="s1">fullnames</span>
+
+
+<span class="s2">def </span><span class="s1">mro_has_id(mro: List[TypeInfo]</span><span class="s4">, </span><span class="s1">type_id: int) -&gt; bool:</span>
+    <span class="s2">for </span><span class="s1">mr </span><span class="s2">in </span><span class="s1">mro:</span>
+        <span class="s1">check_type_id</span><span class="s4">, </span><span class="s1">fullnames = _lookup.get(mr.name</span><span class="s4">, </span><span class="s1">(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">))</span>
+        <span class="s2">if </span><span class="s1">check_type_id == type_id:</span>
+            <span class="s2">break</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">if </span><span class="s1">fullnames </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">return </span><span class="s1">mr.fullname </span><span class="s2">in </span><span class="s1">fullnames</span>
+
+
+<span class="s2">def </span><span class="s1">type_id_for_unbound_type(</span>
+    <span class="s1">type_: UnboundType</span><span class="s4">, </span><span class="s1">cls: ClassDef</span><span class="s4">, </span><span class="s1">api: SemanticAnalyzerPluginInterface</span>
+<span class="s1">) -&gt; Optional[int]:</span>
+    <span class="s1">sym = api.lookup_qualified(type_.name</span><span class="s4">, </span><span class="s1">type_)</span>
+    <span class="s2">if </span><span class="s1">sym </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">isinstance(sym.node</span><span class="s4">, </span><span class="s1">TypeAlias):</span>
+            <span class="s1">target_type = get_proper_type(sym.node.target)</span>
+            <span class="s2">if </span><span class="s1">isinstance(target_type</span><span class="s4">, </span><span class="s1">Instance):</span>
+                <span class="s2">return </span><span class="s1">type_id_for_named_node(target_type.type)</span>
+        <span class="s2">elif </span><span class="s1">isinstance(sym.node</span><span class="s4">, </span><span class="s1">TypeInfo):</span>
+            <span class="s2">return </span><span class="s1">type_id_for_named_node(sym.node)</span>
+
+    <span class="s2">return None</span>
+
+
+<span class="s2">def </span><span class="s1">type_id_for_callee(callee: Expression) -&gt; Optional[int]:</span>
+    <span class="s2">if </span><span class="s1">isinstance(callee</span><span class="s4">, </span><span class="s1">(MemberExpr</span><span class="s4">, </span><span class="s1">NameExpr)):</span>
+        <span class="s2">if </span><span class="s1">isinstance(callee.node</span><span class="s4">, </span><span class="s1">Decorator) </span><span class="s2">and </span><span class="s1">isinstance(</span>
+            <span class="s1">callee.node.func</span><span class="s4">, </span><span class="s1">FuncDef</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">callee.node.func.type </span><span class="s2">and </span><span class="s1">isinstance(</span>
+                <span class="s1">callee.node.func.type</span><span class="s4">, </span><span class="s1">CallableType</span>
+            <span class="s1">):</span>
+                <span class="s1">ret_type = get_proper_type(callee.node.func.type.ret_type)</span>
+
+                <span class="s2">if </span><span class="s1">isinstance(ret_type</span><span class="s4">, </span><span class="s1">Instance):</span>
+                    <span class="s2">return </span><span class="s1">type_id_for_fullname(ret_type.type.fullname)</span>
+
+            <span class="s2">return None</span>
+
+        <span class="s2">elif </span><span class="s1">isinstance(callee.node</span><span class="s4">, </span><span class="s1">OverloadedFuncDef):</span>
+            <span class="s2">if </span><span class="s1">(</span>
+                <span class="s1">callee.node.impl</span>
+                <span class="s2">and </span><span class="s1">callee.node.impl.type</span>
+                <span class="s2">and </span><span class="s1">isinstance(callee.node.impl.type</span><span class="s4">, </span><span class="s1">CallableType)</span>
+            <span class="s1">):</span>
+                <span class="s1">ret_type = get_proper_type(callee.node.impl.type.ret_type)</span>
+
+                <span class="s2">if </span><span class="s1">isinstance(ret_type</span><span class="s4">, </span><span class="s1">Instance):</span>
+                    <span class="s2">return </span><span class="s1">type_id_for_fullname(ret_type.type.fullname)</span>
+
+            <span class="s2">return None</span>
+        <span class="s2">elif </span><span class="s1">isinstance(callee.node</span><span class="s4">, </span><span class="s1">FuncDef):</span>
+            <span class="s2">if </span><span class="s1">callee.node.type </span><span class="s2">and </span><span class="s1">isinstance(callee.node.type</span><span class="s4">, </span><span class="s1">CallableType):</span>
+                <span class="s1">ret_type = get_proper_type(callee.node.type.ret_type)</span>
+
+                <span class="s2">if </span><span class="s1">isinstance(ret_type</span><span class="s4">, </span><span class="s1">Instance):</span>
+                    <span class="s2">return </span><span class="s1">type_id_for_fullname(ret_type.type.fullname)</span>
+
+            <span class="s2">return None</span>
+        <span class="s2">elif </span><span class="s1">isinstance(callee.node</span><span class="s4">, </span><span class="s1">TypeAlias):</span>
+            <span class="s1">target_type = get_proper_type(callee.node.target)</span>
+            <span class="s2">if </span><span class="s1">isinstance(target_type</span><span class="s4">, </span><span class="s1">Instance):</span>
+                <span class="s2">return </span><span class="s1">type_id_for_fullname(target_type.type.fullname)</span>
+        <span class="s2">elif </span><span class="s1">isinstance(callee.node</span><span class="s4">, </span><span class="s1">TypeInfo):</span>
+            <span class="s2">return </span><span class="s1">type_id_for_named_node(callee)</span>
+    <span class="s2">return None</span>
+
+
+<span class="s2">def </span><span class="s1">type_id_for_named_node(</span>
+    <span class="s1">node: Union[NameExpr</span><span class="s4">, </span><span class="s1">MemberExpr</span><span class="s4">, </span><span class="s1">SymbolNode]</span>
+<span class="s1">) -&gt; Optional[int]:</span>
+    <span class="s1">type_id</span><span class="s4">, </span><span class="s1">fullnames = _lookup.get(node.name</span><span class="s4">, </span><span class="s1">(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">))</span>
+
+    <span class="s2">if </span><span class="s1">type_id </span><span class="s2">is None or </span><span class="s1">fullnames </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">return None</span>
+    <span class="s2">elif </span><span class="s1">node.fullname </span><span class="s2">in </span><span class="s1">fullnames:</span>
+        <span class="s2">return </span><span class="s1">type_id</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return None</span>
+
+
+<span class="s2">def </span><span class="s1">type_id_for_fullname(fullname: str) -&gt; Optional[int]:</span>
+    <span class="s1">tokens = fullname.split(</span><span class="s3">&quot;.&quot;</span><span class="s1">)</span>
+    <span class="s1">immediate = tokens[-</span><span class="s5">1</span><span class="s1">]</span>
+
+    <span class="s1">type_id</span><span class="s4">, </span><span class="s1">fullnames = _lookup.get(immediate</span><span class="s4">, </span><span class="s1">(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">))</span>
+
+    <span class="s2">if </span><span class="s1">type_id </span><span class="s2">is None or </span><span class="s1">fullnames </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">return None</span>
+    <span class="s2">elif </span><span class="s1">fullname </span><span class="s2">in </span><span class="s1">fullnames:</span>
+        <span class="s2">return </span><span class="s1">type_id</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return None</span>
+
+
+<span class="s2">def </span><span class="s1">expr_to_mapped_constructor(expr: Expression) -&gt; CallExpr:</span>
+    <span class="s1">column_descriptor = NameExpr(</span><span class="s3">&quot;__sa_Mapped&quot;</span><span class="s1">)</span>
+    <span class="s1">column_descriptor.fullname = NAMED_TYPE_SQLA_MAPPED</span>
+    <span class="s1">member_expr = MemberExpr(column_descriptor</span><span class="s4">, </span><span class="s3">&quot;_empty_constructor&quot;</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">CallExpr(</span>
+        <span class="s1">member_expr</span><span class="s4">,</span>
+        <span class="s1">[expr]</span><span class="s4">,</span>
+        <span class="s1">[ARG_POS]</span><span class="s4">,</span>
+        <span class="s1">[</span><span class="s3">&quot;arg1&quot;</span><span class="s1">]</span><span class="s4">,</span>
+    <span class="s1">)</span>
+</pre>
+</body>
+</html>

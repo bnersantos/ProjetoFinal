@@ -1,0 +1,685 @@
+<html>
+<head>
+<title>pg8000.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+.s6 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pg8000.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/pg8000.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors &lt;see AUTHORS</span>
+<span class="s0"># file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">r&quot;&quot;&quot; 
+.. dialect:: postgresql+pg8000 
+    :name: pg8000 
+    :dbapi: pg8000 
+    :connectstring: postgresql+pg8000://user:password@host:port/dbname[?key=value&amp;key=value...] 
+    :url: https://pypi.org/project/pg8000/ 
+ 
+.. versionchanged:: 1.4  The pg8000 dialect has been updated for version 
+   1.16.6 and higher, and is again part of SQLAlchemy's continuous integration 
+   with full feature support. 
+ 
+.. _pg8000_unicode: 
+ 
+Unicode 
+------- 
+ 
+pg8000 will encode / decode string values between it and the server using the 
+PostgreSQL ``client_encoding`` parameter; by default this is the value in 
+the ``postgresql.conf`` file, which often defaults to ``SQL_ASCII``. 
+Typically, this can be changed to ``utf-8``, as a more useful default:: 
+ 
+    #client_encoding = sql_ascii # actually, defaults to database 
+                                 # encoding 
+    client_encoding = utf8 
+ 
+The ``client_encoding`` can be overridden for a session by executing the SQL: 
+ 
+SET CLIENT_ENCODING TO 'utf8'; 
+ 
+SQLAlchemy will execute this SQL on all new connections based on the value 
+passed to :func:`_sa.create_engine` using the ``client_encoding`` parameter:: 
+ 
+    engine = create_engine( 
+        &quot;postgresql+pg8000://user:pass@host/dbname&quot;, client_encoding='utf8') 
+ 
+.. _pg8000_ssl: 
+ 
+SSL Connections 
+--------------- 
+ 
+pg8000 accepts a Python ``SSLContext`` object which may be specified using the 
+:paramref:`_sa.create_engine.connect_args` dictionary:: 
+ 
+    import ssl 
+    ssl_context = ssl.create_default_context() 
+    engine = sa.create_engine( 
+        &quot;postgresql+pg8000://scott:tiger@192.168.0.199/test&quot;, 
+        connect_args={&quot;ssl_context&quot;: ssl_context}, 
+    ) 
+ 
+If the server uses an automatically-generated certificate that is self-signed 
+or does not match the host name (as seen from the client), it may also be 
+necessary to disable hostname checking:: 
+ 
+    import ssl 
+    ssl_context = ssl.create_default_context() 
+    ssl_context.check_hostname = False 
+    ssl_context.verify_mode = ssl.CERT_NONE 
+    engine = sa.create_engine( 
+        &quot;postgresql+pg8000://scott:tiger@192.168.0.199/test&quot;, 
+        connect_args={&quot;ssl_context&quot;: ssl_context}, 
+    ) 
+ 
+.. _pg8000_isolation_level: 
+ 
+pg8000 Transaction Isolation Level 
+------------------------------------- 
+ 
+The pg8000 dialect offers the same isolation level settings as that 
+of the :ref:`psycopg2 &lt;psycopg2_isolation_level&gt;` dialect: 
+ 
+* ``READ COMMITTED`` 
+* ``READ UNCOMMITTED`` 
+* ``REPEATABLE READ`` 
+* ``SERIALIZABLE`` 
+* ``AUTOCOMMIT`` 
+ 
+.. seealso:: 
+ 
+    :ref:`postgresql_isolation_level` 
+ 
+    :ref:`psycopg2_isolation_level` 
+ 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+<span class="s3">import </span><span class="s1">decimal</span>
+<span class="s3">import </span><span class="s1">re</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">ranges</span>
+<span class="s3">from </span><span class="s1">.array </span><span class="s3">import </span><span class="s1">ARRAY </span><span class="s3">as </span><span class="s1">PGARRAY</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_DECIMAL_TYPES</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_FLOAT_TYPES</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_INT_TYPES</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">ENUM</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">INTERVAL</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGCompiler</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGDialect</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGExecutionContext</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGIdentifierPreparer</span>
+<span class="s3">from </span><span class="s1">.json </span><span class="s3">import </span><span class="s1">JSON</span>
+<span class="s3">from </span><span class="s1">.json </span><span class="s3">import </span><span class="s1">JSONB</span>
+<span class="s3">from </span><span class="s1">.json </span><span class="s3">import </span><span class="s1">JSONPathType</span>
+<span class="s3">from </span><span class="s1">.pg_catalog </span><span class="s3">import </span><span class="s1">_SpaceVector</span>
+<span class="s3">from </span><span class="s1">.pg_catalog </span><span class="s3">import </span><span class="s1">OIDVECTOR</span>
+<span class="s3">from </span><span class="s1">.types </span><span class="s3">import </span><span class="s1">CITEXT</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">processors</span>
+<span class="s3">from </span><span class="s1">...sql </span><span class="s3">import </span><span class="s1">sqltypes</span>
+<span class="s3">from </span><span class="s1">...sql.elements </span><span class="s3">import </span><span class="s1">quoted_name</span>
+
+
+<span class="s3">class </span><span class="s1">_PGString(sqltypes.String):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGNumeric(sqltypes.Numeric):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">if </span><span class="s1">self.asdecimal:</span>
+            <span class="s3">if </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_FLOAT_TYPES:</span>
+                <span class="s3">return </span><span class="s1">processors.to_decimal_processor_factory(</span>
+                    <span class="s1">decimal.Decimal</span><span class="s4">, </span><span class="s1">self._effective_decimal_return_scale</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_DECIMAL_TYPES </span><span class="s3">or </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_INT_TYPES:</span>
+                <span class="s0"># pg8000 returns Decimal natively for 1700</span>
+                <span class="s3">return None</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s2">&quot;Unknown PG numeric type: %d&quot; </span><span class="s1">% coltype</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_FLOAT_TYPES:</span>
+                <span class="s0"># pg8000 returns float natively for 701</span>
+                <span class="s3">return None</span>
+            <span class="s3">elif </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_DECIMAL_TYPES </span><span class="s3">or </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_INT_TYPES:</span>
+                <span class="s3">return </span><span class="s1">processors.to_float</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s2">&quot;Unknown PG numeric type: %d&quot; </span><span class="s1">% coltype</span>
+                <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_PGFloat(_PGNumeric</span><span class="s4">, </span><span class="s1">sqltypes.Float):</span>
+    <span class="s1">__visit_name__ = </span><span class="s2">&quot;float&quot;</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGNumericNoBind(_PGNumeric):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSON(JSON):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSONB(JSONB):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSONIndexType(sqltypes.JSON.JSONIndexType):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s4">, </span><span class="s1">dbapi):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span><span class="s2">&quot;should not be here&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSONIntIndexType(sqltypes.JSON.JSONIntIndexType):</span>
+    <span class="s1">__visit_name__ = </span><span class="s2">&quot;json_int_index&quot;</span>
+
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSONStrIndexType(sqltypes.JSON.JSONStrIndexType):</span>
+    <span class="s1">__visit_name__ = </span><span class="s2">&quot;json_str_index&quot;</span>
+
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSONPathType(JSONPathType):</span>
+    <span class="s3">pass</span>
+
+    <span class="s0"># DBAPI type 1009</span>
+
+
+<span class="s3">class </span><span class="s1">_PGEnum(ENUM):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s4">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.UNKNOWN</span>
+
+
+<span class="s3">class </span><span class="s1">_PGInterval(INTERVAL):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s4">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.INTERVAL</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">adapt_emulated_to_native(cls</span><span class="s4">, </span><span class="s1">interval</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">_PGInterval(precision=interval.second_precision)</span>
+
+
+<span class="s3">class </span><span class="s1">_PGTimeStamp(sqltypes.DateTime):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGDate(sqltypes.Date):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGTime(sqltypes.Time):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGInteger(sqltypes.Integer):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGSmallInteger(sqltypes.SmallInteger):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGNullType(sqltypes.NullType):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">_PGBigInteger(sqltypes.BigInteger):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGBoolean(sqltypes.Boolean):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGARRAY(PGARRAY):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGOIDVECTOR(_SpaceVector</span><span class="s4">, </span><span class="s1">OIDVECTOR):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">_Pg8000Range(ranges.AbstractSingleRangeImpl):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s1">pg8000_Range = dialect.dbapi.Range</span>
+
+        <span class="s3">def </span><span class="s1">to_range(value):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">ranges.Range):</span>
+                <span class="s1">value = pg8000_Range(</span>
+                    <span class="s1">value.lower</span><span class="s4">, </span><span class="s1">value.upper</span><span class="s4">, </span><span class="s1">value.bounds</span><span class="s4">, </span><span class="s1">value.empty</span>
+                <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">to_range</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">def </span><span class="s1">to_range(value):</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">value = ranges.Range(</span>
+                    <span class="s1">value.lower</span><span class="s4">,</span>
+                    <span class="s1">value.upper</span><span class="s4">,</span>
+                    <span class="s1">bounds=value.bounds</span><span class="s4">,</span>
+                    <span class="s1">empty=value.is_empty</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">to_range</span>
+
+
+<span class="s3">class </span><span class="s1">_Pg8000MultiRange(ranges.AbstractMultiRangeImpl):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s1">pg8000_Range = dialect.dbapi.Range</span>
+
+        <span class="s3">def </span><span class="s1">to_multirange(value):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">list):</span>
+                <span class="s1">mr = []</span>
+                <span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">value:</span>
+                    <span class="s3">if </span><span class="s1">isinstance(v</span><span class="s4">, </span><span class="s1">ranges.Range):</span>
+                        <span class="s1">mr.append(</span>
+                            <span class="s1">pg8000_Range(v.lower</span><span class="s4">, </span><span class="s1">v.upper</span><span class="s4">, </span><span class="s1">v.bounds</span><span class="s4">, </span><span class="s1">v.empty)</span>
+                        <span class="s1">)</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">mr.append(v)</span>
+                <span class="s3">return </span><span class="s1">mr</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">to_multirange</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">def </span><span class="s1">to_multirange(value):</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">ranges.MultiRange(</span>
+                    <span class="s1">ranges.Range(</span>
+                        <span class="s1">v.lower</span><span class="s4">, </span><span class="s1">v.upper</span><span class="s4">, </span><span class="s1">bounds=v.bounds</span><span class="s4">, </span><span class="s1">empty=v.is_empty</span>
+                    <span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">value</span>
+                <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">to_multirange</span>
+
+
+<span class="s1">_server_side_id = util.counter()</span>
+
+
+<span class="s3">class </span><span class="s1">PGExecutionContext_pg8000(PGExecutionContext):</span>
+    <span class="s3">def </span><span class="s1">create_server_side_cursor(self):</span>
+        <span class="s1">ident = </span><span class="s2">&quot;c_%s_%s&quot; </span><span class="s1">% (hex(id(self))[</span><span class="s5">2</span><span class="s1">:]</span><span class="s4">, </span><span class="s1">hex(_server_side_id())[</span><span class="s5">2</span><span class="s1">:])</span>
+        <span class="s3">return </span><span class="s1">ServerSideCursor(self._dbapi_connection.cursor()</span><span class="s4">, </span><span class="s1">ident)</span>
+
+    <span class="s3">def </span><span class="s1">pre_exec(self):</span>
+        <span class="s3">if not </span><span class="s1">self.compiled:</span>
+            <span class="s3">return</span>
+
+
+<span class="s3">class </span><span class="s1">ServerSideCursor:</span>
+    <span class="s1">server_side = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">cursor</span><span class="s4">, </span><span class="s1">ident):</span>
+        <span class="s1">self.ident = ident</span>
+        <span class="s1">self.cursor = cursor</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">connection(self):</span>
+        <span class="s3">return </span><span class="s1">self.cursor.connection</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">rowcount(self):</span>
+        <span class="s3">return </span><span class="s1">self.cursor.rowcount</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">description(self):</span>
+        <span class="s3">return </span><span class="s1">self.cursor.description</span>
+
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">args=()</span><span class="s4">, </span><span class="s1">stream=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">op = </span><span class="s2">&quot;DECLARE &quot; </span><span class="s1">+ self.ident + </span><span class="s2">&quot; NO SCROLL CURSOR FOR &quot; </span><span class="s1">+ operation</span>
+        <span class="s1">self.cursor.execute(op</span><span class="s4">, </span><span class="s1">args</span><span class="s4">, </span><span class="s1">stream=stream)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">executemany(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">param_sets):</span>
+        <span class="s1">self.cursor.executemany(operation</span><span class="s4">, </span><span class="s1">param_sets)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self):</span>
+        <span class="s1">self.cursor.execute(</span><span class="s2">&quot;FETCH FORWARD 1 FROM &quot; </span><span class="s1">+ self.ident)</span>
+        <span class="s3">return </span><span class="s1">self.cursor.fetchone()</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s4">, </span><span class="s1">num=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">num </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.fetchall()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.cursor.execute(</span>
+                <span class="s2">&quot;FETCH FORWARD &quot; </span><span class="s1">+ str(int(num)) + </span><span class="s2">&quot; FROM &quot; </span><span class="s1">+ self.ident</span>
+            <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">self.cursor.fetchall()</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self):</span>
+        <span class="s1">self.cursor.execute(</span><span class="s2">&quot;FETCH FORWARD ALL FROM &quot; </span><span class="s1">+ self.ident)</span>
+        <span class="s3">return </span><span class="s1">self.cursor.fetchall()</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s1">self.cursor.execute(</span><span class="s2">&quot;CLOSE &quot; </span><span class="s1">+ self.ident)</span>
+        <span class="s1">self.cursor.close()</span>
+
+    <span class="s3">def </span><span class="s1">setinputsizes(self</span><span class="s4">, </span><span class="s1">*sizes):</span>
+        <span class="s1">self.cursor.setinputsizes(*sizes)</span>
+
+    <span class="s3">def </span><span class="s1">setoutputsize(self</span><span class="s4">, </span><span class="s1">size</span><span class="s4">, </span><span class="s1">column=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">PGCompiler_pg8000(PGCompiler):</span>
+    <span class="s3">def </span><span class="s1">visit_mod_binary(self</span><span class="s4">, </span><span class="s1">binary</span><span class="s4">, </span><span class="s1">operator</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">self.process(binary.left</span><span class="s4">, </span><span class="s1">**kw)</span>
+            <span class="s1">+ </span><span class="s2">&quot; %% &quot;</span>
+            <span class="s1">+ self.process(binary.right</span><span class="s4">, </span><span class="s1">**kw)</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">PGIdentifierPreparer_pg8000(PGIdentifierPreparer):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">PGIdentifierPreparer.__init__(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">self._double_percents = </span><span class="s3">False</span>
+
+
+<span class="s3">class </span><span class="s1">PGDialect_pg8000(PGDialect):</span>
+    <span class="s1">driver = </span><span class="s2">&quot;pg8000&quot;</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s1">supports_unicode_statements = </span><span class="s3">True</span>
+
+    <span class="s1">supports_unicode_binds = </span><span class="s3">True</span>
+
+    <span class="s1">default_paramstyle = </span><span class="s2">&quot;format&quot;</span>
+    <span class="s1">supports_sane_multi_rowcount = </span><span class="s3">True</span>
+    <span class="s1">execution_ctx_cls = PGExecutionContext_pg8000</span>
+    <span class="s1">statement_compiler = PGCompiler_pg8000</span>
+    <span class="s1">preparer = PGIdentifierPreparer_pg8000</span>
+    <span class="s1">supports_server_side_cursors = </span><span class="s3">True</span>
+
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+    <span class="s0"># reversed as of pg8000 1.16.6.  1.16.5 and lower</span>
+    <span class="s0"># are no longer compatible</span>
+    <span class="s1">description_encoding = </span><span class="s3">None</span>
+    <span class="s0"># description_encoding = &quot;use_encoding&quot;</span>
+
+    <span class="s1">colspecs = util.update_copy(</span>
+        <span class="s1">PGDialect.colspecs</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s1">sqltypes.String: _PGString</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Numeric: _PGNumericNoBind</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Float: _PGFloat</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON: _PGJSON</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Boolean: _PGBoolean</span><span class="s4">,</span>
+            <span class="s1">sqltypes.NullType: _PGNullType</span><span class="s4">,</span>
+            <span class="s1">JSONB: _PGJSONB</span><span class="s4">,</span>
+            <span class="s1">CITEXT: CITEXT</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONPathType: _PGJSONPathType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONIndexType: _PGJSONIndexType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONIntIndexType: _PGJSONIntIndexType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONStrIndexType: _PGJSONStrIndexType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Interval: _PGInterval</span><span class="s4">,</span>
+            <span class="s1">INTERVAL: _PGInterval</span><span class="s4">,</span>
+            <span class="s1">sqltypes.DateTime: _PGTimeStamp</span><span class="s4">,</span>
+            <span class="s1">sqltypes.DateTime: _PGTimeStamp</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Date: _PGDate</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Time: _PGTime</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Integer: _PGInteger</span><span class="s4">,</span>
+            <span class="s1">sqltypes.SmallInteger: _PGSmallInteger</span><span class="s4">,</span>
+            <span class="s1">sqltypes.BigInteger: _PGBigInteger</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Enum: _PGEnum</span><span class="s4">,</span>
+            <span class="s1">sqltypes.ARRAY: _PGARRAY</span><span class="s4">,</span>
+            <span class="s1">OIDVECTOR: _PGOIDVECTOR</span><span class="s4">,</span>
+            <span class="s1">ranges.INT4RANGE: _Pg8000Range</span><span class="s4">,</span>
+            <span class="s1">ranges.INT8RANGE: _Pg8000Range</span><span class="s4">,</span>
+            <span class="s1">ranges.NUMRANGE: _Pg8000Range</span><span class="s4">,</span>
+            <span class="s1">ranges.DATERANGE: _Pg8000Range</span><span class="s4">,</span>
+            <span class="s1">ranges.TSRANGE: _Pg8000Range</span><span class="s4">,</span>
+            <span class="s1">ranges.TSTZRANGE: _Pg8000Range</span><span class="s4">,</span>
+            <span class="s1">ranges.INT4MULTIRANGE: _Pg8000MultiRange</span><span class="s4">,</span>
+            <span class="s1">ranges.INT8MULTIRANGE: _Pg8000MultiRange</span><span class="s4">,</span>
+            <span class="s1">ranges.NUMMULTIRANGE: _Pg8000MultiRange</span><span class="s4">,</span>
+            <span class="s1">ranges.DATEMULTIRANGE: _Pg8000MultiRange</span><span class="s4">,</span>
+            <span class="s1">ranges.TSMULTIRANGE: _Pg8000MultiRange</span><span class="s4">,</span>
+            <span class="s1">ranges.TSTZMULTIRANGE: _Pg8000MultiRange</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">client_encoding=</span><span class="s3">None</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">PGDialect.__init__(self</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">self.client_encoding = client_encoding</span>
+
+        <span class="s3">if </span><span class="s1">self._dbapi_version &lt; (</span><span class="s5">1</span><span class="s4">, </span><span class="s5">16</span><span class="s4">, </span><span class="s5">6</span><span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError(</span><span class="s2">&quot;pg8000 1.16.6 or greater is required&quot;</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self._native_inet_types:</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+                <span class="s2">&quot;The pg8000 dialect does not fully implement &quot;</span>
+                <span class="s2">&quot;ipaddress type handling; INET is supported by default, &quot;</span>
+                <span class="s2">&quot;CIDR is not&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_dbapi_version(self):</span>
+        <span class="s3">if </span><span class="s1">self.dbapi </span><span class="s3">and </span><span class="s1">hasattr(self.dbapi</span><span class="s4">, </span><span class="s2">&quot;__version__&quot;</span><span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">tuple(</span>
+                <span class="s1">[</span>
+                    <span class="s1">int(x)</span>
+                    <span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">re.findall(</span>
+                        <span class="s2">r&quot;(\d+)(?:[-\.]?|$)&quot;</span><span class="s4">, </span><span class="s1">self.dbapi.__version__</span>
+                    <span class="s1">)</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">(</span><span class="s5">99</span><span class="s4">, </span><span class="s5">99</span><span class="s4">, </span><span class="s5">99</span><span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">return </span><span class="s1">__import__(</span><span class="s2">&quot;pg8000&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s1">opts = url.translate_connect_args(username=</span><span class="s2">&quot;user&quot;</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s2">&quot;port&quot; </span><span class="s3">in </span><span class="s1">opts:</span>
+            <span class="s1">opts[</span><span class="s2">&quot;port&quot;</span><span class="s1">] = int(opts[</span><span class="s2">&quot;port&quot;</span><span class="s1">])</span>
+        <span class="s1">opts.update(url.query)</span>
+        <span class="s3">return </span><span class="s1">([]</span><span class="s4">, </span><span class="s1">opts)</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s4">, </span><span class="s1">e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+        <span class="s3">if </span><span class="s1">isinstance(e</span><span class="s4">, </span><span class="s1">self.dbapi.InterfaceError) </span><span class="s3">and </span><span class="s2">&quot;network error&quot; </span><span class="s3">in </span><span class="s1">str(</span>
+            <span class="s1">e</span>
+        <span class="s1">):</span>
+            <span class="s0"># new as of pg8000 1.19.0 for broken connections</span>
+            <span class="s3">return True</span>
+
+        <span class="s0"># connection was closed normally</span>
+        <span class="s3">return </span><span class="s2">&quot;connection is closed&quot; </span><span class="s3">in </span><span class="s1">str(e)</span>
+
+    <span class="s3">def </span><span class="s1">get_isolation_level_values(self</span><span class="s4">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s2">&quot;AUTOCOMMIT&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;READ COMMITTED&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;READ UNCOMMITTED&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;REPEATABLE READ&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;SERIALIZABLE&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">set_isolation_level(self</span><span class="s4">, </span><span class="s1">dbapi_connection</span><span class="s4">, </span><span class="s1">level):</span>
+        <span class="s1">level = level.replace(</span><span class="s2">&quot;_&quot;</span><span class="s4">, </span><span class="s2">&quot; &quot;</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">level == </span><span class="s2">&quot;AUTOCOMMIT&quot;</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.autocommit = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.autocommit = </span><span class="s3">False</span>
+            <span class="s1">cursor = dbapi_connection.cursor()</span>
+            <span class="s1">cursor.execute(</span>
+                <span class="s2">&quot;SET SESSION CHARACTERISTICS AS TRANSACTION &quot;</span>
+                <span class="s2">f&quot;ISOLATION LEVEL </span><span class="s6">{</span><span class="s1">level</span><span class="s6">}</span><span class="s2">&quot;</span>
+            <span class="s1">)</span>
+            <span class="s1">cursor.execute(</span><span class="s2">&quot;COMMIT&quot;</span><span class="s1">)</span>
+            <span class="s1">cursor.close()</span>
+
+    <span class="s3">def </span><span class="s1">set_readonly(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">cursor = connection.cursor()</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">cursor.execute(</span>
+                <span class="s2">&quot;SET SESSION CHARACTERISTICS AS TRANSACTION %s&quot;</span>
+                <span class="s1">% (</span><span class="s2">&quot;READ ONLY&quot; </span><span class="s3">if </span><span class="s1">value </span><span class="s3">else </span><span class="s2">&quot;READ WRITE&quot;</span><span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">cursor.execute(</span><span class="s2">&quot;COMMIT&quot;</span><span class="s1">)</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s1">cursor.close()</span>
+
+    <span class="s3">def </span><span class="s1">get_readonly(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">cursor = connection.cursor()</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">cursor.execute(</span><span class="s2">&quot;show transaction_read_only&quot;</span><span class="s1">)</span>
+            <span class="s1">val = cursor.fetchone()[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s1">cursor.close()</span>
+
+        <span class="s3">return </span><span class="s1">val == </span><span class="s2">&quot;on&quot;</span>
+
+    <span class="s3">def </span><span class="s1">set_deferrable(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">cursor = connection.cursor()</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">cursor.execute(</span>
+                <span class="s2">&quot;SET SESSION CHARACTERISTICS AS TRANSACTION %s&quot;</span>
+                <span class="s1">% (</span><span class="s2">&quot;DEFERRABLE&quot; </span><span class="s3">if </span><span class="s1">value </span><span class="s3">else </span><span class="s2">&quot;NOT DEFERRABLE&quot;</span><span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">cursor.execute(</span><span class="s2">&quot;COMMIT&quot;</span><span class="s1">)</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s1">cursor.close()</span>
+
+    <span class="s3">def </span><span class="s1">get_deferrable(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">cursor = connection.cursor()</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">cursor.execute(</span><span class="s2">&quot;show transaction_deferrable&quot;</span><span class="s1">)</span>
+            <span class="s1">val = cursor.fetchone()[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s1">cursor.close()</span>
+
+        <span class="s3">return </span><span class="s1">val == </span><span class="s2">&quot;on&quot;</span>
+
+    <span class="s3">def </span><span class="s1">_set_client_encoding(self</span><span class="s4">, </span><span class="s1">dbapi_connection</span><span class="s4">, </span><span class="s1">client_encoding):</span>
+        <span class="s1">cursor = dbapi_connection.cursor()</span>
+        <span class="s1">cursor.execute(</span>
+            <span class="s2">f&quot;&quot;&quot;SET CLIENT_ENCODING TO '</span><span class="s6">{</span>
+                <span class="s1">client_encoding.replace(</span><span class="s2">&quot;'&quot;</span><span class="s4">, </span><span class="s2">&quot;''&quot;</span><span class="s1">)</span>
+            <span class="s6">}</span><span class="s2">'&quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+        <span class="s1">cursor.execute(</span><span class="s2">&quot;COMMIT&quot;</span><span class="s1">)</span>
+        <span class="s1">cursor.close()</span>
+
+    <span class="s3">def </span><span class="s1">do_begin_twophase(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">xid):</span>
+        <span class="s1">connection.connection.tpc_begin((</span><span class="s5">0</span><span class="s4">, </span><span class="s1">xid</span><span class="s4">, </span><span class="s2">&quot;&quot;</span><span class="s1">))</span>
+
+    <span class="s3">def </span><span class="s1">do_prepare_twophase(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">xid):</span>
+        <span class="s1">connection.connection.tpc_prepare()</span>
+
+    <span class="s3">def </span><span class="s1">do_rollback_twophase(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">xid</span><span class="s4">, </span><span class="s1">is_prepared=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">recover=</span><span class="s3">False</span>
+    <span class="s1">):</span>
+        <span class="s1">connection.connection.tpc_rollback((</span><span class="s5">0</span><span class="s4">, </span><span class="s1">xid</span><span class="s4">, </span><span class="s2">&quot;&quot;</span><span class="s1">))</span>
+
+    <span class="s3">def </span><span class="s1">do_commit_twophase(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">xid</span><span class="s4">, </span><span class="s1">is_prepared=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">recover=</span><span class="s3">False</span>
+    <span class="s1">):</span>
+        <span class="s1">connection.connection.tpc_commit((</span><span class="s5">0</span><span class="s4">, </span><span class="s1">xid</span><span class="s4">, </span><span class="s2">&quot;&quot;</span><span class="s1">))</span>
+
+    <span class="s3">def </span><span class="s1">do_recover_twophase(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">[row[</span><span class="s5">1</span><span class="s1">] </span><span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">connection.connection.tpc_recover()]</span>
+
+    <span class="s3">def </span><span class="s1">on_connect(self):</span>
+        <span class="s1">fns = []</span>
+
+        <span class="s3">def </span><span class="s1">on_connect(conn):</span>
+            <span class="s1">conn.py_types[quoted_name] = conn.py_types[str]</span>
+
+        <span class="s1">fns.append(on_connect)</span>
+
+        <span class="s3">if </span><span class="s1">self.client_encoding </span><span class="s3">is not None</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">on_connect(conn):</span>
+                <span class="s1">self._set_client_encoding(conn</span><span class="s4">, </span><span class="s1">self.client_encoding)</span>
+
+            <span class="s1">fns.append(on_connect)</span>
+
+        <span class="s3">if </span><span class="s1">self._native_inet_types </span><span class="s3">is False</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">on_connect(conn):</span>
+                <span class="s0"># inet</span>
+                <span class="s1">conn.register_in_adapter(</span><span class="s5">869</span><span class="s4">, </span><span class="s3">lambda </span><span class="s1">s: s)</span>
+
+                <span class="s0"># cidr</span>
+                <span class="s1">conn.register_in_adapter(</span><span class="s5">650</span><span class="s4">, </span><span class="s3">lambda </span><span class="s1">s: s)</span>
+
+            <span class="s1">fns.append(on_connect)</span>
+
+        <span class="s3">if </span><span class="s1">self._json_deserializer:</span>
+
+            <span class="s3">def </span><span class="s1">on_connect(conn):</span>
+                <span class="s0"># json</span>
+                <span class="s1">conn.register_in_adapter(</span><span class="s5">114</span><span class="s4">, </span><span class="s1">self._json_deserializer)</span>
+
+                <span class="s0"># jsonb</span>
+                <span class="s1">conn.register_in_adapter(</span><span class="s5">3802</span><span class="s4">, </span><span class="s1">self._json_deserializer)</span>
+
+            <span class="s1">fns.append(on_connect)</span>
+
+        <span class="s3">if </span><span class="s1">len(fns) &gt; </span><span class="s5">0</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">on_connect(conn):</span>
+                <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">fns:</span>
+                    <span class="s1">fn(conn)</span>
+
+            <span class="s3">return </span><span class="s1">on_connect</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_dialect_specific_select_one(self):</span>
+        <span class="s3">return </span><span class="s2">&quot;;&quot;</span>
+
+
+<span class="s1">dialect = PGDialect_pg8000</span>
+</pre>
+</body>
+</html>

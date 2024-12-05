@@ -1,0 +1,310 @@
+<html>
+<head>
+<title>_concurrency_py3k.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_concurrency_py3k.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># util/_concurrency_py3k.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">asyncio</span>
+<span class="s2">from </span><span class="s1">contextvars </span><span class="s2">import </span><span class="s1">Context</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Awaitable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Coroutine</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TypeVar</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">.langhelpers </span><span class="s2">import </span><span class="s1">memoized_property</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">exc</span>
+<span class="s2">from </span><span class="s1">..util </span><span class="s2">import </span><span class="s1">py311</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Literal</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Protocol</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Self</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">TypeGuard</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s3">&quot;_T&quot;</span><span class="s1">)</span>
+
+<span class="s2">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+
+    <span class="s2">class </span><span class="s1">greenlet(Protocol):</span>
+        <span class="s1">dead: bool</span>
+        <span class="s1">gr_context: Optional[Context]</span>
+
+        <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">fn: Callable[...</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">, </span><span class="s1">driver: greenlet): ...</span>
+
+        <span class="s2">def </span><span class="s1">throw(self</span><span class="s4">, </span><span class="s1">*arg: Any) -&gt; Any:</span>
+            <span class="s2">return None</span>
+
+        <span class="s2">def </span><span class="s1">switch(self</span><span class="s4">, </span><span class="s1">value: Any) -&gt; Any:</span>
+            <span class="s2">return None</span>
+
+    <span class="s2">def </span><span class="s1">getcurrent() -&gt; greenlet: ...</span>
+
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s2">from </span><span class="s1">greenlet </span><span class="s2">import </span><span class="s1">getcurrent</span>
+    <span class="s2">from </span><span class="s1">greenlet </span><span class="s2">import </span><span class="s1">greenlet</span>
+
+
+<span class="s0"># If greenlet.gr_context is present in current version of greenlet,</span>
+<span class="s0"># it will be set with the current context on creation.</span>
+<span class="s0"># Refs: https://github.com/python-greenlet/greenlet/pull/198</span>
+<span class="s1">_has_gr_context = hasattr(getcurrent()</span><span class="s4">, </span><span class="s3">&quot;gr_context&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_exit_exception(e: BaseException) -&gt; bool:</span>
+    <span class="s0"># note asyncio.CancelledError is already BaseException</span>
+    <span class="s0"># so was an exit exception in any case</span>
+    <span class="s2">return not </span><span class="s1">isinstance(e</span><span class="s4">, </span><span class="s1">Exception) </span><span class="s2">or </span><span class="s1">isinstance(</span>
+        <span class="s1">e</span><span class="s4">, </span><span class="s1">(asyncio.TimeoutError</span><span class="s4">, </span><span class="s1">asyncio.CancelledError)</span>
+    <span class="s1">)</span>
+
+
+<span class="s0"># implementation based on snaury gist at</span>
+<span class="s0"># https://gist.github.com/snaury/202bf4f22c41ca34e56297bae5f33fef</span>
+<span class="s0"># Issue for context: https://github.com/python-greenlet/greenlet/issues/173</span>
+
+
+<span class="s2">class </span><span class="s1">_AsyncIoGreenlet(greenlet):</span>
+    <span class="s1">dead: bool</span>
+
+    <span class="s1">__sqlalchemy_greenlet_provider__ = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">fn: Callable[...</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">, </span><span class="s1">driver: greenlet):</span>
+        <span class="s1">greenlet.__init__(self</span><span class="s4">, </span><span class="s1">fn</span><span class="s4">, </span><span class="s1">driver)</span>
+        <span class="s2">if </span><span class="s1">_has_gr_context:</span>
+            <span class="s1">self.gr_context = driver.gr_context</span>
+
+
+<span class="s1">_T_co = TypeVar(</span><span class="s3">&quot;_T_co&quot;</span><span class="s4">, </span><span class="s1">covariant=</span><span class="s2">True</span><span class="s1">)</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+
+    <span class="s2">def </span><span class="s1">iscoroutine(</span>
+        <span class="s1">awaitable: Awaitable[_T_co]</span><span class="s4">,</span>
+    <span class="s1">) -&gt; TypeGuard[Coroutine[Any</span><span class="s4">, </span><span class="s1">Any</span><span class="s4">, </span><span class="s1">_T_co]]: ...</span>
+
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s1">iscoroutine = asyncio.iscoroutine</span>
+
+
+<span class="s2">def </span><span class="s1">_safe_cancel_awaitable(awaitable: Awaitable[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+    <span class="s0"># https://docs.python.org/3/reference/datamodel.html#coroutine.close</span>
+
+    <span class="s2">if </span><span class="s1">iscoroutine(awaitable):</span>
+        <span class="s1">awaitable.close()</span>
+
+
+<span class="s2">def </span><span class="s1">in_greenlet() -&gt; bool:</span>
+    <span class="s1">current = getcurrent()</span>
+    <span class="s2">return </span><span class="s1">getattr(current</span><span class="s4">, </span><span class="s3">&quot;__sqlalchemy_greenlet_provider__&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">await_only(awaitable: Awaitable[_T]) -&gt; _T:</span>
+    <span class="s5">&quot;&quot;&quot;Awaits an async function in a sync method. 
+ 
+    The sync method must be inside a :func:`greenlet_spawn` context. 
+    :func:`await_only` calls cannot be nested. 
+ 
+    :param awaitable: The coroutine to call. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s0"># this is called in the context greenlet while running fn</span>
+    <span class="s1">current = getcurrent()</span>
+    <span class="s2">if not </span><span class="s1">getattr(current</span><span class="s4">, </span><span class="s3">&quot;__sqlalchemy_greenlet_provider__&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">):</span>
+        <span class="s1">_safe_cancel_awaitable(awaitable)</span>
+
+        <span class="s2">raise </span><span class="s1">exc.MissingGreenlet(</span>
+            <span class="s3">&quot;greenlet_spawn has not been called; can't call await_only() &quot;</span>
+            <span class="s3">&quot;here. Was IO attempted in an unexpected place?&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s0"># returns the control to the driver greenlet passing it</span>
+    <span class="s0"># a coroutine to run. Once the awaitable is done, the driver greenlet</span>
+    <span class="s0"># switches back to this greenlet with the result of awaitable that is</span>
+    <span class="s0"># then returned to the caller (or raised as error)</span>
+    <span class="s2">return </span><span class="s1">current.parent.switch(awaitable)  </span><span class="s0"># type: ignore[no-any-return,attr-defined] # noqa: E501</span>
+
+
+<span class="s2">def </span><span class="s1">await_fallback(awaitable: Awaitable[_T]) -&gt; _T:</span>
+    <span class="s5">&quot;&quot;&quot;Awaits an async function in a sync method. 
+ 
+    The sync method must be inside a :func:`greenlet_spawn` context. 
+    :func:`await_fallback` calls cannot be nested. 
+ 
+    :param awaitable: The coroutine to call. 
+ 
+    .. deprecated:: 2.0.24 The ``await_fallback()`` function will be removed 
+       in SQLAlchemy 2.1.  Use :func:`_util.await_only` instead, running the 
+       function / program / etc. within a top-level greenlet that is set up 
+       using :func:`_util.greenlet_spawn`. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># this is called in the context greenlet while running fn</span>
+    <span class="s1">current = getcurrent()</span>
+    <span class="s2">if not </span><span class="s1">getattr(current</span><span class="s4">, </span><span class="s3">&quot;__sqlalchemy_greenlet_provider__&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">):</span>
+        <span class="s1">loop = get_event_loop()</span>
+        <span class="s2">if </span><span class="s1">loop.is_running():</span>
+            <span class="s1">_safe_cancel_awaitable(awaitable)</span>
+
+            <span class="s2">raise </span><span class="s1">exc.MissingGreenlet(</span>
+                <span class="s3">&quot;greenlet_spawn has not been called and asyncio event &quot;</span>
+                <span class="s3">&quot;loop is already running; can't call await_fallback() here. &quot;</span>
+                <span class="s3">&quot;Was IO attempted in an unexpected place?&quot;</span>
+            <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">loop.run_until_complete(awaitable)</span>
+
+    <span class="s2">return </span><span class="s1">current.parent.switch(awaitable)  </span><span class="s0"># type: ignore[no-any-return,attr-defined] # noqa: E501</span>
+
+
+<span class="s2">async def </span><span class="s1">greenlet_spawn(</span>
+    <span class="s1">fn: Callable[...</span><span class="s4">, </span><span class="s1">_T]</span><span class="s4">,</span>
+    <span class="s1">*args: Any</span><span class="s4">,</span>
+    <span class="s1">_require_await: bool = </span><span class="s2">False</span><span class="s4">,</span>
+    <span class="s1">**kwargs: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; _T:</span>
+    <span class="s5">&quot;&quot;&quot;Runs a sync function ``fn`` in a new greenlet. 
+ 
+    The sync function can then use :func:`await_only` to wait for async 
+    functions. 
+ 
+    :param fn: The sync callable to call. 
+    :param \\*args: Positional arguments to pass to the ``fn`` callable. 
+    :param \\*\\*kwargs: Keyword arguments to pass to the ``fn`` callable. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">result: Any</span>
+    <span class="s1">context = _AsyncIoGreenlet(fn</span><span class="s4">, </span><span class="s1">getcurrent())</span>
+    <span class="s0"># runs the function synchronously in gl greenlet. If the execution</span>
+    <span class="s0"># is interrupted by await_only, context is not dead and result is a</span>
+    <span class="s0"># coroutine to wait. If the context is dead the function has</span>
+    <span class="s0"># returned, and its result can be returned.</span>
+    <span class="s1">switch_occurred = </span><span class="s2">False</span>
+    <span class="s1">result = context.switch(*args</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+    <span class="s2">while not </span><span class="s1">context.dead:</span>
+        <span class="s1">switch_occurred = </span><span class="s2">True</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s0"># wait for a coroutine from await_only and then return its</span>
+            <span class="s0"># result back to it.</span>
+            <span class="s1">value = </span><span class="s2">await </span><span class="s1">result</span>
+        <span class="s2">except </span><span class="s1">BaseException:</span>
+            <span class="s0"># this allows an exception to be raised within</span>
+            <span class="s0"># the moderated greenlet so that it can continue</span>
+            <span class="s0"># its expected flow.</span>
+            <span class="s1">result = context.throw(*sys.exc_info())</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">result = context.switch(value)</span>
+
+    <span class="s2">if </span><span class="s1">_require_await </span><span class="s2">and not </span><span class="s1">switch_occurred:</span>
+        <span class="s2">raise </span><span class="s1">exc.AwaitRequired(</span>
+            <span class="s3">&quot;The current operation required an async execution but none was &quot;</span>
+            <span class="s3">&quot;detected. This will usually happen when using a non compatible &quot;</span>
+            <span class="s3">&quot;DBAPI driver. Please ensure that an async DBAPI is used.&quot;</span>
+        <span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">result  </span><span class="s0"># type: ignore[no-any-return]</span>
+
+
+<span class="s2">class </span><span class="s1">AsyncAdaptedLock:</span>
+    <span class="s1">@memoized_property</span>
+    <span class="s2">def </span><span class="s1">mutex(self) -&gt; asyncio.Lock:</span>
+        <span class="s0"># there should not be a race here for coroutines creating the</span>
+        <span class="s0"># new lock as we are not using await, so therefore no concurrency</span>
+        <span class="s2">return </span><span class="s1">asyncio.Lock()</span>
+
+    <span class="s2">def </span><span class="s1">__enter__(self) -&gt; bool:</span>
+        <span class="s0"># await is used to acquire the lock only after the first calling</span>
+        <span class="s0"># coroutine has created the mutex.</span>
+        <span class="s2">return </span><span class="s1">await_fallback(self.mutex.acquire())</span>
+
+    <span class="s2">def </span><span class="s1">__exit__(self</span><span class="s4">, </span><span class="s1">*arg: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self.mutex.release()</span>
+
+
+<span class="s2">def </span><span class="s1">get_event_loop() -&gt; asyncio.AbstractEventLoop:</span>
+    <span class="s5">&quot;&quot;&quot;vendor asyncio.get_event_loop() for python 3.7 and above. 
+ 
+    Python 3.10 deprecates get_event_loop() as a standalone. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">asyncio.get_running_loop()</span>
+    <span class="s2">except </span><span class="s1">RuntimeError:</span>
+        <span class="s0"># avoid &quot;During handling of the above exception, another exception...&quot;</span>
+        <span class="s2">pass</span>
+    <span class="s2">return </span><span class="s1">asyncio.get_event_loop_policy().get_event_loop()</span>
+
+
+<span class="s2">if not </span><span class="s1">TYPE_CHECKING </span><span class="s2">and </span><span class="s1">py311:</span>
+    <span class="s1">_Runner = asyncio.Runner</span>
+<span class="s2">else</span><span class="s1">:</span>
+
+    <span class="s2">class </span><span class="s1">_Runner:</span>
+        <span class="s5">&quot;&quot;&quot;Runner implementation for test only&quot;&quot;&quot;</span>
+
+        <span class="s1">_loop: Union[</span><span class="s2">None</span><span class="s4">, </span><span class="s1">asyncio.AbstractEventLoop</span><span class="s4">, </span><span class="s1">Literal[</span><span class="s2">False</span><span class="s1">]]</span>
+
+        <span class="s2">def </span><span class="s1">__init__(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+            <span class="s1">self._loop = </span><span class="s2">None</span>
+
+        <span class="s2">def </span><span class="s1">__enter__(self) -&gt; Self:</span>
+            <span class="s1">self._lazy_init()</span>
+            <span class="s2">return </span><span class="s1">self</span>
+
+        <span class="s2">def </span><span class="s1">__exit__(self</span><span class="s4">, </span><span class="s1">exc_type: Any</span><span class="s4">, </span><span class="s1">exc_val: Any</span><span class="s4">, </span><span class="s1">exc_tb: Any) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+            <span class="s1">self.close()</span>
+
+        <span class="s2">def </span><span class="s1">close(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self._loop:</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">self._loop.run_until_complete(</span>
+                        <span class="s1">self._loop.shutdown_asyncgens()</span>
+                    <span class="s1">)</span>
+                <span class="s2">finally</span><span class="s1">:</span>
+                    <span class="s1">self._loop.close()</span>
+                    <span class="s1">self._loop = </span><span class="s2">False</span>
+
+        <span class="s2">def </span><span class="s1">get_loop(self) -&gt; asyncio.AbstractEventLoop:</span>
+            <span class="s5">&quot;&quot;&quot;Return embedded event loop.&quot;&quot;&quot;</span>
+            <span class="s1">self._lazy_init()</span>
+            <span class="s2">assert </span><span class="s1">self._loop</span>
+            <span class="s2">return </span><span class="s1">self._loop</span>
+
+        <span class="s2">def </span><span class="s1">run(self</span><span class="s4">, </span><span class="s1">coro: Coroutine[Any</span><span class="s4">, </span><span class="s1">Any</span><span class="s4">, </span><span class="s1">_T]) -&gt; _T:</span>
+            <span class="s1">self._lazy_init()</span>
+            <span class="s2">assert </span><span class="s1">self._loop</span>
+            <span class="s2">return </span><span class="s1">self._loop.run_until_complete(coro)</span>
+
+        <span class="s2">def </span><span class="s1">_lazy_init(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self._loop </span><span class="s2">is False</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">RuntimeError(</span><span class="s3">&quot;Runner is closed&quot;</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">self._loop </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s1">self._loop = asyncio.new_event_loop()</span>
+</pre>
+</body>
+</html>

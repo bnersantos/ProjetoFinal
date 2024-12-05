@@ -1,0 +1,418 @@
+<html>
+<head>
+<title>aiosqlite.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+aiosqlite.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/sqlite/aiosqlite.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">r&quot;&quot;&quot; 
+ 
+.. dialect:: sqlite+aiosqlite 
+    :name: aiosqlite 
+    :dbapi: aiosqlite 
+    :connectstring: sqlite+aiosqlite:///file_path 
+    :url: https://pypi.org/project/aiosqlite/ 
+ 
+The aiosqlite dialect provides support for the SQLAlchemy asyncio interface 
+running on top of pysqlite. 
+ 
+aiosqlite is a wrapper around pysqlite that uses a background thread for 
+each connection.   It does not actually use non-blocking IO, as SQLite 
+databases are not socket-based.  However it does provide a working asyncio 
+interface that's useful for testing and prototyping purposes. 
+ 
+Using a special asyncio mediation layer, the aiosqlite dialect is usable 
+as the backend for the :ref:`SQLAlchemy asyncio &lt;asyncio_toplevel&gt;` 
+extension package. 
+ 
+This dialect should normally be used only with the 
+:func:`_asyncio.create_async_engine` engine creation function:: 
+ 
+    from sqlalchemy.ext.asyncio import create_async_engine 
+    engine = create_async_engine(&quot;sqlite+aiosqlite:///filename&quot;) 
+ 
+The URL passes through all arguments to the ``pysqlite`` driver, so all 
+connection arguments are the same as they are for that of :ref:`pysqlite`. 
+ 
+.. _aiosqlite_udfs: 
+ 
+User-Defined Functions 
+---------------------- 
+ 
+aiosqlite extends pysqlite to support async, so we can create our own user-defined functions (UDFs) 
+in Python and use them directly in SQLite queries as described here: :ref:`pysqlite_udfs`. 
+ 
+.. _aiosqlite_serializable: 
+ 
+Serializable isolation / Savepoints / Transactional DDL (asyncio version) 
+------------------------------------------------------------------------- 
+ 
+Similarly to pysqlite, aiosqlite does not support SAVEPOINT feature. 
+ 
+The solution is similar to :ref:`pysqlite_serializable`. This is achieved by the event listeners in async:: 
+ 
+    from sqlalchemy import create_engine, event 
+    from sqlalchemy.ext.asyncio import create_async_engine 
+ 
+    engine = create_async_engine(&quot;sqlite+aiosqlite:///myfile.db&quot;) 
+ 
+    @event.listens_for(engine.sync_engine, &quot;connect&quot;) 
+    def do_connect(dbapi_connection, connection_record): 
+        # disable aiosqlite's emitting of the BEGIN statement entirely. 
+        # also stops it from emitting COMMIT before any DDL. 
+        dbapi_connection.isolation_level = None 
+ 
+    @event.listens_for(engine.sync_engine, &quot;begin&quot;) 
+    def do_begin(conn): 
+        # emit our own BEGIN 
+        conn.exec_driver_sql(&quot;BEGIN&quot;) 
+ 
+.. warning:: When using the above recipe, it is advised to not use the 
+   :paramref:`.Connection.execution_options.isolation_level` setting on 
+   :class:`_engine.Connection` and :func:`_sa.create_engine` 
+   with the SQLite driver, 
+   as this function necessarily will also alter the &quot;.isolation_level&quot; setting. 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+
+<span class="s3">import </span><span class="s1">asyncio</span>
+<span class="s3">from </span><span class="s1">collections </span><span class="s3">import </span><span class="s1">deque</span>
+<span class="s3">from </span><span class="s1">functools </span><span class="s3">import </span><span class="s1">partial</span>
+
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">SQLiteExecutionContext</span>
+<span class="s3">from </span><span class="s1">.pysqlite </span><span class="s3">import </span><span class="s1">SQLiteDialect_pysqlite</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">pool</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">AdaptedConnection</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">await_fallback</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">await_only</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_aiosqlite_cursor:</span>
+    <span class="s0"># TODO: base on connectors/asyncio.py</span>
+    <span class="s0"># see #10415</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s2">&quot;_adapt_connection&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_connection&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;description&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;await_&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_rows&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;arraysize&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;rowcount&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;lastrowid&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">server_side = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">adapt_connection):</span>
+        <span class="s1">self._adapt_connection = adapt_connection</span>
+        <span class="s1">self._connection = adapt_connection._connection</span>
+        <span class="s1">self.await_ = adapt_connection.await_</span>
+        <span class="s1">self.arraysize = </span><span class="s5">1</span>
+        <span class="s1">self.rowcount = -</span><span class="s5">1</span>
+        <span class="s1">self.description = </span><span class="s3">None</span>
+        <span class="s1">self._rows = deque()</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s1">self._rows.clear()</span>
+
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">parameters=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">_cursor = self.await_(self._connection.cursor())</span>
+
+            <span class="s3">if </span><span class="s1">parameters </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">self.await_(_cursor.execute(operation))</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self.await_(_cursor.execute(operation</span><span class="s4">, </span><span class="s1">parameters))</span>
+
+            <span class="s3">if </span><span class="s1">_cursor.description:</span>
+                <span class="s1">self.description = _cursor.description</span>
+                <span class="s1">self.lastrowid = self.rowcount = -</span><span class="s5">1</span>
+
+                <span class="s3">if not </span><span class="s1">self.server_side:</span>
+                    <span class="s1">self._rows = deque(self.await_(_cursor.fetchall()))</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self.description = </span><span class="s3">None</span>
+                <span class="s1">self.lastrowid = _cursor.lastrowid</span>
+                <span class="s1">self.rowcount = _cursor.rowcount</span>
+
+            <span class="s3">if not </span><span class="s1">self.server_side:</span>
+                <span class="s1">self.await_(_cursor.close())</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self._cursor = _cursor</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._adapt_connection._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">executemany(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">seq_of_parameters):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">_cursor = self.await_(self._connection.cursor())</span>
+            <span class="s1">self.await_(_cursor.executemany(operation</span><span class="s4">, </span><span class="s1">seq_of_parameters))</span>
+            <span class="s1">self.description = </span><span class="s3">None</span>
+            <span class="s1">self.lastrowid = _cursor.lastrowid</span>
+            <span class="s1">self.rowcount = _cursor.rowcount</span>
+            <span class="s1">self.await_(_cursor.close())</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._adapt_connection._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">setinputsizes(self</span><span class="s4">, </span><span class="s1">*inputsizes):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self):</span>
+        <span class="s3">while </span><span class="s1">self._rows:</span>
+            <span class="s3">yield </span><span class="s1">self._rows.popleft()</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self):</span>
+        <span class="s3">if </span><span class="s1">self._rows:</span>
+            <span class="s3">return </span><span class="s1">self._rows.popleft()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s4">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">size </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">size = self.arraysize</span>
+
+        <span class="s1">rr = self._rows</span>
+        <span class="s3">return </span><span class="s1">[rr.popleft() </span><span class="s3">for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">range(min(size</span><span class="s4">, </span><span class="s1">len(rr)))]</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self):</span>
+        <span class="s1">retval = list(self._rows)</span>
+        <span class="s1">self._rows.clear()</span>
+        <span class="s3">return </span><span class="s1">retval</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_aiosqlite_ss_cursor(AsyncAdapt_aiosqlite_cursor):</span>
+    <span class="s0"># TODO: base on connectors/asyncio.py</span>
+    <span class="s0"># see #10415</span>
+    <span class="s1">__slots__ = </span><span class="s2">&quot;_cursor&quot;</span>
+
+    <span class="s1">server_side = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">super().__init__(*arg</span><span class="s4">, </span><span class="s1">**kw)</span>
+        <span class="s1">self._cursor = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s3">if </span><span class="s1">self._cursor </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.await_(self._cursor.close())</span>
+            <span class="s1">self._cursor = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.fetchone())</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s4">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">size </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">size = self.arraysize</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.fetchmany(size=size))</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.fetchall())</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_aiosqlite_connection(AdaptedConnection):</span>
+    <span class="s1">await_ = staticmethod(await_only)</span>
+    <span class="s1">__slots__ = (</span><span class="s2">&quot;dbapi&quot;</span><span class="s4">,</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">dbapi</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">self.dbapi = dbapi</span>
+        <span class="s1">self._connection = connection</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">isolation_level(self):</span>
+        <span class="s3">return </span><span class="s1">self._connection.isolation_level</span>
+
+    <span class="s1">@isolation_level.setter</span>
+    <span class="s3">def </span><span class="s1">isolation_level(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s0"># aiosqlite's isolation_level setter works outside the Thread</span>
+        <span class="s0"># that it's supposed to, necessitating setting check_same_thread=False.</span>
+        <span class="s0"># for improved stability, we instead invent our own awaitable version</span>
+        <span class="s0"># using aiosqlite's async queue directly.</span>
+
+        <span class="s3">def </span><span class="s1">set_iso(connection</span><span class="s4">, </span><span class="s1">value):</span>
+            <span class="s1">connection.isolation_level = value</span>
+
+        <span class="s1">function = partial(set_iso</span><span class="s4">, </span><span class="s1">self._connection._conn</span><span class="s4">, </span><span class="s1">value)</span>
+        <span class="s1">future = asyncio.get_event_loop().create_future()</span>
+
+        <span class="s1">self._connection._tx.put_nowait((future</span><span class="s4">, </span><span class="s1">function))</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.await_(future)</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">create_function(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self.await_(self._connection.create_function(*args</span><span class="s4">, </span><span class="s1">**kw))</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">cursor(self</span><span class="s4">, </span><span class="s1">server_side=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">server_side:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_aiosqlite_ss_cursor(self)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_aiosqlite_cursor(self)</span>
+
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._connection.execute(*args</span><span class="s4">, </span><span class="s1">**kw))</span>
+
+    <span class="s3">def </span><span class="s1">rollback(self):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self.await_(self._connection.rollback())</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">commit(self):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self.await_(self._connection.commit())</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self.await_(self._connection.close())</span>
+        <span class="s3">except </span><span class="s1">ValueError:</span>
+            <span class="s0"># this is undocumented for aiosqlite, that ValueError</span>
+            <span class="s0"># was raised if .close() was called more than once, which is</span>
+            <span class="s0"># both not customary for DBAPI and is also not a DBAPI.Error</span>
+            <span class="s0"># exception. This is now fixed in aiosqlite via my PR</span>
+            <span class="s0"># https://github.com/omnilib/aiosqlite/pull/238, so we can be</span>
+            <span class="s0"># assured this will not become some other kind of exception,</span>
+            <span class="s0"># since it doesn't raise anymore.</span>
+
+            <span class="s3">pass</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">_handle_exception(self</span><span class="s4">, </span><span class="s1">error):</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">isinstance(error</span><span class="s4">, </span><span class="s1">ValueError)</span>
+            <span class="s3">and </span><span class="s1">error.args[</span><span class="s5">0</span><span class="s1">] == </span><span class="s2">&quot;no active connection&quot;</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">self.dbapi.sqlite.OperationalError(</span>
+                <span class="s2">&quot;no active connection&quot;</span>
+            <span class="s1">) </span><span class="s3">from </span><span class="s1">error</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">error</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdaptFallback_aiosqlite_connection(AsyncAdapt_aiosqlite_connection):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">await_ = staticmethod(await_fallback)</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_aiosqlite_dbapi:</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">aiosqlite</span><span class="s4">, </span><span class="s1">sqlite):</span>
+        <span class="s1">self.aiosqlite = aiosqlite</span>
+        <span class="s1">self.sqlite = sqlite</span>
+        <span class="s1">self.paramstyle = </span><span class="s2">&quot;qmark&quot;</span>
+        <span class="s1">self._init_dbapi_attributes()</span>
+
+    <span class="s3">def </span><span class="s1">_init_dbapi_attributes(self):</span>
+        <span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">(</span>
+            <span class="s2">&quot;DatabaseError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;Error&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;IntegrityError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;NotSupportedError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;OperationalError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;ProgrammingError&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;sqlite_version&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;sqlite_version_info&quot;</span><span class="s4">,</span>
+        <span class="s1">):</span>
+            <span class="s1">setattr(self</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">getattr(self.aiosqlite</span><span class="s4">, </span><span class="s1">name))</span>
+
+        <span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">(</span><span class="s2">&quot;PARSE_COLNAMES&quot;</span><span class="s4">, </span><span class="s2">&quot;PARSE_DECLTYPES&quot;</span><span class="s1">):</span>
+            <span class="s1">setattr(self</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">getattr(self.sqlite</span><span class="s4">, </span><span class="s1">name))</span>
+
+        <span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">(</span><span class="s2">&quot;Binary&quot;</span><span class="s4">,</span><span class="s1">):</span>
+            <span class="s1">setattr(self</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">getattr(self.sqlite</span><span class="s4">, </span><span class="s1">name))</span>
+
+    <span class="s3">def </span><span class="s1">connect(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">async_fallback = kw.pop(</span><span class="s2">&quot;async_fallback&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+
+        <span class="s1">creator_fn = kw.pop(</span><span class="s2">&quot;async_creator_fn&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">creator_fn:</span>
+            <span class="s1">connection = creator_fn(*arg</span><span class="s4">, </span><span class="s1">**kw)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">connection = self.aiosqlite.connect(*arg</span><span class="s4">, </span><span class="s1">**kw)</span>
+            <span class="s0"># it's a Thread.   you'll thank us later</span>
+            <span class="s1">connection.daemon = </span><span class="s3">True</span>
+
+        <span class="s3">if </span><span class="s1">util.asbool(async_fallback):</span>
+            <span class="s3">return </span><span class="s1">AsyncAdaptFallback_aiosqlite_connection(</span>
+                <span class="s1">self</span><span class="s4">,</span>
+                <span class="s1">await_fallback(connection)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_aiosqlite_connection(</span>
+                <span class="s1">self</span><span class="s4">,</span>
+                <span class="s1">await_only(connection)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">SQLiteExecutionContext_aiosqlite(SQLiteExecutionContext):</span>
+    <span class="s3">def </span><span class="s1">create_server_side_cursor(self):</span>
+        <span class="s3">return </span><span class="s1">self._dbapi_connection.cursor(server_side=</span><span class="s3">True</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">SQLiteDialect_aiosqlite(SQLiteDialect_pysqlite):</span>
+    <span class="s1">driver = </span><span class="s2">&quot;aiosqlite&quot;</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s1">is_async = </span><span class="s3">True</span>
+
+    <span class="s1">supports_server_side_cursors = </span><span class="s3">True</span>
+
+    <span class="s1">execution_ctx_cls = SQLiteExecutionContext_aiosqlite</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">return </span><span class="s1">AsyncAdapt_aiosqlite_dbapi(</span>
+            <span class="s1">__import__(</span><span class="s2">&quot;aiosqlite&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s1">__import__(</span><span class="s2">&quot;sqlite3&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_pool_class(cls</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s3">if </span><span class="s1">cls._is_url_file_db(url):</span>
+            <span class="s3">return </span><span class="s1">pool.NullPool</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">pool.StaticPool</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s4">, </span><span class="s1">e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+        <span class="s3">if </span><span class="s1">isinstance(</span>
+            <span class="s1">e</span><span class="s4">, </span><span class="s1">self.dbapi.OperationalError</span>
+        <span class="s1">) </span><span class="s3">and </span><span class="s2">&quot;no active connection&quot; </span><span class="s3">in </span><span class="s1">str(e):</span>
+            <span class="s3">return True</span>
+
+        <span class="s3">return </span><span class="s1">super().is_disconnect(e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor)</span>
+
+    <span class="s3">def </span><span class="s1">get_driver_connection(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection._connection</span>
+
+
+<span class="s1">dialect = SQLiteDialect_aiosqlite</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,1806 @@
+<html>
+<head>
+<title>persistence.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+persistence.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/persistence.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">&quot;&quot;&quot;private module containing functions used to emit INSERT, UPDATE 
+and DELETE statements on behalf of a :class:`_orm.Mapper` and its descending 
+mappers. 
+ 
+The functions here are called only by the unit of work functions 
+in unitofwork.py. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">itertools </span><span class="s3">import </span><span class="s1">chain</span>
+<span class="s3">from </span><span class="s1">itertools </span><span class="s3">import </span><span class="s1">groupby</span>
+<span class="s3">from </span><span class="s1">itertools </span><span class="s3">import </span><span class="s1">zip_longest</span>
+<span class="s3">import </span><span class="s1">operator</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">orm_exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">loading</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">sync</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">state_str</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">sa_exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">future</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">sql</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..engine </span><span class="s3">import </span><span class="s1">cursor </span><span class="s3">as </span><span class="s1">_cursor</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">operators</span>
+<span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">BooleanClauseList</span>
+<span class="s3">from </span><span class="s1">..sql.selectable </span><span class="s3">import </span><span class="s1">LABEL_STYLE_TABLENAME_PLUS_COL</span>
+
+
+<span class="s3">def </span><span class="s1">save_obj(base_mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">single=</span><span class="s3">False</span><span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Issue ``INSERT`` and/or ``UPDATE`` statements for a list 
+    of objects. 
+ 
+    This is called within the context of a UOWTransaction during a 
+    flush operation, given a list of states to be flushed.  The 
+    base mapper in an inheritance hierarchy handles the inserts/ 
+    updates for all descendant mappers. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># if batch=false, call _save_obj separately for each object</span>
+    <span class="s3">if not </span><span class="s1">single </span><span class="s3">and not </span><span class="s1">base_mapper.batch:</span>
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">_sort_states(base_mapper</span><span class="s4">, </span><span class="s1">states):</span>
+            <span class="s1">save_obj(base_mapper</span><span class="s4">, </span><span class="s1">[state]</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">single=</span><span class="s3">True</span><span class="s1">)</span>
+        <span class="s3">return</span>
+
+    <span class="s1">states_to_update = []</span>
+    <span class="s1">states_to_insert = []</span>
+
+    <span class="s3">for </span><span class="s1">(</span>
+        <span class="s1">state</span><span class="s4">,</span>
+        <span class="s1">dict_</span><span class="s4">,</span>
+        <span class="s1">mapper</span><span class="s4">,</span>
+        <span class="s1">connection</span><span class="s4">,</span>
+        <span class="s1">has_identity</span><span class="s4">,</span>
+        <span class="s1">row_switch</span><span class="s4">,</span>
+        <span class="s1">update_version_id</span><span class="s4">,</span>
+    <span class="s1">) </span><span class="s3">in </span><span class="s1">_organize_states_for_save(base_mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uowtransaction):</span>
+        <span class="s3">if </span><span class="s1">has_identity </span><span class="s3">or </span><span class="s1">row_switch:</span>
+            <span class="s1">states_to_update.append(</span>
+                <span class="s1">(state</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">update_version_id)</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">states_to_insert.append((state</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection))</span>
+
+    <span class="s3">for </span><span class="s1">table</span><span class="s4">, </span><span class="s1">mapper </span><span class="s3">in </span><span class="s1">base_mapper._sorted_tables.items():</span>
+        <span class="s3">if </span><span class="s1">table </span><span class="s3">not in </span><span class="s1">mapper._pks_by_table:</span>
+            <span class="s3">continue</span>
+        <span class="s1">insert = _collect_insert_commands(table</span><span class="s4">, </span><span class="s1">states_to_insert)</span>
+
+        <span class="s1">update = _collect_update_commands(</span>
+            <span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">states_to_update</span>
+        <span class="s1">)</span>
+
+        <span class="s1">_emit_update_statements(</span>
+            <span class="s1">base_mapper</span><span class="s4">,</span>
+            <span class="s1">uowtransaction</span><span class="s4">,</span>
+            <span class="s1">mapper</span><span class="s4">,</span>
+            <span class="s1">table</span><span class="s4">,</span>
+            <span class="s1">update</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">_emit_insert_statements(</span>
+            <span class="s1">base_mapper</span><span class="s4">,</span>
+            <span class="s1">uowtransaction</span><span class="s4">,</span>
+            <span class="s1">mapper</span><span class="s4">,</span>
+            <span class="s1">table</span><span class="s4">,</span>
+            <span class="s1">insert</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">_finalize_insert_update_commands(</span>
+        <span class="s1">base_mapper</span><span class="s4">,</span>
+        <span class="s1">uowtransaction</span><span class="s4">,</span>
+        <span class="s1">chain(</span>
+            <span class="s1">(</span>
+                <span class="s1">(state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">(state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection) </span><span class="s3">in </span><span class="s1">states_to_insert</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">(</span>
+                <span class="s1">(state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">(</span>
+                    <span class="s1">state</span><span class="s4">,</span>
+                    <span class="s1">state_dict</span><span class="s4">,</span>
+                    <span class="s1">mapper</span><span class="s4">,</span>
+                    <span class="s1">connection</span><span class="s4">,</span>
+                    <span class="s1">update_version_id</span><span class="s4">,</span>
+                <span class="s1">) </span><span class="s3">in </span><span class="s1">states_to_update</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">post_update(base_mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">post_update_cols):</span>
+    <span class="s2">&quot;&quot;&quot;Issue UPDATE statements on behalf of a relationship() which 
+    specifies post_update. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">states_to_update = list(</span>
+        <span class="s1">_organize_states_for_post_update(base_mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uowtransaction)</span>
+    <span class="s1">)</span>
+
+    <span class="s3">for </span><span class="s1">table</span><span class="s4">, </span><span class="s1">mapper </span><span class="s3">in </span><span class="s1">base_mapper._sorted_tables.items():</span>
+        <span class="s3">if </span><span class="s1">table </span><span class="s3">not in </span><span class="s1">mapper._pks_by_table:</span>
+            <span class="s3">continue</span>
+
+        <span class="s1">update = (</span>
+            <span class="s1">(</span>
+                <span class="s1">state</span><span class="s4">,</span>
+                <span class="s1">state_dict</span><span class="s4">,</span>
+                <span class="s1">sub_mapper</span><span class="s4">,</span>
+                <span class="s1">connection</span><span class="s4">,</span>
+                <span class="s1">(</span>
+                    <span class="s1">mapper._get_committed_state_attr_by_column(</span>
+                        <span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper.version_id_col</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">mapper.version_id_col </span><span class="s3">is not None</span>
+                    <span class="s3">else None</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s3">for </span><span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">sub_mapper</span><span class="s4">, </span><span class="s1">connection </span><span class="s3">in </span><span class="s1">states_to_update</span>
+            <span class="s3">if </span><span class="s1">table </span><span class="s3">in </span><span class="s1">sub_mapper._pks_by_table</span>
+        <span class="s1">)</span>
+
+        <span class="s1">update = _collect_post_update_commands(</span>
+            <span class="s1">base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">update</span><span class="s4">, </span><span class="s1">post_update_cols</span>
+        <span class="s1">)</span>
+
+        <span class="s1">_emit_post_update_statements(</span>
+            <span class="s1">base_mapper</span><span class="s4">,</span>
+            <span class="s1">uowtransaction</span><span class="s4">,</span>
+            <span class="s1">mapper</span><span class="s4">,</span>
+            <span class="s1">table</span><span class="s4">,</span>
+            <span class="s1">update</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">delete_obj(base_mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uowtransaction):</span>
+    <span class="s2">&quot;&quot;&quot;Issue ``DELETE`` statements for a list of objects. 
+ 
+    This is called within the context of a UOWTransaction during a 
+    flush operation. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">states_to_delete = list(</span>
+        <span class="s1">_organize_states_for_delete(base_mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uowtransaction)</span>
+    <span class="s1">)</span>
+
+    <span class="s1">table_to_mapper = base_mapper._sorted_tables</span>
+
+    <span class="s3">for </span><span class="s1">table </span><span class="s3">in </span><span class="s1">reversed(list(table_to_mapper.keys())):</span>
+        <span class="s1">mapper = table_to_mapper[table]</span>
+        <span class="s3">if </span><span class="s1">table </span><span class="s3">not in </span><span class="s1">mapper._pks_by_table:</span>
+            <span class="s3">continue</span>
+        <span class="s3">elif </span><span class="s1">mapper.inherits </span><span class="s3">and </span><span class="s1">mapper.passive_deletes:</span>
+            <span class="s3">continue</span>
+
+        <span class="s1">delete = _collect_delete_commands(</span>
+            <span class="s1">base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">states_to_delete</span>
+        <span class="s1">)</span>
+
+        <span class="s1">_emit_delete_statements(</span>
+            <span class="s1">base_mapper</span><span class="s4">,</span>
+            <span class="s1">uowtransaction</span><span class="s4">,</span>
+            <span class="s1">mapper</span><span class="s4">,</span>
+            <span class="s1">table</span><span class="s4">,</span>
+            <span class="s1">delete</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">for </span><span class="s1">(</span>
+        <span class="s1">state</span><span class="s4">,</span>
+        <span class="s1">state_dict</span><span class="s4">,</span>
+        <span class="s1">mapper</span><span class="s4">,</span>
+        <span class="s1">connection</span><span class="s4">,</span>
+        <span class="s1">update_version_id</span><span class="s4">,</span>
+    <span class="s1">) </span><span class="s3">in </span><span class="s1">states_to_delete:</span>
+        <span class="s1">mapper.dispatch.after_delete(mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">state)</span>
+
+
+<span class="s3">def </span><span class="s1">_organize_states_for_save(base_mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uowtransaction):</span>
+    <span class="s2">&quot;&quot;&quot;Make an initial pass across a set of states for INSERT or 
+    UPDATE. 
+ 
+    This includes splitting out into distinct lists for 
+    each, calling before_insert/before_update, obtaining 
+    key information for each state including its dictionary, 
+    mapper, the connection to use for the execution per state, 
+    and the identity flag. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">for </span><span class="s1">state</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection </span><span class="s3">in </span><span class="s1">_connections_for_states(</span>
+        <span class="s1">base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">states</span>
+    <span class="s1">):</span>
+        <span class="s1">has_identity = bool(state.key)</span>
+
+        <span class="s1">instance_key = state.key </span><span class="s3">or </span><span class="s1">mapper._identity_key_from_state(state)</span>
+
+        <span class="s1">row_switch = update_version_id = </span><span class="s3">None</span>
+
+        <span class="s0"># call before_XXX extensions</span>
+        <span class="s3">if not </span><span class="s1">has_identity:</span>
+            <span class="s1">mapper.dispatch.before_insert(mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">state)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">mapper.dispatch.before_update(mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">state)</span>
+
+        <span class="s3">if </span><span class="s1">mapper._validate_polymorphic_identity:</span>
+            <span class="s1">mapper._validate_polymorphic_identity(mapper</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">dict_)</span>
+
+        <span class="s0"># detect if we have a &quot;pending&quot; instance (i.e. has</span>
+        <span class="s0"># no instance_key attached to it), and another instance</span>
+        <span class="s0"># with the same identity key already exists as persistent.</span>
+        <span class="s0"># convert to an UPDATE if so.</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s3">not </span><span class="s1">has_identity</span>
+            <span class="s3">and </span><span class="s1">instance_key </span><span class="s3">in </span><span class="s1">uowtransaction.session.identity_map</span>
+        <span class="s1">):</span>
+            <span class="s1">instance = uowtransaction.session.identity_map[instance_key]</span>
+            <span class="s1">existing = attributes.instance_state(instance)</span>
+
+            <span class="s3">if not </span><span class="s1">uowtransaction.was_already_deleted(existing):</span>
+                <span class="s3">if not </span><span class="s1">uowtransaction.is_deleted(existing):</span>
+                    <span class="s1">util.warn(</span>
+                        <span class="s5">&quot;New instance %s with identity key %s conflicts &quot;</span>
+                        <span class="s5">&quot;with persistent instance %s&quot;</span>
+                        <span class="s1">% (state_str(state)</span><span class="s4">, </span><span class="s1">instance_key</span><span class="s4">, </span><span class="s1">state_str(existing))</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">base_mapper._log_debug(</span>
+                        <span class="s5">&quot;detected row switch for identity %s.  &quot;</span>
+                        <span class="s5">&quot;will update %s, remove %s from &quot;</span>
+                        <span class="s5">&quot;transaction&quot;</span><span class="s4">,</span>
+                        <span class="s1">instance_key</span><span class="s4">,</span>
+                        <span class="s1">state_str(state)</span><span class="s4">,</span>
+                        <span class="s1">state_str(existing)</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+
+                    <span class="s0"># remove the &quot;delete&quot; flag from the existing element</span>
+                    <span class="s1">uowtransaction.remove_state_actions(existing)</span>
+                    <span class="s1">row_switch = existing</span>
+
+        <span class="s3">if </span><span class="s1">(has_identity </span><span class="s3">or </span><span class="s1">row_switch) </span><span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">update_version_id = mapper._get_committed_state_attr_by_column(</span>
+                <span class="s1">row_switch </span><span class="s3">if </span><span class="s1">row_switch </span><span class="s3">else </span><span class="s1">state</span><span class="s4">,</span>
+                <span class="s1">row_switch.dict </span><span class="s3">if </span><span class="s1">row_switch </span><span class="s3">else </span><span class="s1">dict_</span><span class="s4">,</span>
+                <span class="s1">mapper.version_id_col</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+        <span class="s3">yield </span><span class="s1">(</span>
+            <span class="s1">state</span><span class="s4">,</span>
+            <span class="s1">dict_</span><span class="s4">,</span>
+            <span class="s1">mapper</span><span class="s4">,</span>
+            <span class="s1">connection</span><span class="s4">,</span>
+            <span class="s1">has_identity</span><span class="s4">,</span>
+            <span class="s1">row_switch</span><span class="s4">,</span>
+            <span class="s1">update_version_id</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_organize_states_for_post_update(base_mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uowtransaction):</span>
+    <span class="s2">&quot;&quot;&quot;Make an initial pass across a set of states for UPDATE 
+    corresponding to post_update. 
+ 
+    This includes obtaining key information for each state 
+    including its dictionary, mapper, the connection to use for 
+    the execution per state. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">return </span><span class="s1">_connections_for_states(base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">states)</span>
+
+
+<span class="s3">def </span><span class="s1">_organize_states_for_delete(base_mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uowtransaction):</span>
+    <span class="s2">&quot;&quot;&quot;Make an initial pass across a set of states for DELETE. 
+ 
+    This includes calling out before_delete and obtaining 
+    key information for each state including its dictionary, 
+    mapper, the connection to use for the execution per state. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">for </span><span class="s1">state</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection </span><span class="s3">in </span><span class="s1">_connections_for_states(</span>
+        <span class="s1">base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">states</span>
+    <span class="s1">):</span>
+        <span class="s1">mapper.dispatch.before_delete(mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">state)</span>
+
+        <span class="s3">if </span><span class="s1">mapper.version_id_col </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">update_version_id = mapper._get_committed_state_attr_by_column(</span>
+                <span class="s1">state</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">mapper.version_id_col</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">update_version_id = </span><span class="s3">None</span>
+
+        <span class="s3">yield </span><span class="s1">(state</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">update_version_id)</span>
+
+
+<span class="s3">def </span><span class="s1">_collect_insert_commands(</span>
+    <span class="s1">table</span><span class="s4">,</span>
+    <span class="s1">states_to_insert</span><span class="s4">,</span>
+    <span class="s1">*</span><span class="s4">,</span>
+    <span class="s1">bulk=</span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">return_defaults=</span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">render_nulls=</span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">include_bulk_keys=()</span><span class="s4">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Identify sets of values to use in INSERT statements for a 
+    list of states. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">for </span><span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection </span><span class="s3">in </span><span class="s1">states_to_insert:</span>
+        <span class="s3">if </span><span class="s1">table </span><span class="s3">not in </span><span class="s1">mapper._pks_by_table:</span>
+            <span class="s3">continue</span>
+
+        <span class="s1">params = {}</span>
+        <span class="s1">value_params = {}</span>
+
+        <span class="s1">propkey_to_col = mapper._propkey_to_col[table]</span>
+
+        <span class="s1">eval_none = mapper._insert_cols_evaluating_none[table]</span>
+
+        <span class="s3">for </span><span class="s1">propkey </span><span class="s3">in </span><span class="s1">set(propkey_to_col).intersection(state_dict):</span>
+            <span class="s1">value = state_dict[propkey]</span>
+            <span class="s1">col = propkey_to_col[propkey]</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is None and </span><span class="s1">col </span><span class="s3">not in </span><span class="s1">eval_none </span><span class="s3">and not </span><span class="s1">render_nulls:</span>
+                <span class="s3">continue</span>
+            <span class="s3">elif not </span><span class="s1">bulk </span><span class="s3">and </span><span class="s1">(</span>
+                <span class="s1">hasattr(value</span><span class="s4">, </span><span class="s5">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+                <span class="s3">or </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">sql.ClauseElement)</span>
+            <span class="s1">):</span>
+                <span class="s1">value_params[col] = (</span>
+                    <span class="s1">value.__clause_element__()</span>
+                    <span class="s3">if </span><span class="s1">hasattr(value</span><span class="s4">, </span><span class="s5">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+                    <span class="s3">else </span><span class="s1">value</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">params[col.key] = value</span>
+
+        <span class="s3">if not </span><span class="s1">bulk:</span>
+            <span class="s0"># for all the columns that have no default and we don't have</span>
+            <span class="s0"># a value and where &quot;None&quot; is not a special value, add</span>
+            <span class="s0"># explicit None to the INSERT.   This is a legacy behavior</span>
+            <span class="s0"># which might be worth removing, as it should not be necessary</span>
+            <span class="s0"># and also produces confusion, given that &quot;missing&quot; and None</span>
+            <span class="s0"># now have distinct meanings</span>
+            <span class="s3">for </span><span class="s1">colkey </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s1">mapper._insert_cols_as_none[table]</span>
+                <span class="s1">.difference(params)</span>
+                <span class="s1">.difference([c.key </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">value_params])</span>
+            <span class="s1">):</span>
+                <span class="s1">params[colkey] = </span><span class="s3">None</span>
+
+        <span class="s3">if not </span><span class="s1">bulk </span><span class="s3">or </span><span class="s1">return_defaults:</span>
+            <span class="s0"># params are in terms of Column key objects, so</span>
+            <span class="s0"># compare to pk_keys_by_table</span>
+            <span class="s1">has_all_pks = mapper._pk_keys_by_table[table].issubset(params)</span>
+
+            <span class="s3">if </span><span class="s1">mapper.base_mapper._prefer_eager_defaults(</span>
+                <span class="s1">connection.dialect</span><span class="s4">, </span><span class="s1">table</span>
+            <span class="s1">):</span>
+                <span class="s1">has_all_defaults = mapper._server_default_col_keys[</span>
+                    <span class="s1">table</span>
+                <span class="s1">].issubset(params)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">has_all_defaults = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">has_all_defaults = has_all_pks = </span><span class="s3">True</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">mapper.version_id_generator </span><span class="s3">is not False</span>
+            <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">is not None</span>
+            <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]</span>
+        <span class="s1">):</span>
+            <span class="s1">params[mapper.version_id_col.key] = mapper.version_id_generator(</span>
+                <span class="s3">None</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">bulk:</span>
+            <span class="s3">if </span><span class="s1">mapper._set_polymorphic_identity:</span>
+                <span class="s1">params.setdefault(</span>
+                    <span class="s1">mapper._polymorphic_attr_key</span><span class="s4">, </span><span class="s1">mapper.polymorphic_identity</span>
+                <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">include_bulk_keys:</span>
+                <span class="s1">params.update((k</span><span class="s4">, </span><span class="s1">state_dict[k]) </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">include_bulk_keys)</span>
+
+        <span class="s3">yield </span><span class="s1">(</span>
+            <span class="s1">state</span><span class="s4">,</span>
+            <span class="s1">state_dict</span><span class="s4">,</span>
+            <span class="s1">params</span><span class="s4">,</span>
+            <span class="s1">mapper</span><span class="s4">,</span>
+            <span class="s1">connection</span><span class="s4">,</span>
+            <span class="s1">value_params</span><span class="s4">,</span>
+            <span class="s1">has_all_pks</span><span class="s4">,</span>
+            <span class="s1">has_all_defaults</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_collect_update_commands(</span>
+    <span class="s1">uowtransaction</span><span class="s4">,</span>
+    <span class="s1">table</span><span class="s4">,</span>
+    <span class="s1">states_to_update</span><span class="s4">,</span>
+    <span class="s1">*</span><span class="s4">,</span>
+    <span class="s1">bulk=</span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">use_orm_update_stmt=</span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">include_bulk_keys=()</span><span class="s4">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Identify sets of values to use in UPDATE statements for a 
+    list of states. 
+ 
+    This function works intricately with the history system 
+    to determine exactly what values should be updated 
+    as well as how the row should be matched within an UPDATE 
+    statement.  Includes some tricky scenarios where the primary 
+    key of an object might have been changed. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">for </span><span class="s1">(</span>
+        <span class="s1">state</span><span class="s4">,</span>
+        <span class="s1">state_dict</span><span class="s4">,</span>
+        <span class="s1">mapper</span><span class="s4">,</span>
+        <span class="s1">connection</span><span class="s4">,</span>
+        <span class="s1">update_version_id</span><span class="s4">,</span>
+    <span class="s1">) </span><span class="s3">in </span><span class="s1">states_to_update:</span>
+        <span class="s3">if </span><span class="s1">table </span><span class="s3">not in </span><span class="s1">mapper._pks_by_table:</span>
+            <span class="s3">continue</span>
+
+        <span class="s1">pks = mapper._pks_by_table[table]</span>
+
+        <span class="s3">if </span><span class="s1">use_orm_update_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s0"># TODO: ordered values, etc</span>
+            <span class="s1">value_params = use_orm_update_stmt._values</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">value_params = {}</span>
+
+        <span class="s1">propkey_to_col = mapper._propkey_to_col[table]</span>
+
+        <span class="s3">if </span><span class="s1">bulk:</span>
+            <span class="s0"># keys here are mapped attribute keys, so</span>
+            <span class="s0"># look at mapper attribute keys for pk</span>
+            <span class="s1">params = {</span>
+                <span class="s1">propkey_to_col[propkey].key: state_dict[propkey]</span>
+                <span class="s3">for </span><span class="s1">propkey </span><span class="s3">in </span><span class="s1">set(propkey_to_col)</span>
+                <span class="s1">.intersection(state_dict)</span>
+                <span class="s1">.difference(mapper._pk_attr_keys_by_table[table])</span>
+            <span class="s1">}</span>
+            <span class="s1">has_all_defaults = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">params = {}</span>
+            <span class="s3">for </span><span class="s1">propkey </span><span class="s3">in </span><span class="s1">set(propkey_to_col).intersection(</span>
+                <span class="s1">state.committed_state</span>
+            <span class="s1">):</span>
+                <span class="s1">value = state_dict[propkey]</span>
+                <span class="s1">col = propkey_to_col[propkey]</span>
+
+                <span class="s3">if </span><span class="s1">hasattr(value</span><span class="s4">, </span><span class="s5">&quot;__clause_element__&quot;</span><span class="s1">) </span><span class="s3">or </span><span class="s1">isinstance(</span>
+                    <span class="s1">value</span><span class="s4">, </span><span class="s1">sql.ClauseElement</span>
+                <span class="s1">):</span>
+                    <span class="s1">value_params[col] = (</span>
+                        <span class="s1">value.__clause_element__()</span>
+                        <span class="s3">if </span><span class="s1">hasattr(value</span><span class="s4">, </span><span class="s5">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+                        <span class="s3">else </span><span class="s1">value</span>
+                    <span class="s1">)</span>
+                <span class="s0"># guard against values that generate non-__nonzero__</span>
+                <span class="s0"># objects for __eq__()</span>
+                <span class="s3">elif </span><span class="s1">(</span>
+                    <span class="s1">state.manager[propkey].impl.is_equal(</span>
+                        <span class="s1">value</span><span class="s4">, </span><span class="s1">state.committed_state[propkey]</span>
+                    <span class="s1">)</span>
+                    <span class="s3">is not True</span>
+                <span class="s1">):</span>
+                    <span class="s1">params[col.key] = value</span>
+
+            <span class="s3">if </span><span class="s1">mapper.base_mapper.eager_defaults </span><span class="s3">is True</span><span class="s1">:</span>
+                <span class="s1">has_all_defaults = (</span>
+                    <span class="s1">mapper._server_onupdate_default_col_keys[table]</span>
+                <span class="s1">).issubset(params)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">has_all_defaults = </span><span class="s3">True</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">update_version_id </span><span class="s3">is not None</span>
+            <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]</span>
+        <span class="s1">):</span>
+            <span class="s3">if not </span><span class="s1">bulk </span><span class="s3">and not </span><span class="s1">(params </span><span class="s3">or </span><span class="s1">value_params):</span>
+                <span class="s0"># HACK: check for history in other tables, in case the</span>
+                <span class="s0"># history is only in a different table than the one</span>
+                <span class="s0"># where the version_id_col is.  This logic was lost</span>
+                <span class="s0"># from 0.9 -&gt; 1.0.0 and restored in 1.0.6.</span>
+                <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">mapper._columntoproperty.values():</span>
+                    <span class="s1">history = state.manager[prop.key].impl.get_history(</span>
+                        <span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">attributes.PASSIVE_NO_INITIALIZE</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">history.added:</span>
+                        <span class="s3">break</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s0"># no net change, break</span>
+                    <span class="s3">continue</span>
+
+            <span class="s1">col = mapper.version_id_col</span>
+            <span class="s1">no_params = </span><span class="s3">not </span><span class="s1">params </span><span class="s3">and not </span><span class="s1">value_params</span>
+            <span class="s1">params[col._label] = update_version_id</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">bulk </span><span class="s3">or </span><span class="s1">col.key </span><span class="s3">not in </span><span class="s1">params</span>
+            <span class="s1">) </span><span class="s3">and </span><span class="s1">mapper.version_id_generator </span><span class="s3">is not False</span><span class="s1">:</span>
+                <span class="s1">val = mapper.version_id_generator(update_version_id)</span>
+                <span class="s1">params[col.key] = val</span>
+            <span class="s3">elif </span><span class="s1">mapper.version_id_generator </span><span class="s3">is False and </span><span class="s1">no_params:</span>
+                <span class="s0"># no version id generator, no values set on the table,</span>
+                <span class="s0"># and version id wasn't manually incremented.</span>
+                <span class="s0"># set version id to itself so we get an UPDATE</span>
+                <span class="s0"># statement</span>
+                <span class="s1">params[col.key] = update_version_id</span>
+
+        <span class="s3">elif not </span><span class="s1">(params </span><span class="s3">or </span><span class="s1">value_params):</span>
+            <span class="s3">continue</span>
+
+        <span class="s1">has_all_pks = </span><span class="s3">True</span>
+        <span class="s1">expect_pk_cascaded = </span><span class="s3">False</span>
+        <span class="s3">if </span><span class="s1">bulk:</span>
+            <span class="s0"># keys here are mapped attribute keys, so</span>
+            <span class="s0"># look at mapper attribute keys for pk</span>
+            <span class="s1">pk_params = {</span>
+                <span class="s1">propkey_to_col[propkey]._label: state_dict.get(propkey)</span>
+                <span class="s3">for </span><span class="s1">propkey </span><span class="s3">in </span><span class="s1">set(propkey_to_col).intersection(</span>
+                    <span class="s1">mapper._pk_attr_keys_by_table[table]</span>
+                <span class="s1">)</span>
+            <span class="s1">}</span>
+            <span class="s3">if </span><span class="s1">util.NONE_SET.intersection(pk_params.values()):</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s5">f&quot;No primary key value supplied for column(s) &quot;</span>
+                    <span class="s5">f&quot;&quot;&quot;</span><span class="s6">{</span>
+                        <span class="s5">', '</span><span class="s1">.join(</span>
+                            <span class="s1">str(c) </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">pks </span><span class="s3">if </span><span class="s1">pk_params[c._label] </span><span class="s3">is None</span>
+                        <span class="s1">)</span>
+                    <span class="s6">}</span><span class="s5">; &quot;&quot;&quot;</span>
+                    <span class="s5">&quot;per-row ORM Bulk UPDATE by Primary Key requires that &quot;</span>
+                    <span class="s5">&quot;records contain primary key values&quot;</span><span class="s4">,</span>
+                    <span class="s1">code=</span><span class="s5">&quot;bupq&quot;</span><span class="s4">,</span>
+                <span class="s1">)</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">pk_params = {}</span>
+            <span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">pks:</span>
+                <span class="s1">propkey = mapper._columntoproperty[col].key</span>
+
+                <span class="s1">history = state.manager[propkey].impl.get_history(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">attributes.PASSIVE_OFF</span>
+                <span class="s1">)</span>
+
+                <span class="s3">if </span><span class="s1">history.added:</span>
+                    <span class="s3">if </span><span class="s1">(</span>
+                        <span class="s3">not </span><span class="s1">history.deleted</span>
+                        <span class="s3">or </span><span class="s1">(</span><span class="s5">&quot;pk_cascaded&quot;</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">col)</span>
+                        <span class="s3">in </span><span class="s1">uowtransaction.attributes</span>
+                    <span class="s1">):</span>
+                        <span class="s1">expect_pk_cascaded = </span><span class="s3">True</span>
+                        <span class="s1">pk_params[col._label] = history.added[</span><span class="s7">0</span><span class="s1">]</span>
+                        <span class="s1">params.pop(col.key</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s0"># else, use the old value to locate the row</span>
+                        <span class="s1">pk_params[col._label] = history.deleted[</span><span class="s7">0</span><span class="s1">]</span>
+                        <span class="s3">if </span><span class="s1">col </span><span class="s3">in </span><span class="s1">value_params:</span>
+                            <span class="s1">has_all_pks = </span><span class="s3">False</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">pk_params[col._label] = history.unchanged[</span><span class="s7">0</span><span class="s1">]</span>
+                <span class="s3">if </span><span class="s1">pk_params[col._label] </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s3">raise </span><span class="s1">orm_exc.FlushError(</span>
+                        <span class="s5">&quot;Can't update table %s using NULL for primary &quot;</span>
+                        <span class="s5">&quot;key value on column %s&quot; </span><span class="s1">% (table</span><span class="s4">, </span><span class="s1">col)</span>
+                    <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">include_bulk_keys:</span>
+            <span class="s1">params.update((k</span><span class="s4">, </span><span class="s1">state_dict[k]) </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">include_bulk_keys)</span>
+
+        <span class="s3">if </span><span class="s1">params </span><span class="s3">or </span><span class="s1">value_params:</span>
+            <span class="s1">params.update(pk_params)</span>
+            <span class="s3">yield </span><span class="s1">(</span>
+                <span class="s1">state</span><span class="s4">,</span>
+                <span class="s1">state_dict</span><span class="s4">,</span>
+                <span class="s1">params</span><span class="s4">,</span>
+                <span class="s1">mapper</span><span class="s4">,</span>
+                <span class="s1">connection</span><span class="s4">,</span>
+                <span class="s1">value_params</span><span class="s4">,</span>
+                <span class="s1">has_all_defaults</span><span class="s4">,</span>
+                <span class="s1">has_all_pks</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">expect_pk_cascaded:</span>
+            <span class="s0"># no UPDATE occurs on this table, but we expect that CASCADE rules</span>
+            <span class="s0"># have changed the primary key of the row; propagate this event to</span>
+            <span class="s0"># other columns that expect to have been modified. this normally</span>
+            <span class="s0"># occurs after the UPDATE is emitted however we invoke it here</span>
+            <span class="s0"># explicitly in the absence of our invoking an UPDATE</span>
+            <span class="s3">for </span><span class="s1">m</span><span class="s4">, </span><span class="s1">equated_pairs </span><span class="s3">in </span><span class="s1">mapper._table_to_equated[table]:</span>
+                <span class="s1">sync.populate(</span>
+                    <span class="s1">state</span><span class="s4">,</span>
+                    <span class="s1">m</span><span class="s4">,</span>
+                    <span class="s1">state</span><span class="s4">,</span>
+                    <span class="s1">m</span><span class="s4">,</span>
+                    <span class="s1">equated_pairs</span><span class="s4">,</span>
+                    <span class="s1">uowtransaction</span><span class="s4">,</span>
+                    <span class="s1">mapper.passive_updates</span><span class="s4">,</span>
+                <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_collect_post_update_commands(</span>
+    <span class="s1">base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">states_to_update</span><span class="s4">, </span><span class="s1">post_update_cols</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Identify sets of values to use in UPDATE statements for a 
+    list of states within a post_update operation. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">for </span><span class="s1">(</span>
+        <span class="s1">state</span><span class="s4">,</span>
+        <span class="s1">state_dict</span><span class="s4">,</span>
+        <span class="s1">mapper</span><span class="s4">,</span>
+        <span class="s1">connection</span><span class="s4">,</span>
+        <span class="s1">update_version_id</span><span class="s4">,</span>
+    <span class="s1">) </span><span class="s3">in </span><span class="s1">states_to_update:</span>
+        <span class="s0"># assert table in mapper._pks_by_table</span>
+
+        <span class="s1">pks = mapper._pks_by_table[table]</span>
+        <span class="s1">params = {}</span>
+        <span class="s1">hasdata = </span><span class="s3">False</span>
+
+        <span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]:</span>
+            <span class="s3">if </span><span class="s1">col </span><span class="s3">in </span><span class="s1">pks:</span>
+                <span class="s1">params[col._label] = mapper._get_state_attr_by_column(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">col</span><span class="s4">, </span><span class="s1">passive=attributes.PASSIVE_OFF</span>
+                <span class="s1">)</span>
+
+            <span class="s3">elif </span><span class="s1">col </span><span class="s3">in </span><span class="s1">post_update_cols </span><span class="s3">or </span><span class="s1">col.onupdate </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">prop = mapper._columntoproperty[col]</span>
+                <span class="s1">history = state.manager[prop.key].impl.get_history(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">attributes.PASSIVE_NO_INITIALIZE</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">history.added:</span>
+                    <span class="s1">value = history.added[</span><span class="s7">0</span><span class="s1">]</span>
+                    <span class="s1">params[col.key] = value</span>
+                    <span class="s1">hasdata = </span><span class="s3">True</span>
+        <span class="s3">if </span><span class="s1">hasdata:</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">update_version_id </span><span class="s3">is not None</span>
+                <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]</span>
+            <span class="s1">):</span>
+                <span class="s1">col = mapper.version_id_col</span>
+                <span class="s1">params[col._label] = update_version_id</span>
+
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s1">bool(state.key)</span>
+                    <span class="s3">and </span><span class="s1">col.key </span><span class="s3">not in </span><span class="s1">params</span>
+                    <span class="s3">and </span><span class="s1">mapper.version_id_generator </span><span class="s3">is not False</span>
+                <span class="s1">):</span>
+                    <span class="s1">val = mapper.version_id_generator(update_version_id)</span>
+                    <span class="s1">params[col.key] = val</span>
+            <span class="s3">yield </span><span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">params</span>
+
+
+<span class="s3">def </span><span class="s1">_collect_delete_commands(</span>
+    <span class="s1">base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">states_to_delete</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Identify values to use in DELETE statements for a list of 
+    states to be deleted.&quot;&quot;&quot;</span>
+
+    <span class="s3">for </span><span class="s1">(</span>
+        <span class="s1">state</span><span class="s4">,</span>
+        <span class="s1">state_dict</span><span class="s4">,</span>
+        <span class="s1">mapper</span><span class="s4">,</span>
+        <span class="s1">connection</span><span class="s4">,</span>
+        <span class="s1">update_version_id</span><span class="s4">,</span>
+    <span class="s1">) </span><span class="s3">in </span><span class="s1">states_to_delete:</span>
+        <span class="s3">if </span><span class="s1">table </span><span class="s3">not in </span><span class="s1">mapper._pks_by_table:</span>
+            <span class="s3">continue</span>
+
+        <span class="s1">params = {}</span>
+        <span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">mapper._pks_by_table[table]:</span>
+            <span class="s1">params[col.key] = value = (</span>
+                <span class="s1">mapper._get_committed_state_attr_by_column(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">col</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">orm_exc.FlushError(</span>
+                    <span class="s5">&quot;Can't delete from table %s &quot;</span>
+                    <span class="s5">&quot;using NULL for primary &quot;</span>
+                    <span class="s5">&quot;key value on column %s&quot; </span><span class="s1">% (table</span><span class="s4">, </span><span class="s1">col)</span>
+                <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">update_version_id </span><span class="s3">is not None</span>
+            <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]</span>
+        <span class="s1">):</span>
+            <span class="s1">params[mapper.version_id_col.key] = update_version_id</span>
+        <span class="s3">yield </span><span class="s1">params</span><span class="s4">, </span><span class="s1">connection</span>
+
+
+<span class="s3">def </span><span class="s1">_emit_update_statements(</span>
+    <span class="s1">base_mapper</span><span class="s4">,</span>
+    <span class="s1">uowtransaction</span><span class="s4">,</span>
+    <span class="s1">mapper</span><span class="s4">,</span>
+    <span class="s1">table</span><span class="s4">,</span>
+    <span class="s1">update</span><span class="s4">,</span>
+    <span class="s1">*</span><span class="s4">,</span>
+    <span class="s1">bookkeeping=</span><span class="s3">True</span><span class="s4">,</span>
+    <span class="s1">use_orm_update_stmt=</span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">enable_check_rowcount=</span><span class="s3">True</span><span class="s4">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Emit UPDATE statements corresponding to value lists collected 
+    by _collect_update_commands().&quot;&quot;&quot;</span>
+
+    <span class="s1">needs_version_id = (</span>
+        <span class="s1">mapper.version_id_col </span><span class="s3">is not None</span>
+        <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]</span>
+    <span class="s1">)</span>
+
+    <span class="s1">execution_options = {</span><span class="s5">&quot;compiled_cache&quot;</span><span class="s1">: base_mapper._compiled_cache}</span>
+
+    <span class="s3">def </span><span class="s1">update_stmt(existing_stmt=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">clauses = BooleanClauseList._construct_raw(operators.and_)</span>
+
+        <span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">mapper._pks_by_table[table]:</span>
+            <span class="s1">clauses._append_inplace(</span>
+                <span class="s1">col == sql.bindparam(col._label</span><span class="s4">, </span><span class="s1">type_=col.type)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">needs_version_id:</span>
+            <span class="s1">clauses._append_inplace(</span>
+                <span class="s1">mapper.version_id_col</span>
+                <span class="s1">== sql.bindparam(</span>
+                    <span class="s1">mapper.version_id_col._label</span><span class="s4">,</span>
+                    <span class="s1">type_=mapper.version_id_col.type</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">existing_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">stmt = existing_stmt.where(clauses)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">stmt = table.update().where(clauses)</span>
+        <span class="s3">return </span><span class="s1">stmt</span>
+
+    <span class="s3">if </span><span class="s1">use_orm_update_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">cached_stmt = update_stmt(use_orm_update_stmt)</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">cached_stmt = base_mapper._memo((</span><span class="s5">&quot;update&quot;</span><span class="s4">, </span><span class="s1">table)</span><span class="s4">, </span><span class="s1">update_stmt)</span>
+
+    <span class="s3">for </span><span class="s1">(</span>
+        <span class="s1">(connection</span><span class="s4">, </span><span class="s1">paramkeys</span><span class="s4">, </span><span class="s1">hasvalue</span><span class="s4">, </span><span class="s1">has_all_defaults</span><span class="s4">, </span><span class="s1">has_all_pks)</span><span class="s4">,</span>
+        <span class="s1">records</span><span class="s4">,</span>
+    <span class="s1">) </span><span class="s3">in </span><span class="s1">groupby(</span>
+        <span class="s1">update</span><span class="s4">,</span>
+        <span class="s3">lambda </span><span class="s1">rec: (</span>
+            <span class="s1">rec[</span><span class="s7">4</span><span class="s1">]</span><span class="s4">,  </span><span class="s0"># connection</span>
+            <span class="s1">set(rec[</span><span class="s7">2</span><span class="s1">])</span><span class="s4">,  </span><span class="s0"># set of parameter keys</span>
+            <span class="s1">bool(rec[</span><span class="s7">5</span><span class="s1">])</span><span class="s4">,  </span><span class="s0"># whether or not we have &quot;value&quot; parameters</span>
+            <span class="s1">rec[</span><span class="s7">6</span><span class="s1">]</span><span class="s4">,  </span><span class="s0"># has_all_defaults</span>
+            <span class="s1">rec[</span><span class="s7">7</span><span class="s1">]</span><span class="s4">,  </span><span class="s0"># has all pks</span>
+        <span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s1">rows = </span><span class="s7">0</span>
+        <span class="s1">records = list(records)</span>
+
+        <span class="s1">statement = cached_stmt</span>
+
+        <span class="s3">if </span><span class="s1">use_orm_update_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">statement = statement._annotate(</span>
+                <span class="s1">{</span>
+                    <span class="s5">&quot;_emit_update_table&quot;</span><span class="s1">: table</span><span class="s4">,</span>
+                    <span class="s5">&quot;_emit_update_mapper&quot;</span><span class="s1">: mapper</span><span class="s4">,</span>
+                <span class="s1">}</span>
+            <span class="s1">)</span>
+
+        <span class="s1">return_defaults = </span><span class="s3">False</span>
+
+        <span class="s3">if not </span><span class="s1">has_all_pks:</span>
+            <span class="s1">statement = statement.return_defaults(*mapper._pks_by_table[table])</span>
+            <span class="s1">return_defaults = </span><span class="s3">True</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">bookkeeping</span>
+            <span class="s3">and not </span><span class="s1">has_all_defaults</span>
+            <span class="s3">and </span><span class="s1">mapper.base_mapper.eager_defaults </span><span class="s3">is True</span>
+            <span class="s0"># change as of #8889 - if RETURNING is not going to be used anyway,</span>
+            <span class="s0"># (applies to MySQL, MariaDB which lack UPDATE RETURNING) ensure</span>
+            <span class="s0"># we can do an executemany UPDATE which is more efficient</span>
+            <span class="s3">and </span><span class="s1">table.implicit_returning</span>
+            <span class="s3">and </span><span class="s1">connection.dialect.update_returning</span>
+        <span class="s1">):</span>
+            <span class="s1">statement = statement.return_defaults(</span>
+                <span class="s1">*mapper._server_onupdate_default_cols[table]</span>
+            <span class="s1">)</span>
+            <span class="s1">return_defaults = </span><span class="s3">True</span>
+
+        <span class="s3">if </span><span class="s1">mapper._version_id_has_server_side_value:</span>
+            <span class="s1">statement = statement.return_defaults(mapper.version_id_col)</span>
+            <span class="s1">return_defaults = </span><span class="s3">True</span>
+
+        <span class="s1">assert_singlerow = connection.dialect.supports_sane_rowcount</span>
+
+        <span class="s1">assert_multirow = (</span>
+            <span class="s1">assert_singlerow</span>
+            <span class="s3">and </span><span class="s1">connection.dialect.supports_sane_multi_rowcount</span>
+        <span class="s1">)</span>
+
+        <span class="s0"># change as of #8889 - if RETURNING is not going to be used anyway,</span>
+        <span class="s0"># (applies to MySQL, MariaDB which lack UPDATE RETURNING) ensure</span>
+        <span class="s0"># we can do an executemany UPDATE which is more efficient</span>
+        <span class="s1">allow_executemany = </span><span class="s3">not </span><span class="s1">return_defaults </span><span class="s3">and not </span><span class="s1">needs_version_id</span>
+
+        <span class="s3">if </span><span class="s1">hasvalue:</span>
+            <span class="s3">for </span><span class="s1">(</span>
+                <span class="s1">state</span><span class="s4">,</span>
+                <span class="s1">state_dict</span><span class="s4">,</span>
+                <span class="s1">params</span><span class="s4">,</span>
+                <span class="s1">mapper</span><span class="s4">,</span>
+                <span class="s1">connection</span><span class="s4">,</span>
+                <span class="s1">value_params</span><span class="s4">,</span>
+                <span class="s1">has_all_defaults</span><span class="s4">,</span>
+                <span class="s1">has_all_pks</span><span class="s4">,</span>
+            <span class="s1">) </span><span class="s3">in </span><span class="s1">records:</span>
+                <span class="s1">c = connection.execute(</span>
+                    <span class="s1">statement.values(value_params)</span><span class="s4">,</span>
+                    <span class="s1">params</span><span class="s4">,</span>
+                    <span class="s1">execution_options=execution_options</span><span class="s4">,</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">bookkeeping:</span>
+                    <span class="s1">_postfetch(</span>
+                        <span class="s1">mapper</span><span class="s4">,</span>
+                        <span class="s1">uowtransaction</span><span class="s4">,</span>
+                        <span class="s1">table</span><span class="s4">,</span>
+                        <span class="s1">state</span><span class="s4">,</span>
+                        <span class="s1">state_dict</span><span class="s4">,</span>
+                        <span class="s1">c</span><span class="s4">,</span>
+                        <span class="s1">c.context.compiled_parameters[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">,</span>
+                        <span class="s1">value_params</span><span class="s4">,</span>
+                        <span class="s3">True</span><span class="s4">,</span>
+                        <span class="s1">c.returned_defaults</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">rows += c.rowcount</span>
+                <span class="s1">check_rowcount = enable_check_rowcount </span><span class="s3">and </span><span class="s1">assert_singlerow</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if not </span><span class="s1">allow_executemany:</span>
+                <span class="s1">check_rowcount = enable_check_rowcount </span><span class="s3">and </span><span class="s1">assert_singlerow</span>
+                <span class="s3">for </span><span class="s1">(</span>
+                    <span class="s1">state</span><span class="s4">,</span>
+                    <span class="s1">state_dict</span><span class="s4">,</span>
+                    <span class="s1">params</span><span class="s4">,</span>
+                    <span class="s1">mapper</span><span class="s4">,</span>
+                    <span class="s1">connection</span><span class="s4">,</span>
+                    <span class="s1">value_params</span><span class="s4">,</span>
+                    <span class="s1">has_all_defaults</span><span class="s4">,</span>
+                    <span class="s1">has_all_pks</span><span class="s4">,</span>
+                <span class="s1">) </span><span class="s3">in </span><span class="s1">records:</span>
+                    <span class="s1">c = connection.execute(</span>
+                        <span class="s1">statement</span><span class="s4">, </span><span class="s1">params</span><span class="s4">, </span><span class="s1">execution_options=execution_options</span>
+                    <span class="s1">)</span>
+
+                    <span class="s0"># TODO: why with bookkeeping=False?</span>
+                    <span class="s3">if </span><span class="s1">bookkeeping:</span>
+                        <span class="s1">_postfetch(</span>
+                            <span class="s1">mapper</span><span class="s4">,</span>
+                            <span class="s1">uowtransaction</span><span class="s4">,</span>
+                            <span class="s1">table</span><span class="s4">,</span>
+                            <span class="s1">state</span><span class="s4">,</span>
+                            <span class="s1">state_dict</span><span class="s4">,</span>
+                            <span class="s1">c</span><span class="s4">,</span>
+                            <span class="s1">c.context.compiled_parameters[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">,</span>
+                            <span class="s1">value_params</span><span class="s4">,</span>
+                            <span class="s3">True</span><span class="s4">,</span>
+                            <span class="s1">c.returned_defaults</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+                    <span class="s1">rows += c.rowcount</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">multiparams = [rec[</span><span class="s7">2</span><span class="s1">] </span><span class="s3">for </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">records]</span>
+
+                <span class="s1">check_rowcount = enable_check_rowcount </span><span class="s3">and </span><span class="s1">(</span>
+                    <span class="s1">assert_multirow</span>
+                    <span class="s3">or </span><span class="s1">(assert_singlerow </span><span class="s3">and </span><span class="s1">len(multiparams) == </span><span class="s7">1</span><span class="s1">)</span>
+                <span class="s1">)</span>
+
+                <span class="s1">c = connection.execute(</span>
+                    <span class="s1">statement</span><span class="s4">, </span><span class="s1">multiparams</span><span class="s4">, </span><span class="s1">execution_options=execution_options</span>
+                <span class="s1">)</span>
+
+                <span class="s1">rows += c.rowcount</span>
+
+                <span class="s3">for </span><span class="s1">(</span>
+                    <span class="s1">state</span><span class="s4">,</span>
+                    <span class="s1">state_dict</span><span class="s4">,</span>
+                    <span class="s1">params</span><span class="s4">,</span>
+                    <span class="s1">mapper</span><span class="s4">,</span>
+                    <span class="s1">connection</span><span class="s4">,</span>
+                    <span class="s1">value_params</span><span class="s4">,</span>
+                    <span class="s1">has_all_defaults</span><span class="s4">,</span>
+                    <span class="s1">has_all_pks</span><span class="s4">,</span>
+                <span class="s1">) </span><span class="s3">in </span><span class="s1">records:</span>
+                    <span class="s3">if </span><span class="s1">bookkeeping:</span>
+                        <span class="s1">_postfetch(</span>
+                            <span class="s1">mapper</span><span class="s4">,</span>
+                            <span class="s1">uowtransaction</span><span class="s4">,</span>
+                            <span class="s1">table</span><span class="s4">,</span>
+                            <span class="s1">state</span><span class="s4">,</span>
+                            <span class="s1">state_dict</span><span class="s4">,</span>
+                            <span class="s1">c</span><span class="s4">,</span>
+                            <span class="s1">c.context.compiled_parameters[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">,</span>
+                            <span class="s1">value_params</span><span class="s4">,</span>
+                            <span class="s3">True</span><span class="s4">,</span>
+                            <span class="s1">(</span>
+                                <span class="s1">c.returned_defaults</span>
+                                <span class="s3">if not </span><span class="s1">c.context.executemany</span>
+                                <span class="s3">else None</span>
+                            <span class="s1">)</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">check_rowcount:</span>
+            <span class="s3">if </span><span class="s1">rows != len(records):</span>
+                <span class="s3">raise </span><span class="s1">orm_exc.StaleDataError(</span>
+                    <span class="s5">&quot;UPDATE statement on table '%s' expected to &quot;</span>
+                    <span class="s5">&quot;update %d row(s); %d were matched.&quot;</span>
+                    <span class="s1">% (table.description</span><span class="s4">, </span><span class="s1">len(records)</span><span class="s4">, </span><span class="s1">rows)</span>
+                <span class="s1">)</span>
+
+        <span class="s3">elif </span><span class="s1">needs_version_id:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s5">&quot;Dialect %s does not support updated rowcount &quot;</span>
+                <span class="s5">&quot;- versioning cannot be verified.&quot;</span>
+                <span class="s1">% c.dialect.dialect_description</span>
+            <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_emit_insert_statements(</span>
+    <span class="s1">base_mapper</span><span class="s4">,</span>
+    <span class="s1">uowtransaction</span><span class="s4">,</span>
+    <span class="s1">mapper</span><span class="s4">,</span>
+    <span class="s1">table</span><span class="s4">,</span>
+    <span class="s1">insert</span><span class="s4">,</span>
+    <span class="s1">*</span><span class="s4">,</span>
+    <span class="s1">bookkeeping=</span><span class="s3">True</span><span class="s4">,</span>
+    <span class="s1">use_orm_insert_stmt=</span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">execution_options=</span><span class="s3">None</span><span class="s4">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Emit INSERT statements corresponding to value lists collected 
+    by _collect_insert_commands().&quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">use_orm_insert_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">cached_stmt = use_orm_insert_stmt</span>
+        <span class="s1">exec_opt = util.EMPTY_DICT</span>
+
+        <span class="s0"># if a user query with RETURNING was passed, we definitely need</span>
+        <span class="s0"># to use RETURNING.</span>
+        <span class="s1">returning_is_required_anyway = bool(use_orm_insert_stmt._returning)</span>
+        <span class="s1">deterministic_results_reqd = (</span>
+            <span class="s1">returning_is_required_anyway</span>
+            <span class="s3">and </span><span class="s1">use_orm_insert_stmt._sort_by_parameter_order</span>
+        <span class="s1">) </span><span class="s3">or </span><span class="s1">bookkeeping</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">returning_is_required_anyway = </span><span class="s3">False</span>
+        <span class="s1">deterministic_results_reqd = bookkeeping</span>
+        <span class="s1">cached_stmt = base_mapper._memo((</span><span class="s5">&quot;insert&quot;</span><span class="s4">, </span><span class="s1">table)</span><span class="s4">, </span><span class="s1">table.insert)</span>
+        <span class="s1">exec_opt = {</span><span class="s5">&quot;compiled_cache&quot;</span><span class="s1">: base_mapper._compiled_cache}</span>
+
+    <span class="s3">if </span><span class="s1">execution_options:</span>
+        <span class="s1">execution_options = util.EMPTY_DICT.merge_with(</span>
+            <span class="s1">exec_opt</span><span class="s4">, </span><span class="s1">execution_options</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">execution_options = exec_opt</span>
+
+    <span class="s1">return_result = </span><span class="s3">None</span>
+
+    <span class="s3">for </span><span class="s1">(</span>
+        <span class="s1">(connection</span><span class="s4">, </span><span class="s1">_</span><span class="s4">, </span><span class="s1">hasvalue</span><span class="s4">, </span><span class="s1">has_all_pks</span><span class="s4">, </span><span class="s1">has_all_defaults)</span><span class="s4">,</span>
+        <span class="s1">records</span><span class="s4">,</span>
+    <span class="s1">) </span><span class="s3">in </span><span class="s1">groupby(</span>
+        <span class="s1">insert</span><span class="s4">,</span>
+        <span class="s3">lambda </span><span class="s1">rec: (</span>
+            <span class="s1">rec[</span><span class="s7">4</span><span class="s1">]</span><span class="s4">,  </span><span class="s0"># connection</span>
+            <span class="s1">set(rec[</span><span class="s7">2</span><span class="s1">])</span><span class="s4">,  </span><span class="s0"># parameter keys</span>
+            <span class="s1">bool(rec[</span><span class="s7">5</span><span class="s1">])</span><span class="s4">,  </span><span class="s0"># whether we have &quot;value&quot; parameters</span>
+            <span class="s1">rec[</span><span class="s7">6</span><span class="s1">]</span><span class="s4">,</span>
+            <span class="s1">rec[</span><span class="s7">7</span><span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s1">statement = cached_stmt</span>
+
+        <span class="s3">if </span><span class="s1">use_orm_insert_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">statement = statement._annotate(</span>
+                <span class="s1">{</span>
+                    <span class="s5">&quot;_emit_insert_table&quot;</span><span class="s1">: table</span><span class="s4">,</span>
+                    <span class="s5">&quot;_emit_insert_mapper&quot;</span><span class="s1">: mapper</span><span class="s4">,</span>
+                <span class="s1">}</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">(</span>
+                <span class="s3">not </span><span class="s1">bookkeeping</span>
+                <span class="s3">or </span><span class="s1">(</span>
+                    <span class="s1">has_all_defaults</span>
+                    <span class="s3">or not </span><span class="s1">base_mapper._prefer_eager_defaults(</span>
+                        <span class="s1">connection.dialect</span><span class="s4">, </span><span class="s1">table</span>
+                    <span class="s1">)</span>
+                    <span class="s3">or not </span><span class="s1">table.implicit_returning</span>
+                    <span class="s3">or not </span><span class="s1">connection.dialect.insert_returning</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s3">and not </span><span class="s1">returning_is_required_anyway</span>
+            <span class="s3">and </span><span class="s1">has_all_pks</span>
+            <span class="s3">and not </span><span class="s1">hasvalue</span>
+        <span class="s1">):</span>
+            <span class="s0"># the &quot;we don't need newly generated values back&quot; section.</span>
+            <span class="s0"># here we have all the PKs, all the defaults or we don't want</span>
+            <span class="s0"># to fetch them, or the dialect doesn't support RETURNING at all</span>
+            <span class="s0"># so we have to post-fetch / use lastrowid anyway.</span>
+            <span class="s1">records = list(records)</span>
+            <span class="s1">multiparams = [rec[</span><span class="s7">2</span><span class="s1">] </span><span class="s3">for </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">records]</span>
+
+            <span class="s1">result = connection.execute(</span>
+                <span class="s1">statement</span><span class="s4">, </span><span class="s1">multiparams</span><span class="s4">, </span><span class="s1">execution_options=execution_options</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">bookkeeping:</span>
+                <span class="s3">for </span><span class="s1">(</span>
+                    <span class="s1">(</span>
+                        <span class="s1">state</span><span class="s4">,</span>
+                        <span class="s1">state_dict</span><span class="s4">,</span>
+                        <span class="s1">params</span><span class="s4">,</span>
+                        <span class="s1">mapper_rec</span><span class="s4">,</span>
+                        <span class="s1">conn</span><span class="s4">,</span>
+                        <span class="s1">value_params</span><span class="s4">,</span>
+                        <span class="s1">has_all_pks</span><span class="s4">,</span>
+                        <span class="s1">has_all_defaults</span><span class="s4">,</span>
+                    <span class="s1">)</span><span class="s4">,</span>
+                    <span class="s1">last_inserted_params</span><span class="s4">,</span>
+                <span class="s1">) </span><span class="s3">in </span><span class="s1">zip(records</span><span class="s4">, </span><span class="s1">result.context.compiled_parameters):</span>
+                    <span class="s3">if </span><span class="s1">state:</span>
+                        <span class="s1">_postfetch(</span>
+                            <span class="s1">mapper_rec</span><span class="s4">,</span>
+                            <span class="s1">uowtransaction</span><span class="s4">,</span>
+                            <span class="s1">table</span><span class="s4">,</span>
+                            <span class="s1">state</span><span class="s4">,</span>
+                            <span class="s1">state_dict</span><span class="s4">,</span>
+                            <span class="s1">result</span><span class="s4">,</span>
+                            <span class="s1">last_inserted_params</span><span class="s4">,</span>
+                            <span class="s1">value_params</span><span class="s4">,</span>
+                            <span class="s3">False</span><span class="s4">,</span>
+                            <span class="s1">(</span>
+                                <span class="s1">result.returned_defaults</span>
+                                <span class="s3">if not </span><span class="s1">result.context.executemany</span>
+                                <span class="s3">else None</span>
+                            <span class="s1">)</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">_postfetch_bulk_save(mapper_rec</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">table)</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># here, we need defaults and/or pk values back or we otherwise</span>
+            <span class="s0"># know that we are using RETURNING in any case</span>
+
+            <span class="s1">records = list(records)</span>
+
+            <span class="s3">if </span><span class="s1">returning_is_required_anyway </span><span class="s3">or </span><span class="s1">(</span>
+                <span class="s1">table.implicit_returning </span><span class="s3">and not </span><span class="s1">hasvalue </span><span class="s3">and </span><span class="s1">len(records) &gt; </span><span class="s7">1</span>
+            <span class="s1">):</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s1">deterministic_results_reqd</span>
+                    <span class="s3">and </span><span class="s1">connection.dialect.insert_executemany_returning_sort_by_parameter_order  </span><span class="s0"># noqa: E501</span>
+                <span class="s1">) </span><span class="s3">or </span><span class="s1">(</span>
+                    <span class="s3">not </span><span class="s1">deterministic_results_reqd</span>
+                    <span class="s3">and </span><span class="s1">connection.dialect.insert_executemany_returning</span>
+                <span class="s1">):</span>
+                    <span class="s1">do_executemany = </span><span class="s3">True</span>
+                <span class="s3">elif </span><span class="s1">returning_is_required_anyway:</span>
+                    <span class="s3">if </span><span class="s1">deterministic_results_reqd:</span>
+                        <span class="s1">dt = </span><span class="s5">&quot; with RETURNING and sort by parameter order&quot;</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">dt = </span><span class="s5">&quot; with RETURNING&quot;</span>
+                    <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                        <span class="s5">f&quot;Can't use explicit RETURNING for bulk INSERT &quot;</span>
+                        <span class="s5">f&quot;operation with &quot;</span>
+                        <span class="s5">f&quot;</span><span class="s6">{</span><span class="s1">connection.dialect.dialect_description</span><span class="s6">} </span><span class="s5">backend; &quot;</span>
+                        <span class="s5">f&quot;executemany</span><span class="s6">{</span><span class="s1">dt</span><span class="s6">} </span><span class="s5">is not enabled for this dialect.&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">do_executemany = </span><span class="s3">False</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">do_executemany = </span><span class="s3">False</span>
+
+            <span class="s3">if </span><span class="s1">use_orm_insert_stmt </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s3">not </span><span class="s1">has_all_defaults</span>
+                    <span class="s3">and </span><span class="s1">base_mapper._prefer_eager_defaults(</span>
+                        <span class="s1">connection.dialect</span><span class="s4">, </span><span class="s1">table</span>
+                    <span class="s1">)</span>
+                <span class="s1">):</span>
+                    <span class="s1">statement = statement.return_defaults(</span>
+                        <span class="s1">*mapper._server_default_cols[table]</span><span class="s4">,</span>
+                        <span class="s1">sort_by_parameter_order=bookkeeping</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">mapper.version_id_col </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">statement = statement.return_defaults(</span>
+                    <span class="s1">mapper.version_id_col</span><span class="s4">,</span>
+                    <span class="s1">sort_by_parameter_order=bookkeeping</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">do_executemany:</span>
+                <span class="s1">statement = statement.return_defaults(</span>
+                    <span class="s1">*table.primary_key</span><span class="s4">, </span><span class="s1">sort_by_parameter_order=bookkeeping</span>
+                <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">do_executemany:</span>
+                <span class="s1">multiparams = [rec[</span><span class="s7">2</span><span class="s1">] </span><span class="s3">for </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">records]</span>
+
+                <span class="s1">result = connection.execute(</span>
+                    <span class="s1">statement</span><span class="s4">, </span><span class="s1">multiparams</span><span class="s4">, </span><span class="s1">execution_options=execution_options</span>
+                <span class="s1">)</span>
+
+                <span class="s3">if </span><span class="s1">use_orm_insert_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s3">if </span><span class="s1">return_result </span><span class="s3">is None</span><span class="s1">:</span>
+                        <span class="s1">return_result = result</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">return_result = return_result.splice_vertically(result)</span>
+
+                <span class="s3">if </span><span class="s1">bookkeeping:</span>
+                    <span class="s3">for </span><span class="s1">(</span>
+                        <span class="s1">(</span>
+                            <span class="s1">state</span><span class="s4">,</span>
+                            <span class="s1">state_dict</span><span class="s4">,</span>
+                            <span class="s1">params</span><span class="s4">,</span>
+                            <span class="s1">mapper_rec</span><span class="s4">,</span>
+                            <span class="s1">conn</span><span class="s4">,</span>
+                            <span class="s1">value_params</span><span class="s4">,</span>
+                            <span class="s1">has_all_pks</span><span class="s4">,</span>
+                            <span class="s1">has_all_defaults</span><span class="s4">,</span>
+                        <span class="s1">)</span><span class="s4">,</span>
+                        <span class="s1">last_inserted_params</span><span class="s4">,</span>
+                        <span class="s1">inserted_primary_key</span><span class="s4">,</span>
+                        <span class="s1">returned_defaults</span><span class="s4">,</span>
+                    <span class="s1">) </span><span class="s3">in </span><span class="s1">zip_longest(</span>
+                        <span class="s1">records</span><span class="s4">,</span>
+                        <span class="s1">result.context.compiled_parameters</span><span class="s4">,</span>
+                        <span class="s1">result.inserted_primary_key_rows</span><span class="s4">,</span>
+                        <span class="s1">result.returned_defaults_rows </span><span class="s3">or </span><span class="s1">()</span><span class="s4">,</span>
+                    <span class="s1">):</span>
+                        <span class="s3">if </span><span class="s1">inserted_primary_key </span><span class="s3">is None</span><span class="s1">:</span>
+                            <span class="s0"># this is a real problem and means that we didn't</span>
+                            <span class="s0"># get back as many PK rows.  we can't continue</span>
+                            <span class="s0"># since this indicates PK rows were missing, which</span>
+                            <span class="s0"># means we likely mis-populated records starting</span>
+                            <span class="s0"># at that point with incorrectly matched PK</span>
+                            <span class="s0"># values.</span>
+                            <span class="s3">raise </span><span class="s1">orm_exc.FlushError(</span>
+                                <span class="s5">&quot;Multi-row INSERT statement for %s did not &quot;</span>
+                                <span class="s5">&quot;produce &quot;</span>
+                                <span class="s5">&quot;the correct number of INSERTed rows for &quot;</span>
+                                <span class="s5">&quot;RETURNING.  Ensure there are no triggers or &quot;</span>
+                                <span class="s5">&quot;special driver issues preventing INSERT from &quot;</span>
+                                <span class="s5">&quot;functioning properly.&quot; </span><span class="s1">% mapper_rec</span>
+                            <span class="s1">)</span>
+
+                        <span class="s3">for </span><span class="s1">pk</span><span class="s4">, </span><span class="s1">col </span><span class="s3">in </span><span class="s1">zip(</span>
+                            <span class="s1">inserted_primary_key</span><span class="s4">,</span>
+                            <span class="s1">mapper._pks_by_table[table]</span><span class="s4">,</span>
+                        <span class="s1">):</span>
+                            <span class="s1">prop = mapper_rec._columntoproperty[col]</span>
+                            <span class="s3">if </span><span class="s1">state_dict.get(prop.key) </span><span class="s3">is None</span><span class="s1">:</span>
+                                <span class="s1">state_dict[prop.key] = pk</span>
+
+                        <span class="s3">if </span><span class="s1">state:</span>
+                            <span class="s1">_postfetch(</span>
+                                <span class="s1">mapper_rec</span><span class="s4">,</span>
+                                <span class="s1">uowtransaction</span><span class="s4">,</span>
+                                <span class="s1">table</span><span class="s4">,</span>
+                                <span class="s1">state</span><span class="s4">,</span>
+                                <span class="s1">state_dict</span><span class="s4">,</span>
+                                <span class="s1">result</span><span class="s4">,</span>
+                                <span class="s1">last_inserted_params</span><span class="s4">,</span>
+                                <span class="s1">value_params</span><span class="s4">,</span>
+                                <span class="s3">False</span><span class="s4">,</span>
+                                <span class="s1">returned_defaults</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+                        <span class="s3">else</span><span class="s1">:</span>
+                            <span class="s1">_postfetch_bulk_save(mapper_rec</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">table)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">assert not </span><span class="s1">returning_is_required_anyway</span>
+
+                <span class="s3">for </span><span class="s1">(</span>
+                    <span class="s1">state</span><span class="s4">,</span>
+                    <span class="s1">state_dict</span><span class="s4">,</span>
+                    <span class="s1">params</span><span class="s4">,</span>
+                    <span class="s1">mapper_rec</span><span class="s4">,</span>
+                    <span class="s1">connection</span><span class="s4">,</span>
+                    <span class="s1">value_params</span><span class="s4">,</span>
+                    <span class="s1">has_all_pks</span><span class="s4">,</span>
+                    <span class="s1">has_all_defaults</span><span class="s4">,</span>
+                <span class="s1">) </span><span class="s3">in </span><span class="s1">records:</span>
+                    <span class="s3">if </span><span class="s1">value_params:</span>
+                        <span class="s1">result = connection.execute(</span>
+                            <span class="s1">statement.values(value_params)</span><span class="s4">,</span>
+                            <span class="s1">params</span><span class="s4">,</span>
+                            <span class="s1">execution_options=execution_options</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">result = connection.execute(</span>
+                            <span class="s1">statement</span><span class="s4">,</span>
+                            <span class="s1">params</span><span class="s4">,</span>
+                            <span class="s1">execution_options=execution_options</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+
+                    <span class="s1">primary_key = result.inserted_primary_key</span>
+                    <span class="s3">if </span><span class="s1">primary_key </span><span class="s3">is None</span><span class="s1">:</span>
+                        <span class="s3">raise </span><span class="s1">orm_exc.FlushError(</span>
+                            <span class="s5">&quot;Single-row INSERT statement for %s &quot;</span>
+                            <span class="s5">&quot;did not produce a &quot;</span>
+                            <span class="s5">&quot;new primary key result &quot;</span>
+                            <span class="s5">&quot;being invoked.  Ensure there are no triggers or &quot;</span>
+                            <span class="s5">&quot;special driver issues preventing INSERT from &quot;</span>
+                            <span class="s5">&quot;functioning properly.&quot; </span><span class="s1">% (mapper_rec</span><span class="s4">,</span><span class="s1">)</span>
+                        <span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">pk</span><span class="s4">, </span><span class="s1">col </span><span class="s3">in </span><span class="s1">zip(</span>
+                        <span class="s1">primary_key</span><span class="s4">, </span><span class="s1">mapper._pks_by_table[table]</span>
+                    <span class="s1">):</span>
+                        <span class="s1">prop = mapper_rec._columntoproperty[col]</span>
+                        <span class="s3">if </span><span class="s1">(</span>
+                            <span class="s1">col </span><span class="s3">in </span><span class="s1">value_params</span>
+                            <span class="s3">or </span><span class="s1">state_dict.get(prop.key) </span><span class="s3">is None</span>
+                        <span class="s1">):</span>
+                            <span class="s1">state_dict[prop.key] = pk</span>
+                    <span class="s3">if </span><span class="s1">bookkeeping:</span>
+                        <span class="s3">if </span><span class="s1">state:</span>
+                            <span class="s1">_postfetch(</span>
+                                <span class="s1">mapper_rec</span><span class="s4">,</span>
+                                <span class="s1">uowtransaction</span><span class="s4">,</span>
+                                <span class="s1">table</span><span class="s4">,</span>
+                                <span class="s1">state</span><span class="s4">,</span>
+                                <span class="s1">state_dict</span><span class="s4">,</span>
+                                <span class="s1">result</span><span class="s4">,</span>
+                                <span class="s1">result.context.compiled_parameters[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">,</span>
+                                <span class="s1">value_params</span><span class="s4">,</span>
+                                <span class="s3">False</span><span class="s4">,</span>
+                                <span class="s1">(</span>
+                                    <span class="s1">result.returned_defaults</span>
+                                    <span class="s3">if not </span><span class="s1">result.context.executemany</span>
+                                    <span class="s3">else None</span>
+                                <span class="s1">)</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+                        <span class="s3">else</span><span class="s1">:</span>
+                            <span class="s1">_postfetch_bulk_save(mapper_rec</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">table)</span>
+
+    <span class="s3">if </span><span class="s1">use_orm_insert_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">return_result </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">_cursor.null_dml_result()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">return_result</span>
+
+
+<span class="s3">def </span><span class="s1">_emit_post_update_statements(</span>
+    <span class="s1">base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">update</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Emit UPDATE statements corresponding to value lists collected 
+    by _collect_post_update_commands().&quot;&quot;&quot;</span>
+
+    <span class="s1">execution_options = {</span><span class="s5">&quot;compiled_cache&quot;</span><span class="s1">: base_mapper._compiled_cache}</span>
+
+    <span class="s1">needs_version_id = (</span>
+        <span class="s1">mapper.version_id_col </span><span class="s3">is not None</span>
+        <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">update_stmt():</span>
+        <span class="s1">clauses = BooleanClauseList._construct_raw(operators.and_)</span>
+
+        <span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">mapper._pks_by_table[table]:</span>
+            <span class="s1">clauses._append_inplace(</span>
+                <span class="s1">col == sql.bindparam(col._label</span><span class="s4">, </span><span class="s1">type_=col.type)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">needs_version_id:</span>
+            <span class="s1">clauses._append_inplace(</span>
+                <span class="s1">mapper.version_id_col</span>
+                <span class="s1">== sql.bindparam(</span>
+                    <span class="s1">mapper.version_id_col._label</span><span class="s4">,</span>
+                    <span class="s1">type_=mapper.version_id_col.type</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+        <span class="s1">stmt = table.update().where(clauses)</span>
+
+        <span class="s3">return </span><span class="s1">stmt</span>
+
+    <span class="s1">statement = base_mapper._memo((</span><span class="s5">&quot;post_update&quot;</span><span class="s4">, </span><span class="s1">table)</span><span class="s4">, </span><span class="s1">update_stmt)</span>
+
+    <span class="s3">if </span><span class="s1">mapper._version_id_has_server_side_value:</span>
+        <span class="s1">statement = statement.return_defaults(mapper.version_id_col)</span>
+
+    <span class="s0"># execute each UPDATE in the order according to the original</span>
+    <span class="s0"># list of states to guarantee row access order, but</span>
+    <span class="s0"># also group them into common (connection, cols) sets</span>
+    <span class="s0"># to support executemany().</span>
+    <span class="s3">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">records </span><span class="s3">in </span><span class="s1">groupby(</span>
+        <span class="s1">update</span><span class="s4">,</span>
+        <span class="s3">lambda </span><span class="s1">rec: (rec[</span><span class="s7">3</span><span class="s1">]</span><span class="s4">, </span><span class="s1">set(rec[</span><span class="s7">4</span><span class="s1">]))</span><span class="s4">,  </span><span class="s0"># connection  # parameter keys</span>
+    <span class="s1">):</span>
+        <span class="s1">rows = </span><span class="s7">0</span>
+
+        <span class="s1">records = list(records)</span>
+        <span class="s1">connection = key[</span><span class="s7">0</span><span class="s1">]</span>
+
+        <span class="s1">assert_singlerow = connection.dialect.supports_sane_rowcount</span>
+        <span class="s1">assert_multirow = (</span>
+            <span class="s1">assert_singlerow</span>
+            <span class="s3">and </span><span class="s1">connection.dialect.supports_sane_multi_rowcount</span>
+        <span class="s1">)</span>
+        <span class="s1">allow_executemany = </span><span class="s3">not </span><span class="s1">needs_version_id </span><span class="s3">or </span><span class="s1">assert_multirow</span>
+
+        <span class="s3">if not </span><span class="s1">allow_executemany:</span>
+            <span class="s1">check_rowcount = assert_singlerow</span>
+            <span class="s3">for </span><span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper_rec</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">params </span><span class="s3">in </span><span class="s1">records:</span>
+                <span class="s1">c = connection.execute(</span>
+                    <span class="s1">statement</span><span class="s4">, </span><span class="s1">params</span><span class="s4">, </span><span class="s1">execution_options=execution_options</span>
+                <span class="s1">)</span>
+
+                <span class="s1">_postfetch_post_update(</span>
+                    <span class="s1">mapper_rec</span><span class="s4">,</span>
+                    <span class="s1">uowtransaction</span><span class="s4">,</span>
+                    <span class="s1">table</span><span class="s4">,</span>
+                    <span class="s1">state</span><span class="s4">,</span>
+                    <span class="s1">state_dict</span><span class="s4">,</span>
+                    <span class="s1">c</span><span class="s4">,</span>
+                    <span class="s1">c.context.compiled_parameters[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">,</span>
+                <span class="s1">)</span>
+                <span class="s1">rows += c.rowcount</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">multiparams = [</span>
+                <span class="s1">params</span>
+                <span class="s3">for </span><span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper_rec</span><span class="s4">, </span><span class="s1">conn</span><span class="s4">, </span><span class="s1">params </span><span class="s3">in </span><span class="s1">records</span>
+            <span class="s1">]</span>
+
+            <span class="s1">check_rowcount = assert_multirow </span><span class="s3">or </span><span class="s1">(</span>
+                <span class="s1">assert_singlerow </span><span class="s3">and </span><span class="s1">len(multiparams) == </span><span class="s7">1</span>
+            <span class="s1">)</span>
+
+            <span class="s1">c = connection.execute(</span>
+                <span class="s1">statement</span><span class="s4">, </span><span class="s1">multiparams</span><span class="s4">, </span><span class="s1">execution_options=execution_options</span>
+            <span class="s1">)</span>
+
+            <span class="s1">rows += c.rowcount</span>
+            <span class="s3">for </span><span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper_rec</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">params </span><span class="s3">in </span><span class="s1">records:</span>
+                <span class="s1">_postfetch_post_update(</span>
+                    <span class="s1">mapper_rec</span><span class="s4">,</span>
+                    <span class="s1">uowtransaction</span><span class="s4">,</span>
+                    <span class="s1">table</span><span class="s4">,</span>
+                    <span class="s1">state</span><span class="s4">,</span>
+                    <span class="s1">state_dict</span><span class="s4">,</span>
+                    <span class="s1">c</span><span class="s4">,</span>
+                    <span class="s1">c.context.compiled_parameters[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">,</span>
+                <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">check_rowcount:</span>
+            <span class="s3">if </span><span class="s1">rows != len(records):</span>
+                <span class="s3">raise </span><span class="s1">orm_exc.StaleDataError(</span>
+                    <span class="s5">&quot;UPDATE statement on table '%s' expected to &quot;</span>
+                    <span class="s5">&quot;update %d row(s); %d were matched.&quot;</span>
+                    <span class="s1">% (table.description</span><span class="s4">, </span><span class="s1">len(records)</span><span class="s4">, </span><span class="s1">rows)</span>
+                <span class="s1">)</span>
+
+        <span class="s3">elif </span><span class="s1">needs_version_id:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s5">&quot;Dialect %s does not support updated rowcount &quot;</span>
+                <span class="s5">&quot;- versioning cannot be verified.&quot;</span>
+                <span class="s1">% c.dialect.dialect_description</span>
+            <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_emit_delete_statements(</span>
+    <span class="s1">base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">delete</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Emit DELETE statements corresponding to value lists collected 
+    by _collect_delete_commands().&quot;&quot;&quot;</span>
+
+    <span class="s1">need_version_id = (</span>
+        <span class="s1">mapper.version_id_col </span><span class="s3">is not None</span>
+        <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">delete_stmt():</span>
+        <span class="s1">clauses = BooleanClauseList._construct_raw(operators.and_)</span>
+
+        <span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">mapper._pks_by_table[table]:</span>
+            <span class="s1">clauses._append_inplace(</span>
+                <span class="s1">col == sql.bindparam(col.key</span><span class="s4">, </span><span class="s1">type_=col.type)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">need_version_id:</span>
+            <span class="s1">clauses._append_inplace(</span>
+                <span class="s1">mapper.version_id_col</span>
+                <span class="s1">== sql.bindparam(</span>
+                    <span class="s1">mapper.version_id_col.key</span><span class="s4">, </span><span class="s1">type_=mapper.version_id_col.type</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">table.delete().where(clauses)</span>
+
+    <span class="s1">statement = base_mapper._memo((</span><span class="s5">&quot;delete&quot;</span><span class="s4">, </span><span class="s1">table)</span><span class="s4">, </span><span class="s1">delete_stmt)</span>
+    <span class="s3">for </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">recs </span><span class="s3">in </span><span class="s1">groupby(delete</span><span class="s4">, </span><span class="s3">lambda </span><span class="s1">rec: rec[</span><span class="s7">1</span><span class="s1">]):  </span><span class="s0"># connection</span>
+        <span class="s1">del_objects = [params </span><span class="s3">for </span><span class="s1">params</span><span class="s4">, </span><span class="s1">connection </span><span class="s3">in </span><span class="s1">recs]</span>
+
+        <span class="s1">execution_options = {</span><span class="s5">&quot;compiled_cache&quot;</span><span class="s1">: base_mapper._compiled_cache}</span>
+        <span class="s1">expected = len(del_objects)</span>
+        <span class="s1">rows_matched = -</span><span class="s7">1</span>
+        <span class="s1">only_warn = </span><span class="s3">False</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">need_version_id</span>
+            <span class="s3">and not </span><span class="s1">connection.dialect.supports_sane_multi_rowcount</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">connection.dialect.supports_sane_rowcount:</span>
+                <span class="s1">rows_matched = </span><span class="s7">0</span>
+                <span class="s0"># execute deletes individually so that versioned</span>
+                <span class="s0"># rows can be verified</span>
+                <span class="s3">for </span><span class="s1">params </span><span class="s3">in </span><span class="s1">del_objects:</span>
+                    <span class="s1">c = connection.execute(</span>
+                        <span class="s1">statement</span><span class="s4">, </span><span class="s1">params</span><span class="s4">, </span><span class="s1">execution_options=execution_options</span>
+                    <span class="s1">)</span>
+                    <span class="s1">rows_matched += c.rowcount</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">util.warn(</span>
+                    <span class="s5">&quot;Dialect %s does not support deleted rowcount &quot;</span>
+                    <span class="s5">&quot;- versioning cannot be verified.&quot;</span>
+                    <span class="s1">% connection.dialect.dialect_description</span>
+                <span class="s1">)</span>
+                <span class="s1">connection.execute(</span>
+                    <span class="s1">statement</span><span class="s4">, </span><span class="s1">del_objects</span><span class="s4">, </span><span class="s1">execution_options=execution_options</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">c = connection.execute(</span>
+                <span class="s1">statement</span><span class="s4">, </span><span class="s1">del_objects</span><span class="s4">, </span><span class="s1">execution_options=execution_options</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if not </span><span class="s1">need_version_id:</span>
+                <span class="s1">only_warn = </span><span class="s3">True</span>
+
+            <span class="s1">rows_matched = c.rowcount</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">base_mapper.confirm_deleted_rows</span>
+            <span class="s3">and </span><span class="s1">rows_matched &gt; -</span><span class="s7">1</span>
+            <span class="s3">and </span><span class="s1">expected != rows_matched</span>
+            <span class="s3">and </span><span class="s1">(</span>
+                <span class="s1">connection.dialect.supports_sane_multi_rowcount</span>
+                <span class="s3">or </span><span class="s1">len(del_objects) == </span><span class="s7">1</span>
+            <span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s0"># TODO: why does this &quot;only warn&quot; if versioning is turned off,</span>
+            <span class="s0"># whereas the UPDATE raises?</span>
+            <span class="s3">if </span><span class="s1">only_warn:</span>
+                <span class="s1">util.warn(</span>
+                    <span class="s5">&quot;DELETE statement on table '%s' expected to &quot;</span>
+                    <span class="s5">&quot;delete %d row(s); %d were matched.  Please set &quot;</span>
+                    <span class="s5">&quot;confirm_deleted_rows=False within the mapper &quot;</span>
+                    <span class="s5">&quot;configuration to prevent this warning.&quot;</span>
+                    <span class="s1">% (table.description</span><span class="s4">, </span><span class="s1">expected</span><span class="s4">, </span><span class="s1">rows_matched)</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">orm_exc.StaleDataError(</span>
+                    <span class="s5">&quot;DELETE statement on table '%s' expected to &quot;</span>
+                    <span class="s5">&quot;delete %d row(s); %d were matched.  Please set &quot;</span>
+                    <span class="s5">&quot;confirm_deleted_rows=False within the mapper &quot;</span>
+                    <span class="s5">&quot;configuration to prevent this warning.&quot;</span>
+                    <span class="s1">% (table.description</span><span class="s4">, </span><span class="s1">expected</span><span class="s4">, </span><span class="s1">rows_matched)</span>
+                <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_finalize_insert_update_commands(base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">states):</span>
+    <span class="s2">&quot;&quot;&quot;finalize state on states that have been inserted or updated, 
+    including calling after_insert/after_update events. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">for </span><span class="s1">state</span><span class="s4">, </span><span class="s1">state_dict</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">has_identity </span><span class="s3">in </span><span class="s1">states:</span>
+        <span class="s3">if </span><span class="s1">mapper._readonly_props:</span>
+            <span class="s1">readonly = state.unmodified_intersection(</span>
+                <span class="s1">[</span>
+                    <span class="s1">p.key</span>
+                    <span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">mapper._readonly_props</span>
+                    <span class="s3">if </span><span class="s1">(</span>
+                        <span class="s1">p.expire_on_flush</span>
+                        <span class="s3">and </span><span class="s1">(</span><span class="s3">not </span><span class="s1">p.deferred </span><span class="s3">or </span><span class="s1">p.key </span><span class="s3">in </span><span class="s1">state.dict)</span>
+                    <span class="s1">)</span>
+                    <span class="s3">or </span><span class="s1">(</span>
+                        <span class="s3">not </span><span class="s1">p.expire_on_flush</span>
+                        <span class="s3">and not </span><span class="s1">p.deferred</span>
+                        <span class="s3">and </span><span class="s1">p.key </span><span class="s3">not in </span><span class="s1">state.dict</span>
+                    <span class="s1">)</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">readonly:</span>
+                <span class="s1">state._expire_attributes(state.dict</span><span class="s4">, </span><span class="s1">readonly)</span>
+
+        <span class="s0"># if eager_defaults option is enabled, load</span>
+        <span class="s0"># all expired cols.  Else if we have a version_id_col, make sure</span>
+        <span class="s0"># it isn't expired.</span>
+        <span class="s1">toload_now = []</span>
+
+        <span class="s0"># this is specifically to emit a second SELECT for eager_defaults,</span>
+        <span class="s0"># so only if it's set to True, not &quot;auto&quot;</span>
+        <span class="s3">if </span><span class="s1">base_mapper.eager_defaults </span><span class="s3">is True</span><span class="s1">:</span>
+            <span class="s1">toload_now.extend(</span>
+                <span class="s1">state._unloaded_non_object.intersection(</span>
+                    <span class="s1">mapper._server_default_plus_onupdate_propkeys</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">mapper.version_id_col </span><span class="s3">is not None</span>
+            <span class="s3">and </span><span class="s1">mapper.version_id_generator </span><span class="s3">is False</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">mapper._version_id_prop.key </span><span class="s3">in </span><span class="s1">state.unloaded:</span>
+                <span class="s1">toload_now.extend([mapper._version_id_prop.key])</span>
+
+        <span class="s3">if </span><span class="s1">toload_now:</span>
+            <span class="s1">state.key = base_mapper._identity_key_from_state(state)</span>
+            <span class="s1">stmt = future.select(mapper).set_label_style(</span>
+                <span class="s1">LABEL_STYLE_TABLENAME_PLUS_COL</span>
+            <span class="s1">)</span>
+            <span class="s1">loading.load_on_ident(</span>
+                <span class="s1">uowtransaction.session</span><span class="s4">,</span>
+                <span class="s1">stmt</span><span class="s4">,</span>
+                <span class="s1">state.key</span><span class="s4">,</span>
+                <span class="s1">refresh_state=state</span><span class="s4">,</span>
+                <span class="s1">only_load_props=toload_now</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+        <span class="s0"># call after_XXX extensions</span>
+        <span class="s3">if not </span><span class="s1">has_identity:</span>
+            <span class="s1">mapper.dispatch.after_insert(mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">state)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">mapper.dispatch.after_update(mapper</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">state)</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">mapper.version_id_generator </span><span class="s3">is False</span>
+            <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">is not None</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">state_dict[mapper._version_id_prop.key] </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">orm_exc.FlushError(</span>
+                    <span class="s5">&quot;Instance does not contain a non-NULL version value&quot;</span>
+                <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_postfetch_post_update(</span>
+    <span class="s1">mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">result</span><span class="s4">, </span><span class="s1">params</span>
+<span class="s1">):</span>
+    <span class="s1">needs_version_id = (</span>
+        <span class="s1">mapper.version_id_col </span><span class="s3">is not None</span>
+        <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]</span>
+    <span class="s1">)</span>
+
+    <span class="s3">if not </span><span class="s1">uowtransaction.is_deleted(state):</span>
+        <span class="s0"># post updating after a regular INSERT or UPDATE, do a full postfetch</span>
+        <span class="s1">prefetch_cols = result.context.compiled.prefetch</span>
+        <span class="s1">postfetch_cols = result.context.compiled.postfetch</span>
+    <span class="s3">elif </span><span class="s1">needs_version_id:</span>
+        <span class="s0"># post updating before a DELETE with a version_id_col, need to</span>
+        <span class="s0"># postfetch just version_id_col</span>
+        <span class="s1">prefetch_cols = postfetch_cols = ()</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s0"># post updating before a DELETE without a version_id_col,</span>
+        <span class="s0"># don't need to postfetch</span>
+        <span class="s3">return</span>
+
+    <span class="s3">if </span><span class="s1">needs_version_id:</span>
+        <span class="s1">prefetch_cols = list(prefetch_cols) + [mapper.version_id_col]</span>
+
+    <span class="s1">refresh_flush = bool(mapper.class_manager.dispatch.refresh_flush)</span>
+    <span class="s3">if </span><span class="s1">refresh_flush:</span>
+        <span class="s1">load_evt_attrs = []</span>
+
+    <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">prefetch_cols:</span>
+        <span class="s3">if </span><span class="s1">c.key </span><span class="s3">in </span><span class="s1">params </span><span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">mapper._columntoproperty:</span>
+            <span class="s1">dict_[mapper._columntoproperty[c].key] = params[c.key]</span>
+            <span class="s3">if </span><span class="s1">refresh_flush:</span>
+                <span class="s1">load_evt_attrs.append(mapper._columntoproperty[c].key)</span>
+
+    <span class="s3">if </span><span class="s1">refresh_flush </span><span class="s3">and </span><span class="s1">load_evt_attrs:</span>
+        <span class="s1">mapper.class_manager.dispatch.refresh_flush(</span>
+            <span class="s1">state</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">load_evt_attrs</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">postfetch_cols:</span>
+        <span class="s1">state._expire_attributes(</span>
+            <span class="s1">state.dict</span><span class="s4">,</span>
+            <span class="s1">[</span>
+                <span class="s1">mapper._columntoproperty[c].key</span>
+                <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">postfetch_cols</span>
+                <span class="s3">if </span><span class="s1">c </span><span class="s3">in </span><span class="s1">mapper._columntoproperty</span>
+            <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_postfetch(</span>
+    <span class="s1">mapper</span><span class="s4">,</span>
+    <span class="s1">uowtransaction</span><span class="s4">,</span>
+    <span class="s1">table</span><span class="s4">,</span>
+    <span class="s1">state</span><span class="s4">,</span>
+    <span class="s1">dict_</span><span class="s4">,</span>
+    <span class="s1">result</span><span class="s4">,</span>
+    <span class="s1">params</span><span class="s4">,</span>
+    <span class="s1">value_params</span><span class="s4">,</span>
+    <span class="s1">isupdate</span><span class="s4">,</span>
+    <span class="s1">returned_defaults</span><span class="s4">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Expire attributes in need of newly persisted database state, 
+    after an INSERT or UPDATE statement has proceeded for that 
+    state.&quot;&quot;&quot;</span>
+
+    <span class="s1">prefetch_cols = result.context.compiled.prefetch</span>
+    <span class="s1">postfetch_cols = result.context.compiled.postfetch</span>
+    <span class="s1">returning_cols = result.context.compiled.effective_returning</span>
+
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s1">mapper.version_id_col </span><span class="s3">is not None</span>
+        <span class="s3">and </span><span class="s1">mapper.version_id_col </span><span class="s3">in </span><span class="s1">mapper._cols_by_table[table]</span>
+    <span class="s1">):</span>
+        <span class="s1">prefetch_cols = list(prefetch_cols) + [mapper.version_id_col]</span>
+
+    <span class="s1">refresh_flush = bool(mapper.class_manager.dispatch.refresh_flush)</span>
+    <span class="s3">if </span><span class="s1">refresh_flush:</span>
+        <span class="s1">load_evt_attrs = []</span>
+
+    <span class="s3">if </span><span class="s1">returning_cols:</span>
+        <span class="s1">row = returned_defaults</span>
+        <span class="s3">if </span><span class="s1">row </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">for </span><span class="s1">row_value</span><span class="s4">, </span><span class="s1">col </span><span class="s3">in </span><span class="s1">zip(row</span><span class="s4">, </span><span class="s1">returning_cols):</span>
+                <span class="s0"># pk cols returned from insert are handled</span>
+                <span class="s0"># distinctly, don't step on the values here</span>
+                <span class="s3">if </span><span class="s1">col.primary_key </span><span class="s3">and </span><span class="s1">result.context.isinsert:</span>
+                    <span class="s3">continue</span>
+
+                <span class="s0"># note that columns can be in the &quot;return defaults&quot; that are</span>
+                <span class="s0"># not mapped to this mapper, typically because they are</span>
+                <span class="s0"># &quot;excluded&quot;, which can be specified directly or also occurs</span>
+                <span class="s0"># when using declarative w/ single table inheritance</span>
+                <span class="s1">prop = mapper._columntoproperty.get(col)</span>
+                <span class="s3">if </span><span class="s1">prop:</span>
+                    <span class="s1">dict_[prop.key] = row_value</span>
+                    <span class="s3">if </span><span class="s1">refresh_flush:</span>
+                        <span class="s1">load_evt_attrs.append(prop.key)</span>
+
+    <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">prefetch_cols:</span>
+        <span class="s3">if </span><span class="s1">c.key </span><span class="s3">in </span><span class="s1">params </span><span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">mapper._columntoproperty:</span>
+            <span class="s1">pkey = mapper._columntoproperty[c].key</span>
+
+            <span class="s0"># set prefetched value in dict and also pop from committed_state,</span>
+            <span class="s0"># since this is new database state that replaces whatever might</span>
+            <span class="s0"># have previously been fetched (see #10800).  this is essentially a</span>
+            <span class="s0"># shorthand version of set_committed_value(), which could also be</span>
+            <span class="s0"># used here directly (with more overhead)</span>
+            <span class="s1">dict_[pkey] = params[c.key]</span>
+            <span class="s1">state.committed_state.pop(pkey</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">refresh_flush:</span>
+                <span class="s1">load_evt_attrs.append(pkey)</span>
+
+    <span class="s3">if </span><span class="s1">refresh_flush </span><span class="s3">and </span><span class="s1">load_evt_attrs:</span>
+        <span class="s1">mapper.class_manager.dispatch.refresh_flush(</span>
+            <span class="s1">state</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">load_evt_attrs</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">isupdate </span><span class="s3">and </span><span class="s1">value_params:</span>
+        <span class="s0"># explicitly suit the use case specified by</span>
+        <span class="s0"># [ticket:3801], PK SQL expressions for UPDATE on non-RETURNING</span>
+        <span class="s0"># database which are set to themselves in order to do a version bump.</span>
+        <span class="s1">postfetch_cols.extend(</span>
+            <span class="s1">[</span>
+                <span class="s1">col</span>
+                <span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">value_params</span>
+                <span class="s3">if </span><span class="s1">col.primary_key </span><span class="s3">and </span><span class="s1">col </span><span class="s3">not in </span><span class="s1">returning_cols</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">postfetch_cols:</span>
+        <span class="s1">state._expire_attributes(</span>
+            <span class="s1">state.dict</span><span class="s4">,</span>
+            <span class="s1">[</span>
+                <span class="s1">mapper._columntoproperty[c].key</span>
+                <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">postfetch_cols</span>
+                <span class="s3">if </span><span class="s1">c </span><span class="s3">in </span><span class="s1">mapper._columntoproperty</span>
+            <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s0"># synchronize newly inserted ids from one table to the next</span>
+    <span class="s0"># TODO: this still goes a little too often.  would be nice to</span>
+    <span class="s0"># have definitive list of &quot;columns that changed&quot; here</span>
+    <span class="s3">for </span><span class="s1">m</span><span class="s4">, </span><span class="s1">equated_pairs </span><span class="s3">in </span><span class="s1">mapper._table_to_equated[table]:</span>
+        <span class="s1">sync.populate(</span>
+            <span class="s1">state</span><span class="s4">,</span>
+            <span class="s1">m</span><span class="s4">,</span>
+            <span class="s1">state</span><span class="s4">,</span>
+            <span class="s1">m</span><span class="s4">,</span>
+            <span class="s1">equated_pairs</span><span class="s4">,</span>
+            <span class="s1">uowtransaction</span><span class="s4">,</span>
+            <span class="s1">mapper.passive_updates</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_postfetch_bulk_save(mapper</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">table):</span>
+    <span class="s3">for </span><span class="s1">m</span><span class="s4">, </span><span class="s1">equated_pairs </span><span class="s3">in </span><span class="s1">mapper._table_to_equated[table]:</span>
+        <span class="s1">sync.bulk_populate_inherit_keys(dict_</span><span class="s4">, </span><span class="s1">m</span><span class="s4">, </span><span class="s1">equated_pairs)</span>
+
+
+<span class="s3">def </span><span class="s1">_connections_for_states(base_mapper</span><span class="s4">, </span><span class="s1">uowtransaction</span><span class="s4">, </span><span class="s1">states):</span>
+    <span class="s2">&quot;&quot;&quot;Return an iterator of (state, state.dict, mapper, connection). 
+ 
+    The states are sorted according to _sort_states, then paired 
+    with the connection they should be using for the given 
+    unit of work transaction. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s0"># if session has a connection callable,</span>
+    <span class="s0"># organize individual states with the connection</span>
+    <span class="s0"># to use for update</span>
+    <span class="s3">if </span><span class="s1">uowtransaction.session.connection_callable:</span>
+        <span class="s1">connection_callable = uowtransaction.session.connection_callable</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">connection = uowtransaction.transaction.connection(base_mapper)</span>
+        <span class="s1">connection_callable = </span><span class="s3">None</span>
+
+    <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">_sort_states(base_mapper</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">if </span><span class="s1">connection_callable:</span>
+            <span class="s1">connection = connection_callable(base_mapper</span><span class="s4">, </span><span class="s1">state.obj())</span>
+
+        <span class="s1">mapper = state.manager.mapper</span>
+
+        <span class="s3">yield </span><span class="s1">state</span><span class="s4">, </span><span class="s1">state.dict</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">connection</span>
+
+
+<span class="s3">def </span><span class="s1">_sort_states(mapper</span><span class="s4">, </span><span class="s1">states):</span>
+    <span class="s1">pending = set(states)</span>
+    <span class="s1">persistent = {s </span><span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">pending </span><span class="s3">if </span><span class="s1">s.key </span><span class="s3">is not None</span><span class="s1">}</span>
+    <span class="s1">pending.difference_update(persistent)</span>
+
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">persistent_sorted = sorted(</span>
+            <span class="s1">persistent</span><span class="s4">, </span><span class="s1">key=mapper._persistent_sortkey_fn</span>
+        <span class="s1">)</span>
+    <span class="s3">except </span><span class="s1">TypeError </span><span class="s3">as </span><span class="s1">err:</span>
+        <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+            <span class="s5">&quot;Could not sort objects by primary key; primary key &quot;</span>
+            <span class="s5">&quot;values must be sortable in Python (was: %s)&quot; </span><span class="s1">% err</span>
+        <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+    <span class="s3">return </span><span class="s1">(</span>
+        <span class="s1">sorted(pending</span><span class="s4">, </span><span class="s1">key=operator.attrgetter(</span><span class="s5">&quot;insert_order&quot;</span><span class="s1">))</span>
+        <span class="s1">+ persistent_sorted</span>
+    <span class="s1">)</span>
+</pre>
+</body>
+</html>

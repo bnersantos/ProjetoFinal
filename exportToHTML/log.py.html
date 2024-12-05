@@ -1,0 +1,312 @@
+<html>
+<head>
+<title>log.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #bbb55b;}
+.s5 { color: #96bf7d;}
+.s6 { color: #cc7832;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+log.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># log.py</span>
+<span class="s0"># Copyright (C) 2006-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0"># Includes alterations by Vinay Sajip vinay_sajip@yahoo.co.uk</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Logging control and utilities. 
+ 
+Control of logging for SA can be performed from the regular python logging 
+module.  The regular dotted module namespace is used, starting at 
+'sqlalchemy'.  For class-level logging, the class name is appended. 
+ 
+The &quot;echo&quot; keyword parameter, available on SQLA :class:`_engine.Engine` 
+and :class:`_pool.Pool` objects, corresponds to a logger specific to that 
+instance only. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">logging</span>
+<span class="s3">import </span><span class="s1">sys</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">py311</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">py38</span>
+<span class="s3">from </span><span class="s1">.util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+
+
+<span class="s3">if </span><span class="s1">py38:</span>
+    <span class="s1">STACKLEVEL = </span><span class="s3">True</span>
+    <span class="s0"># needed as of py3.11.0b1</span>
+    <span class="s0"># #8019</span>
+    <span class="s1">STACKLEVEL_OFFSET = </span><span class="s4">2 </span><span class="s3">if </span><span class="s1">py311 </span><span class="s3">else </span><span class="s4">1</span>
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s1">STACKLEVEL = </span><span class="s3">False</span>
+    <span class="s1">STACKLEVEL_OFFSET = </span><span class="s4">0</span>
+
+<span class="s1">_IT = TypeVar(</span><span class="s5">&quot;_IT&quot;</span><span class="s6">, </span><span class="s1">bound=</span><span class="s5">&quot;Identified&quot;</span><span class="s1">)</span>
+
+<span class="s1">_EchoFlagType = Union[</span><span class="s3">None</span><span class="s6">, </span><span class="s1">bool</span><span class="s6">, </span><span class="s1">Literal[</span><span class="s5">&quot;debug&quot;</span><span class="s1">]]</span>
+
+<span class="s0"># set initial level to WARN.  This so that</span>
+<span class="s0"># log statements don't occur in the absence of explicit</span>
+<span class="s0"># logging being enabled for 'sqlalchemy'.</span>
+<span class="s1">rootlogger = logging.getLogger(</span><span class="s5">&quot;sqlalchemy&quot;</span><span class="s1">)</span>
+<span class="s3">if </span><span class="s1">rootlogger.level == logging.NOTSET:</span>
+    <span class="s1">rootlogger.setLevel(logging.WARN)</span>
+
+
+<span class="s3">def </span><span class="s1">_add_default_handler(logger: logging.Logger) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s1">handler = logging.StreamHandler(sys.stdout)</span>
+    <span class="s1">handler.setFormatter(</span>
+        <span class="s1">logging.Formatter(</span><span class="s5">&quot;%(asctime)s %(levelname)s %(name)s %(message)s&quot;</span><span class="s1">)</span>
+    <span class="s1">)</span>
+    <span class="s1">logger.addHandler(handler)</span>
+
+
+<span class="s1">_logged_classes: Set[Type[Identified]] = set()</span>
+
+
+<span class="s3">def </span><span class="s1">_qual_logger_name_for_cls(cls: Type[Identified]) -&gt; str:</span>
+    <span class="s3">return </span><span class="s1">(</span>
+        <span class="s1">getattr(cls</span><span class="s6">, </span><span class="s5">&quot;_sqla_logger_namespace&quot;</span><span class="s6">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">or </span><span class="s1">cls.__module__ + </span><span class="s5">&quot;.&quot; </span><span class="s1">+ cls.__name__</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">class_logger(cls: Type[_IT]) -&gt; Type[_IT]:</span>
+    <span class="s1">logger = logging.getLogger(_qual_logger_name_for_cls(cls))</span>
+    <span class="s1">cls._should_log_debug = </span><span class="s3">lambda </span><span class="s1">self: logger.isEnabledFor(  </span><span class="s0"># type: ignore[method-assign]  # noqa: E501</span>
+        <span class="s1">logging.DEBUG</span>
+    <span class="s1">)</span>
+    <span class="s1">cls._should_log_info = </span><span class="s3">lambda </span><span class="s1">self: logger.isEnabledFor(  </span><span class="s0"># type: ignore[method-assign]  # noqa: E501</span>
+        <span class="s1">logging.INFO</span>
+    <span class="s1">)</span>
+    <span class="s1">cls.logger = logger</span>
+    <span class="s1">_logged_classes.add(cls)</span>
+    <span class="s3">return </span><span class="s1">cls</span>
+
+
+<span class="s1">_IdentifiedLoggerType = Union[logging.Logger</span><span class="s6">, </span><span class="s5">&quot;InstanceLogger&quot;</span><span class="s1">]</span>
+
+
+<span class="s3">class </span><span class="s1">Identified:</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">logging_name: Optional[str] = </span><span class="s3">None</span>
+
+    <span class="s1">logger: _IdentifiedLoggerType</span>
+
+    <span class="s1">_echo: _EchoFlagType</span>
+
+    <span class="s3">def </span><span class="s1">_should_log_debug(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self.logger.isEnabledFor(logging.DEBUG)</span>
+
+    <span class="s3">def </span><span class="s1">_should_log_info(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self.logger.isEnabledFor(logging.INFO)</span>
+
+
+<span class="s3">class </span><span class="s1">InstanceLogger:</span>
+    <span class="s2">&quot;&quot;&quot;A logger adapter (wrapper) for :class:`.Identified` subclasses. 
+ 
+    This allows multiple instances (e.g. Engine or Pool instances) 
+    to share a logger, but have its verbosity controlled on a 
+    per-instance basis. 
+ 
+    The basic functionality is to return a logging level 
+    which is based on an instance's echo setting. 
+ 
+    Default implementation is: 
+ 
+    'debug' -&gt; logging.DEBUG 
+    True    -&gt; logging.INFO 
+    False   -&gt; Effective level of underlying logger ( 
+    logging.WARNING by default) 
+    None    -&gt; same as False 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># Map echo settings to logger levels</span>
+    <span class="s1">_echo_map = {</span>
+        <span class="s3">None</span><span class="s1">: logging.NOTSET</span><span class="s6">,</span>
+        <span class="s3">False</span><span class="s1">: logging.NOTSET</span><span class="s6">,</span>
+        <span class="s3">True</span><span class="s1">: logging.INFO</span><span class="s6">,</span>
+        <span class="s5">&quot;debug&quot;</span><span class="s1">: logging.DEBUG</span><span class="s6">,</span>
+    <span class="s1">}</span>
+
+    <span class="s1">_echo: _EchoFlagType</span>
+
+    <span class="s1">__slots__ = (</span><span class="s5">&quot;echo&quot;</span><span class="s6">, </span><span class="s5">&quot;logger&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s6">, </span><span class="s1">echo: _EchoFlagType</span><span class="s6">, </span><span class="s1">name: str):</span>
+        <span class="s1">self.echo = echo</span>
+        <span class="s1">self.logger = logging.getLogger(name)</span>
+
+        <span class="s0"># if echo flag is enabled and no handlers,</span>
+        <span class="s0"># add a handler to the list</span>
+        <span class="s3">if </span><span class="s1">self._echo_map[echo] &lt;= logging.INFO </span><span class="s3">and not </span><span class="s1">self.logger.handlers:</span>
+            <span class="s1">_add_default_handler(self.logger)</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># Boilerplate convenience methods</span>
+    <span class="s0">#</span>
+    <span class="s3">def </span><span class="s1">debug(self</span><span class="s6">, </span><span class="s1">msg: str</span><span class="s6">, </span><span class="s1">*args: Any</span><span class="s6">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Delegate a debug call to the underlying logger.&quot;&quot;&quot;</span>
+
+        <span class="s1">self.log(logging.DEBUG</span><span class="s6">, </span><span class="s1">msg</span><span class="s6">, </span><span class="s1">*args</span><span class="s6">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">info(self</span><span class="s6">, </span><span class="s1">msg: str</span><span class="s6">, </span><span class="s1">*args: Any</span><span class="s6">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Delegate an info call to the underlying logger.&quot;&quot;&quot;</span>
+
+        <span class="s1">self.log(logging.INFO</span><span class="s6">, </span><span class="s1">msg</span><span class="s6">, </span><span class="s1">*args</span><span class="s6">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">warning(self</span><span class="s6">, </span><span class="s1">msg: str</span><span class="s6">, </span><span class="s1">*args: Any</span><span class="s6">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Delegate a warning call to the underlying logger.&quot;&quot;&quot;</span>
+
+        <span class="s1">self.log(logging.WARNING</span><span class="s6">, </span><span class="s1">msg</span><span class="s6">, </span><span class="s1">*args</span><span class="s6">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s1">warn = warning</span>
+
+    <span class="s3">def </span><span class="s1">error(self</span><span class="s6">, </span><span class="s1">msg: str</span><span class="s6">, </span><span class="s1">*args: Any</span><span class="s6">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Delegate an error call to the underlying logger. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.log(logging.ERROR</span><span class="s6">, </span><span class="s1">msg</span><span class="s6">, </span><span class="s1">*args</span><span class="s6">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">exception(self</span><span class="s6">, </span><span class="s1">msg: str</span><span class="s6">, </span><span class="s1">*args: Any</span><span class="s6">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Delegate an exception call to the underlying logger.&quot;&quot;&quot;</span>
+
+        <span class="s1">kwargs[</span><span class="s5">&quot;exc_info&quot;</span><span class="s1">] = </span><span class="s4">1</span>
+        <span class="s1">self.log(logging.ERROR</span><span class="s6">, </span><span class="s1">msg</span><span class="s6">, </span><span class="s1">*args</span><span class="s6">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">critical(self</span><span class="s6">, </span><span class="s1">msg: str</span><span class="s6">, </span><span class="s1">*args: Any</span><span class="s6">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Delegate a critical call to the underlying logger.&quot;&quot;&quot;</span>
+
+        <span class="s1">self.log(logging.CRITICAL</span><span class="s6">, </span><span class="s1">msg</span><span class="s6">, </span><span class="s1">*args</span><span class="s6">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">log(self</span><span class="s6">, </span><span class="s1">level: int</span><span class="s6">, </span><span class="s1">msg: str</span><span class="s6">, </span><span class="s1">*args: Any</span><span class="s6">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Delegate a log call to the underlying logger. 
+ 
+        The level here is determined by the echo 
+        flag as well as that of the underlying logger, and 
+        logger._log() is called directly. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0"># inline the logic from isEnabledFor(),</span>
+        <span class="s0"># getEffectiveLevel(), to avoid overhead.</span>
+
+        <span class="s3">if </span><span class="s1">self.logger.manager.disable &gt;= level:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">selected_level = self._echo_map[self.echo]</span>
+        <span class="s3">if </span><span class="s1">selected_level == logging.NOTSET:</span>
+            <span class="s1">selected_level = self.logger.getEffectiveLevel()</span>
+
+        <span class="s3">if </span><span class="s1">level &gt;= selected_level:</span>
+            <span class="s3">if </span><span class="s1">STACKLEVEL:</span>
+                <span class="s1">kwargs[</span><span class="s5">&quot;stacklevel&quot;</span><span class="s1">] = (</span>
+                    <span class="s1">kwargs.get(</span><span class="s5">&quot;stacklevel&quot;</span><span class="s6">, </span><span class="s4">1</span><span class="s1">) + STACKLEVEL_OFFSET</span>
+                <span class="s1">)</span>
+
+            <span class="s1">self.logger._log(level</span><span class="s6">, </span><span class="s1">msg</span><span class="s6">, </span><span class="s1">args</span><span class="s6">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">isEnabledFor(self</span><span class="s6">, </span><span class="s1">level: int) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Is this logger enabled for level 'level'?&quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">self.logger.manager.disable &gt;= level:</span>
+            <span class="s3">return False</span>
+        <span class="s3">return </span><span class="s1">level &gt;= self.getEffectiveLevel()</span>
+
+    <span class="s3">def </span><span class="s1">getEffectiveLevel(self) -&gt; int:</span>
+        <span class="s2">&quot;&quot;&quot;What's the effective level for this logger?&quot;&quot;&quot;</span>
+
+        <span class="s1">level = self._echo_map[self.echo]</span>
+        <span class="s3">if </span><span class="s1">level == logging.NOTSET:</span>
+            <span class="s1">level = self.logger.getEffectiveLevel()</span>
+        <span class="s3">return </span><span class="s1">level</span>
+
+
+<span class="s3">def </span><span class="s1">instance_logger(</span>
+    <span class="s1">instance: Identified</span><span class="s6">, </span><span class="s1">echoflag: _EchoFlagType = </span><span class="s3">None</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s2">&quot;&quot;&quot;create a logger for an instance that implements :class:`.Identified`.&quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">instance.logging_name:</span>
+        <span class="s1">name = </span><span class="s5">&quot;%s.%s&quot; </span><span class="s1">% (</span>
+            <span class="s1">_qual_logger_name_for_cls(instance.__class__)</span><span class="s6">,</span>
+            <span class="s1">instance.logging_name</span><span class="s6">,</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">name = _qual_logger_name_for_cls(instance.__class__)</span>
+
+    <span class="s1">instance._echo = echoflag  </span><span class="s0"># type: ignore</span>
+
+    <span class="s1">logger: Union[logging.Logger</span><span class="s6">, </span><span class="s1">InstanceLogger]</span>
+
+    <span class="s3">if </span><span class="s1">echoflag </span><span class="s3">in </span><span class="s1">(</span><span class="s3">False</span><span class="s6">, </span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s0"># if no echo setting or False, return a Logger directly,</span>
+        <span class="s0"># avoiding overhead of filtering</span>
+        <span class="s1">logger = logging.getLogger(name)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s0"># if a specified echo flag, return an EchoLogger,</span>
+        <span class="s0"># which checks the flag, overrides normal log</span>
+        <span class="s0"># levels by calling logger._log()</span>
+        <span class="s1">logger = InstanceLogger(echoflag</span><span class="s6">, </span><span class="s1">name)</span>
+
+    <span class="s1">instance.logger = logger  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s3">class </span><span class="s1">echo_property:</span>
+    <span class="s1">__doc__ = </span><span class="s5">&quot;&quot;&quot;</span><span class="s7">\ 
+    </span><span class="s5">When ``True``, enable log output for this element. 
+ 
+    This has the effect of setting the Python logging level for the namespace 
+    of this element's class and object reference.  A value of boolean ``True`` 
+    indicates that the loglevel ``logging.INFO`` will be set for the logger, 
+    whereas the string value ``debug`` will set the loglevel to 
+    ``logging.DEBUG``. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__get__(</span>
+        <span class="s1">self</span><span class="s6">, </span><span class="s1">instance: Literal[</span><span class="s3">None</span><span class="s1">]</span><span class="s6">, </span><span class="s1">owner: Type[Identified]</span>
+    <span class="s1">) -&gt; echo_property: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__get__(</span>
+        <span class="s1">self</span><span class="s6">, </span><span class="s1">instance: Identified</span><span class="s6">, </span><span class="s1">owner: Type[Identified]</span>
+    <span class="s1">) -&gt; _EchoFlagType: ...</span>
+
+    <span class="s3">def </span><span class="s1">__get__(</span>
+        <span class="s1">self</span><span class="s6">, </span><span class="s1">instance: Optional[Identified]</span><span class="s6">, </span><span class="s1">owner: Type[Identified]</span>
+    <span class="s1">) -&gt; Union[echo_property</span><span class="s6">, </span><span class="s1">_EchoFlagType]:</span>
+        <span class="s3">if </span><span class="s1">instance </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">instance._echo</span>
+
+    <span class="s3">def </span><span class="s1">__set__(self</span><span class="s6">, </span><span class="s1">instance: Identified</span><span class="s6">, </span><span class="s1">value: _EchoFlagType) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">instance_logger(instance</span><span class="s6">, </span><span class="s1">echoflag=value)</span>
+</pre>
+</body>
+</html>

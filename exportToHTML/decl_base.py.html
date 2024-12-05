@@ -1,0 +1,2214 @@
+<html>
+<head>
+<title>decl_base.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+decl_base.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/decl_base.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Internal implementation for declarative.&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">collections</span>
+<span class="s3">import </span><span class="s1">dataclasses</span>
+<span class="s3">import </span><span class="s1">re</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NamedTuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">weakref</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">clsregistry</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">orm_exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">instrumentation</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">mapperlib</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_O</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">attr_is_internal_proxy</span>
+<span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">InstrumentedAttribute</span>
+<span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">QueryableAttribute</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_is_mapped_class</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">InspectionAttr</span>
+<span class="s3">from </span><span class="s1">.descriptor_props </span><span class="s3">import </span><span class="s1">CompositeProperty</span>
+<span class="s3">from </span><span class="s1">.descriptor_props </span><span class="s3">import </span><span class="s1">SynonymProperty</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_AttributeOptions</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_DCAttributeOptions</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_IntrospectsAnnotations</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_MappedAttribute</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_MapsColumns</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">MapperProperty</span>
+<span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+<span class="s3">from </span><span class="s1">.properties </span><span class="s3">import </span><span class="s1">ColumnProperty</span>
+<span class="s3">from </span><span class="s1">.properties </span><span class="s3">import </span><span class="s1">MappedColumn</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">_extract_mapped_subtype</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">_is_mapped_annotation</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">class_mapper</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">de_stringify_annotation</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">event</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">expression</span>
+<span class="s3">from </span><span class="s1">..sql.base </span><span class="s3">import </span><span class="s1">_NoArg</span>
+<span class="s3">from </span><span class="s1">..sql.schema </span><span class="s3">import </span><span class="s1">Column</span>
+<span class="s3">from </span><span class="s1">..sql.schema </span><span class="s3">import </span><span class="s1">Table</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">topological</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">_AnnotationScanType</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">is_fwd_ref</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">is_literal</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Protocol</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">TypedDict</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">typing_get_args</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_ClassDict</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_RegistryType</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">Mapped</span>
+    <span class="s3">from </span><span class="s1">.decl_api </span><span class="s3">import </span><span class="s1">declared_attr</span>
+    <span class="s3">from </span><span class="s1">.instrumentation </span><span class="s3">import </span><span class="s1">ClassManager</span>
+    <span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">NamedColumn</span>
+    <span class="s3">from </span><span class="s1">..sql.schema </span><span class="s3">import </span><span class="s1">MetaData</span>
+    <span class="s3">from </span><span class="s1">..sql.selectable </span><span class="s3">import </span><span class="s1">FromClause</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+<span class="s1">_MapperKwArgs = Mapping[str</span><span class="s5">, </span><span class="s1">Any]</span>
+<span class="s1">_TableArgsType = Union[Tuple[Any</span><span class="s5">, </span><span class="s1">...]</span><span class="s5">, </span><span class="s1">Dict[str</span><span class="s5">, </span><span class="s1">Any]]</span>
+
+
+<span class="s3">class </span><span class="s1">MappedClassProtocol(Protocol[_O]):</span>
+    <span class="s2">&quot;&quot;&quot;A protocol representing a SQLAlchemy mapped class. 
+ 
+    The protocol is generic on the type of class, use 
+    ``MappedClassProtocol[Any]`` to allow any mapped class. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__name__: str</span>
+    <span class="s1">__mapper__: Mapper[_O]</span>
+    <span class="s1">__table__: FromClause</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; _O: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_DeclMappedClassProtocol(MappedClassProtocol[_O]</span><span class="s5">, </span><span class="s1">Protocol):</span>
+    <span class="s2">&quot;Internal more detailed version of ``MappedClassProtocol``.&quot;</span>
+    <span class="s1">metadata: MetaData</span>
+    <span class="s1">__tablename__: str</span>
+    <span class="s1">__mapper_args__: _MapperKwArgs</span>
+    <span class="s1">__table_args__: Optional[_TableArgsType]</span>
+
+    <span class="s1">_sa_apply_dc_transforms: Optional[_DataclassArguments]</span>
+
+    <span class="s3">def </span><span class="s1">__declare_first__(self) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s3">def </span><span class="s1">__declare_last__(self) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_DataclassArguments(TypedDict):</span>
+    <span class="s1">init: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool]</span>
+    <span class="s1">repr: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool]</span>
+    <span class="s1">eq: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool]</span>
+    <span class="s1">order: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool]</span>
+    <span class="s1">unsafe_hash: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool]</span>
+    <span class="s1">match_args: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool]</span>
+    <span class="s1">kw_only: Union[_NoArg</span><span class="s5">, </span><span class="s1">bool]</span>
+    <span class="s1">dataclass_callable: Union[_NoArg</span><span class="s5">, </span><span class="s1">Callable[...</span><span class="s5">, </span><span class="s1">Type[Any]]]</span>
+
+
+<span class="s3">def </span><span class="s1">_declared_mapping_info(</span>
+    <span class="s1">cls: Type[Any]</span><span class="s5">,</span>
+<span class="s1">) -&gt; Optional[Union[_DeferredMapperConfig</span><span class="s5">, </span><span class="s1">Mapper[Any]]]:</span>
+    <span class="s0"># deferred mapping</span>
+    <span class="s3">if </span><span class="s1">_DeferredMapperConfig.has_cls(cls):</span>
+        <span class="s3">return </span><span class="s1">_DeferredMapperConfig.config_for_cls(cls)</span>
+    <span class="s0"># regular mapping</span>
+    <span class="s3">elif </span><span class="s1">_is_mapped_class(cls):</span>
+        <span class="s3">return </span><span class="s1">class_mapper(cls</span><span class="s5">, </span><span class="s1">configure=</span><span class="s3">False</span><span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">def </span><span class="s1">_is_supercls_for_inherits(cls: Type[Any]) -&gt; bool:</span>
+    <span class="s2">&quot;&quot;&quot;return True if this class will be used as a superclass to set in 
+    'inherits'. 
+ 
+    This includes deferred mapper configs that aren't mapped yet, however does 
+    not include classes with _sa_decl_prepare_nocascade (e.g. 
+    ``AbstractConcreteBase``); these concrete-only classes are not set up as 
+    &quot;inherits&quot; until after mappers are configured using 
+    mapper._set_concrete_base() 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">_DeferredMapperConfig.has_cls(cls):</span>
+        <span class="s3">return not </span><span class="s1">_get_immediate_cls_attr(</span>
+            <span class="s1">cls</span><span class="s5">, </span><span class="s4">&quot;_sa_decl_prepare_nocascade&quot;</span><span class="s5">, </span><span class="s1">strict=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+    <span class="s0"># regular mapping</span>
+    <span class="s3">elif </span><span class="s1">_is_mapped_class(cls):</span>
+        <span class="s3">return True</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return False</span>
+
+
+<span class="s3">def </span><span class="s1">_resolve_for_abstract_or_classical(cls: Type[Any]) -&gt; Optional[Type[Any]]:</span>
+    <span class="s3">if </span><span class="s1">cls </span><span class="s3">is </span><span class="s1">object:</span>
+        <span class="s3">return None</span>
+
+    <span class="s1">sup: Optional[Type[Any]]</span>
+
+    <span class="s3">if </span><span class="s1">cls.__dict__.get(</span><span class="s4">&quot;__abstract__&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">for </span><span class="s1">base_ </span><span class="s3">in </span><span class="s1">cls.__bases__:</span>
+            <span class="s1">sup = _resolve_for_abstract_or_classical(base_)</span>
+            <span class="s3">if </span><span class="s1">sup </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">sup</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">clsmanager = _dive_for_cls_manager(cls)</span>
+
+        <span class="s3">if </span><span class="s1">clsmanager:</span>
+            <span class="s3">return </span><span class="s1">clsmanager.class_</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">cls</span>
+
+
+<span class="s3">def </span><span class="s1">_get_immediate_cls_attr(</span>
+    <span class="s1">cls: Type[Any]</span><span class="s5">, </span><span class="s1">attrname: str</span><span class="s5">, </span><span class="s1">strict: bool = </span><span class="s3">False</span>
+<span class="s1">) -&gt; Optional[Any]:</span>
+    <span class="s2">&quot;&quot;&quot;return an attribute of the class that is either present directly 
+    on the class, e.g. not on a superclass, or is from a superclass but 
+    this superclass is a non-mapped mixin, that is, not a descendant of 
+    the declarative base and is also not classically mapped. 
+ 
+    This is used to detect attributes that indicate something about 
+    a mapped class independently from any mapped classes that it may 
+    inherit from. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># the rules are different for this name than others,</span>
+    <span class="s0"># make sure we've moved it out.  transitional</span>
+    <span class="s3">assert </span><span class="s1">attrname != </span><span class="s4">&quot;__abstract__&quot;</span>
+
+    <span class="s3">if not </span><span class="s1">issubclass(cls</span><span class="s5">, </span><span class="s1">object):</span>
+        <span class="s3">return None</span>
+
+    <span class="s3">if </span><span class="s1">attrname </span><span class="s3">in </span><span class="s1">cls.__dict__:</span>
+        <span class="s3">return </span><span class="s1">getattr(cls</span><span class="s5">, </span><span class="s1">attrname)</span>
+
+    <span class="s3">for </span><span class="s1">base </span><span class="s3">in </span><span class="s1">cls.__mro__[</span><span class="s6">1</span><span class="s1">:]:</span>
+        <span class="s1">_is_classical_inherits = _dive_for_cls_manager(base) </span><span class="s3">is not None</span>
+
+        <span class="s3">if </span><span class="s1">attrname </span><span class="s3">in </span><span class="s1">base.__dict__ </span><span class="s3">and </span><span class="s1">(</span>
+            <span class="s1">base </span><span class="s3">is </span><span class="s1">cls</span>
+            <span class="s3">or </span><span class="s1">(</span>
+                <span class="s1">(base </span><span class="s3">in </span><span class="s1">cls.__bases__ </span><span class="s3">if </span><span class="s1">strict </span><span class="s3">else True</span><span class="s1">)</span>
+                <span class="s3">and not </span><span class="s1">_is_classical_inherits</span>
+            <span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">getattr(base</span><span class="s5">, </span><span class="s1">attrname)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">def </span><span class="s1">_dive_for_cls_manager(cls: Type[_O]) -&gt; Optional[ClassManager[_O]]:</span>
+    <span class="s0"># because the class manager registration is pluggable,</span>
+    <span class="s0"># we need to do the search for every class in the hierarchy,</span>
+    <span class="s0"># rather than just a simple &quot;cls._sa_class_manager&quot;</span>
+
+    <span class="s3">for </span><span class="s1">base </span><span class="s3">in </span><span class="s1">cls.__mro__:</span>
+        <span class="s1">manager: Optional[ClassManager[_O]] = attributes.opt_manager_of_class(</span>
+            <span class="s1">base</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">manager:</span>
+            <span class="s3">return </span><span class="s1">manager</span>
+    <span class="s3">return None</span>
+
+
+<span class="s3">def </span><span class="s1">_as_declarative(</span>
+    <span class="s1">registry: _RegistryType</span><span class="s5">, </span><span class="s1">cls: Type[Any]</span><span class="s5">, </span><span class="s1">dict_: _ClassDict</span>
+<span class="s1">) -&gt; Optional[_MapperConfig]:</span>
+    <span class="s0"># declarative scans the class for attributes.  no table or mapper</span>
+    <span class="s0"># args passed separately.</span>
+    <span class="s3">return </span><span class="s1">_MapperConfig.setup_mapping(registry</span><span class="s5">, </span><span class="s1">cls</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">{})</span>
+
+
+<span class="s3">def </span><span class="s1">_mapper(</span>
+    <span class="s1">registry: _RegistryType</span><span class="s5">,</span>
+    <span class="s1">cls: Type[_O]</span><span class="s5">,</span>
+    <span class="s1">table: Optional[FromClause]</span><span class="s5">,</span>
+    <span class="s1">mapper_kw: _MapperKwArgs</span><span class="s5">,</span>
+<span class="s1">) -&gt; Mapper[_O]:</span>
+    <span class="s1">_ImperativeMapperConfig(registry</span><span class="s5">, </span><span class="s1">cls</span><span class="s5">, </span><span class="s1">table</span><span class="s5">, </span><span class="s1">mapper_kw)</span>
+    <span class="s3">return </span><span class="s1">cast(</span><span class="s4">&quot;MappedClassProtocol[_O]&quot;</span><span class="s5">, </span><span class="s1">cls).__mapper__</span>
+
+
+<span class="s1">@util.preload_module(</span><span class="s4">&quot;sqlalchemy.orm.decl_api&quot;</span><span class="s1">)</span>
+<span class="s3">def </span><span class="s1">_is_declarative_props(obj: Any) -&gt; bool:</span>
+    <span class="s1">_declared_attr_common = util.preloaded.orm_decl_api._declared_attr_common</span>
+
+    <span class="s3">return </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">(_declared_attr_common</span><span class="s5">, </span><span class="s1">util.classproperty))</span>
+
+
+<span class="s3">def </span><span class="s1">_check_declared_props_nocascade(</span>
+    <span class="s1">obj: Any</span><span class="s5">, </span><span class="s1">name: str</span><span class="s5">, </span><span class="s1">cls: Type[_O]</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s3">if </span><span class="s1">_is_declarative_props(obj):</span>
+        <span class="s3">if </span><span class="s1">getattr(obj</span><span class="s5">, </span><span class="s4">&quot;_cascading&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">&quot;@declared_attr.cascading is not supported on the %s &quot;</span>
+                <span class="s4">&quot;attribute on class %s.  This attribute invokes for &quot;</span>
+                <span class="s4">&quot;subclasses in any case.&quot; </span><span class="s1">% (name</span><span class="s5">, </span><span class="s1">cls)</span>
+            <span class="s1">)</span>
+        <span class="s3">return True</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return False</span>
+
+
+<span class="s3">class </span><span class="s1">_MapperConfig:</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;cls&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;classname&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;properties&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;declared_attr_reg&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;__weakref__&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">cls: Type[Any]</span>
+    <span class="s1">classname: str</span>
+    <span class="s1">properties: util.OrderedDict[</span>
+        <span class="s1">str</span><span class="s5">,</span>
+        <span class="s1">Union[</span>
+            <span class="s1">Sequence[NamedColumn[Any]]</span><span class="s5">, </span><span class="s1">NamedColumn[Any]</span><span class="s5">, </span><span class="s1">MapperProperty[Any]</span>
+        <span class="s1">]</span><span class="s5">,</span>
+    <span class="s1">]</span>
+    <span class="s1">declared_attr_reg: Dict[declared_attr[Any]</span><span class="s5">, </span><span class="s1">Any]</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">setup_mapping(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">registry: _RegistryType</span><span class="s5">,</span>
+        <span class="s1">cls_: Type[_O]</span><span class="s5">,</span>
+        <span class="s1">dict_: _ClassDict</span><span class="s5">,</span>
+        <span class="s1">table: Optional[FromClause]</span><span class="s5">,</span>
+        <span class="s1">mapper_kw: _MapperKwArgs</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Optional[_MapperConfig]:</span>
+        <span class="s1">manager = attributes.opt_manager_of_class(cls)</span>
+        <span class="s3">if </span><span class="s1">manager </span><span class="s3">and </span><span class="s1">manager.class_ </span><span class="s3">is </span><span class="s1">cls_:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;Class </span><span class="s7">{</span><span class="s1">cls</span><span class="s7">!r} </span><span class="s4">already has been instrumented declaratively&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">cls_.__dict__.get(</span><span class="s4">&quot;__abstract__&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">defer_map = _get_immediate_cls_attr(</span>
+            <span class="s1">cls_</span><span class="s5">, </span><span class="s4">&quot;_sa_decl_prepare_nocascade&quot;</span><span class="s5">, </span><span class="s1">strict=</span><span class="s3">True</span>
+        <span class="s1">) </span><span class="s3">or </span><span class="s1">hasattr(cls_</span><span class="s5">, </span><span class="s4">&quot;_sa_decl_prepare&quot;</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">defer_map:</span>
+            <span class="s3">return </span><span class="s1">_DeferredMapperConfig(</span>
+                <span class="s1">registry</span><span class="s5">, </span><span class="s1">cls_</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">table</span><span class="s5">, </span><span class="s1">mapper_kw</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">_ClassScanMapperConfig(</span>
+                <span class="s1">registry</span><span class="s5">, </span><span class="s1">cls_</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">table</span><span class="s5">, </span><span class="s1">mapper_kw</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">registry: _RegistryType</span><span class="s5">,</span>
+        <span class="s1">cls_: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">mapper_kw: _MapperKwArgs</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.cls = util.assert_arg_type(cls_</span><span class="s5">, </span><span class="s1">type</span><span class="s5">, </span><span class="s4">&quot;cls_&quot;</span><span class="s1">)</span>
+        <span class="s1">self.classname = cls_.__name__</span>
+        <span class="s1">self.properties = util.OrderedDict()</span>
+        <span class="s1">self.declared_attr_reg = {}</span>
+
+        <span class="s3">if not </span><span class="s1">mapper_kw.get(</span><span class="s4">&quot;non_primary&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s1">instrumentation.register_class(</span>
+                <span class="s1">self.cls</span><span class="s5">,</span>
+                <span class="s1">finalize=</span><span class="s3">False</span><span class="s5">,</span>
+                <span class="s1">registry=registry</span><span class="s5">,</span>
+                <span class="s1">declarative_scan=self</span><span class="s5">,</span>
+                <span class="s1">init_method=registry.constructor</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">manager = attributes.opt_manager_of_class(self.cls)</span>
+            <span class="s3">if not </span><span class="s1">manager </span><span class="s3">or not </span><span class="s1">manager.is_mapped:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;Class %s has no primary mapper configured.  Configure &quot;</span>
+                    <span class="s4">&quot;a primary mapper first before setting up a non primary &quot;</span>
+                    <span class="s4">&quot;Mapper.&quot; </span><span class="s1">% self.cls</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">set_cls_attribute(self</span><span class="s5">, </span><span class="s1">attrname: str</span><span class="s5">, </span><span class="s1">value: _T) -&gt; _T:</span>
+        <span class="s1">manager = instrumentation.manager_of_class(self.cls)</span>
+        <span class="s1">manager.install_member(attrname</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s3">return </span><span class="s1">value</span>
+
+    <span class="s3">def </span><span class="s1">map(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs = ...) -&gt; Mapper[Any]:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">_early_mapping(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.map(mapper_kw)</span>
+
+
+<span class="s3">class </span><span class="s1">_ImperativeMapperConfig(_MapperConfig):</span>
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;local_table&quot;</span><span class="s5">, </span><span class="s4">&quot;inherits&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">registry: _RegistryType</span><span class="s5">,</span>
+        <span class="s1">cls_: Type[_O]</span><span class="s5">,</span>
+        <span class="s1">table: Optional[FromClause]</span><span class="s5">,</span>
+        <span class="s1">mapper_kw: _MapperKwArgs</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">super().__init__(registry</span><span class="s5">, </span><span class="s1">cls_</span><span class="s5">, </span><span class="s1">mapper_kw)</span>
+
+        <span class="s1">self.local_table = self.set_cls_attribute(</span><span class="s4">&quot;__table__&quot;</span><span class="s5">, </span><span class="s1">table)</span>
+
+        <span class="s3">with </span><span class="s1">mapperlib._CONFIGURE_MUTEX:</span>
+            <span class="s3">if not </span><span class="s1">mapper_kw.get(</span><span class="s4">&quot;non_primary&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+                <span class="s1">clsregistry.add_class(</span>
+                    <span class="s1">self.classname</span><span class="s5">, </span><span class="s1">self.cls</span><span class="s5">, </span><span class="s1">registry._class_registry</span>
+                <span class="s1">)</span>
+
+            <span class="s1">self._setup_inheritance(mapper_kw)</span>
+
+            <span class="s1">self._early_mapping(mapper_kw)</span>
+
+    <span class="s3">def </span><span class="s1">map(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs = util.EMPTY_DICT) -&gt; Mapper[Any]:</span>
+        <span class="s1">mapper_cls = Mapper</span>
+
+        <span class="s3">return </span><span class="s1">self.set_cls_attribute(</span>
+            <span class="s4">&quot;__mapper__&quot;</span><span class="s5">,</span>
+            <span class="s1">mapper_cls(self.cls</span><span class="s5">, </span><span class="s1">self.local_table</span><span class="s5">, </span><span class="s1">**mapper_kw)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_setup_inheritance(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">cls = self.cls</span>
+
+        <span class="s1">inherits = mapper_kw.get(</span><span class="s4">&quot;inherits&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">inherits </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s0"># since we search for classical mappings now, search for</span>
+            <span class="s0"># multiple mapped bases as well and raise an error.</span>
+            <span class="s1">inherits_search = []</span>
+            <span class="s3">for </span><span class="s1">base_ </span><span class="s3">in </span><span class="s1">cls.__bases__:</span>
+                <span class="s1">c = _resolve_for_abstract_or_classical(base_)</span>
+                <span class="s3">if </span><span class="s1">c </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s3">continue</span>
+
+                <span class="s3">if </span><span class="s1">_is_supercls_for_inherits(c) </span><span class="s3">and </span><span class="s1">c </span><span class="s3">not in </span><span class="s1">inherits_search:</span>
+                    <span class="s1">inherits_search.append(c)</span>
+
+            <span class="s3">if </span><span class="s1">inherits_search:</span>
+                <span class="s3">if </span><span class="s1">len(inherits_search) &gt; </span><span class="s6">1</span><span class="s1">:</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">&quot;Class %s has multiple mapped bases: %r&quot;</span>
+                        <span class="s1">% (cls</span><span class="s5">, </span><span class="s1">inherits_search)</span>
+                    <span class="s1">)</span>
+                <span class="s1">inherits = inherits_search[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s3">elif </span><span class="s1">isinstance(inherits</span><span class="s5">, </span><span class="s1">Mapper):</span>
+            <span class="s1">inherits = inherits.class_</span>
+
+        <span class="s1">self.inherits = inherits</span>
+
+
+<span class="s3">class </span><span class="s1">_CollectedAnnotation(NamedTuple):</span>
+    <span class="s1">raw_annotation: _AnnotationScanType</span>
+    <span class="s1">mapped_container: Optional[Type[Mapped[Any]]]</span>
+    <span class="s1">extracted_mapped_annotation: Union[_AnnotationScanType</span><span class="s5">, </span><span class="s1">str]</span>
+    <span class="s1">is_dataclass: bool</span>
+    <span class="s1">attr_value: Any</span>
+    <span class="s1">originating_module: str</span>
+    <span class="s1">originating_class: Type[Any]</span>
+
+
+<span class="s3">class </span><span class="s1">_ClassScanMapperConfig(_MapperConfig):</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;registry&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;clsdict_view&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;collected_attributes&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;collected_annotations&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;local_table&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;persist_selectable&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;declared_columns&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;column_ordering&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;column_copies&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;table_args&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;tablename&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;mapper_args&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;mapper_args_fn&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;table_fn&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;inherits&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;single&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;allow_dataclass_fields&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;dataclass_setup_arguments&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;is_dataclass_prior_to_mapping&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;allow_unmapped_annotations&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">is_deferred = </span><span class="s3">False</span>
+    <span class="s1">registry: _RegistryType</span>
+    <span class="s1">clsdict_view: _ClassDict</span>
+    <span class="s1">collected_annotations: Dict[str</span><span class="s5">, </span><span class="s1">_CollectedAnnotation]</span>
+    <span class="s1">collected_attributes: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span>
+    <span class="s1">local_table: Optional[FromClause]</span>
+    <span class="s1">persist_selectable: Optional[FromClause]</span>
+    <span class="s1">declared_columns: util.OrderedSet[Column[Any]]</span>
+    <span class="s1">column_ordering: Dict[Column[Any]</span><span class="s5">, </span><span class="s1">int]</span>
+    <span class="s1">column_copies: Dict[</span>
+        <span class="s1">Union[MappedColumn[Any]</span><span class="s5">, </span><span class="s1">Column[Any]]</span><span class="s5">,</span>
+        <span class="s1">Union[MappedColumn[Any]</span><span class="s5">, </span><span class="s1">Column[Any]]</span><span class="s5">,</span>
+    <span class="s1">]</span>
+    <span class="s1">tablename: Optional[str]</span>
+    <span class="s1">mapper_args: Mapping[str</span><span class="s5">, </span><span class="s1">Any]</span>
+    <span class="s1">table_args: Optional[_TableArgsType]</span>
+    <span class="s1">mapper_args_fn: Optional[Callable[[]</span><span class="s5">, </span><span class="s1">Dict[str</span><span class="s5">, </span><span class="s1">Any]]]</span>
+    <span class="s1">inherits: Optional[Type[Any]]</span>
+    <span class="s1">single: bool</span>
+
+    <span class="s1">is_dataclass_prior_to_mapping: bool</span>
+    <span class="s1">allow_unmapped_annotations: bool</span>
+
+    <span class="s1">dataclass_setup_arguments: Optional[_DataclassArguments]</span>
+    <span class="s4">&quot;&quot;&quot;if the class has SQLAlchemy native dataclass parameters, where 
+    we will turn the class into a dataclass within the declarative mapping 
+    process. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">allow_dataclass_fields: bool</span>
+    <span class="s4">&quot;&quot;&quot;if true, look for dataclass-processed Field objects on the target 
+    class as well as superclasses and extract ORM mapping directives from 
+    the &quot;metadata&quot; attribute of each Field. 
+ 
+    if False, dataclass fields can still be used, however they won't be 
+    mapped. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">registry: _RegistryType</span><span class="s5">,</span>
+        <span class="s1">cls_: Type[_O]</span><span class="s5">,</span>
+        <span class="s1">dict_: _ClassDict</span><span class="s5">,</span>
+        <span class="s1">table: Optional[FromClause]</span><span class="s5">,</span>
+        <span class="s1">mapper_kw: _MapperKwArgs</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s0"># grab class dict before the instrumentation manager has been added.</span>
+        <span class="s0"># reduces cycles</span>
+        <span class="s1">self.clsdict_view = (</span>
+            <span class="s1">util.immutabledict(dict_) </span><span class="s3">if </span><span class="s1">dict_ </span><span class="s3">else </span><span class="s1">util.EMPTY_DICT</span>
+        <span class="s1">)</span>
+        <span class="s1">super().__init__(registry</span><span class="s5">, </span><span class="s1">cls_</span><span class="s5">, </span><span class="s1">mapper_kw)</span>
+        <span class="s1">self.registry = registry</span>
+        <span class="s1">self.persist_selectable = </span><span class="s3">None</span>
+
+        <span class="s1">self.collected_attributes = {}</span>
+        <span class="s1">self.collected_annotations = {}</span>
+        <span class="s1">self.declared_columns = util.OrderedSet()</span>
+        <span class="s1">self.column_ordering = {}</span>
+        <span class="s1">self.column_copies = {}</span>
+        <span class="s1">self.single = </span><span class="s3">False</span>
+        <span class="s1">self.dataclass_setup_arguments = dca = getattr(</span>
+            <span class="s1">self.cls</span><span class="s5">, </span><span class="s4">&quot;_sa_apply_dc_transforms&quot;</span><span class="s5">, </span><span class="s3">None</span>
+        <span class="s1">)</span>
+
+        <span class="s1">self.allow_unmapped_annotations = getattr(</span>
+            <span class="s1">self.cls</span><span class="s5">, </span><span class="s4">&quot;__allow_unmapped__&quot;</span><span class="s5">, </span><span class="s3">False</span>
+        <span class="s1">) </span><span class="s3">or </span><span class="s1">bool(self.dataclass_setup_arguments)</span>
+
+        <span class="s1">self.is_dataclass_prior_to_mapping = cld = dataclasses.is_dataclass(</span>
+            <span class="s1">cls_</span>
+        <span class="s1">)</span>
+
+        <span class="s1">sdk = _get_immediate_cls_attr(cls_</span><span class="s5">, </span><span class="s4">&quot;__sa_dataclass_metadata_key__&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># we don't want to consume Field objects from a not-already-dataclass.</span>
+        <span class="s0"># the Field objects won't have their &quot;name&quot; or &quot;type&quot; populated,</span>
+        <span class="s0"># and while it seems like we could just set these on Field as we</span>
+        <span class="s0"># read them, Field is documented as &quot;user read only&quot; and we need to</span>
+        <span class="s0"># stay far away from any off-label use of dataclasses APIs.</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">not </span><span class="s1">cld </span><span class="s3">or </span><span class="s1">dca) </span><span class="s3">and </span><span class="s1">sdk:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;SQLAlchemy mapped dataclasses can't consume mapping &quot;</span>
+                <span class="s4">&quot;information from dataclass.Field() objects if the immediate &quot;</span>
+                <span class="s4">&quot;class is not already a dataclass.&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s0"># if already a dataclass, and __sa_dataclass_metadata_key__ present,</span>
+        <span class="s0"># then also look inside of dataclass.Field() objects yielded by</span>
+        <span class="s0"># dataclasses.get_fields(cls) when scanning for attributes</span>
+        <span class="s1">self.allow_dataclass_fields = bool(sdk </span><span class="s3">and </span><span class="s1">cld)</span>
+
+        <span class="s1">self._setup_declared_events()</span>
+
+        <span class="s1">self._scan_attributes()</span>
+
+        <span class="s1">self._setup_dataclasses_transforms()</span>
+
+        <span class="s3">with </span><span class="s1">mapperlib._CONFIGURE_MUTEX:</span>
+            <span class="s1">clsregistry.add_class(</span>
+                <span class="s1">self.classname</span><span class="s5">, </span><span class="s1">self.cls</span><span class="s5">, </span><span class="s1">registry._class_registry</span>
+            <span class="s1">)</span>
+
+            <span class="s1">self._setup_inheriting_mapper(mapper_kw)</span>
+
+            <span class="s1">self._extract_mappable_attributes()</span>
+
+            <span class="s1">self._extract_declared_columns()</span>
+
+            <span class="s1">self._setup_table(table)</span>
+
+            <span class="s1">self._setup_inheriting_columns(mapper_kw)</span>
+
+            <span class="s1">self._early_mapping(mapper_kw)</span>
+
+    <span class="s3">def </span><span class="s1">_setup_declared_events(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">_get_immediate_cls_attr(self.cls</span><span class="s5">, </span><span class="s4">&quot;__declare_last__&quot;</span><span class="s1">):</span>
+
+            <span class="s1">@event.listens_for(Mapper</span><span class="s5">, </span><span class="s4">&quot;after_configured&quot;</span><span class="s1">)</span>
+            <span class="s3">def </span><span class="s1">after_configured() -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s1">cast(</span>
+                    <span class="s4">&quot;_DeclMappedClassProtocol[Any]&quot;</span><span class="s5">, </span><span class="s1">self.cls</span>
+                <span class="s1">).__declare_last__()</span>
+
+        <span class="s3">if </span><span class="s1">_get_immediate_cls_attr(self.cls</span><span class="s5">, </span><span class="s4">&quot;__declare_first__&quot;</span><span class="s1">):</span>
+
+            <span class="s1">@event.listens_for(Mapper</span><span class="s5">, </span><span class="s4">&quot;before_configured&quot;</span><span class="s1">)</span>
+            <span class="s3">def </span><span class="s1">before_configured() -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s1">cast(</span>
+                    <span class="s4">&quot;_DeclMappedClassProtocol[Any]&quot;</span><span class="s5">, </span><span class="s1">self.cls</span>
+                <span class="s1">).__declare_first__()</span>
+
+    <span class="s3">def </span><span class="s1">_cls_attr_override_checker(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">cls: Type[_O]</span>
+    <span class="s1">) -&gt; Callable[[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">bool]:</span>
+        <span class="s2">&quot;&quot;&quot;Produce a function that checks if a class has overridden an 
+        attribute, taking SQLAlchemy-enabled dataclass fields into account. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">self.allow_dataclass_fields:</span>
+            <span class="s1">sa_dataclass_metadata_key = _get_immediate_cls_attr(</span>
+                <span class="s1">cls</span><span class="s5">, </span><span class="s4">&quot;__sa_dataclass_metadata_key__&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">sa_dataclass_metadata_key = </span><span class="s3">None</span>
+
+        <span class="s3">if not </span><span class="s1">sa_dataclass_metadata_key:</span>
+
+            <span class="s3">def </span><span class="s1">attribute_is_overridden(key: str</span><span class="s5">, </span><span class="s1">obj: Any) -&gt; bool:</span>
+                <span class="s3">return </span><span class="s1">getattr(cls</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">obj) </span><span class="s3">is not </span><span class="s1">obj</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">all_datacls_fields = {</span>
+                <span class="s1">f.name: f.metadata[sa_dataclass_metadata_key]</span>
+                <span class="s3">for </span><span class="s1">f </span><span class="s3">in </span><span class="s1">util.dataclass_fields(cls)</span>
+                <span class="s3">if </span><span class="s1">sa_dataclass_metadata_key </span><span class="s3">in </span><span class="s1">f.metadata</span>
+            <span class="s1">}</span>
+            <span class="s1">local_datacls_fields = {</span>
+                <span class="s1">f.name: f.metadata[sa_dataclass_metadata_key]</span>
+                <span class="s3">for </span><span class="s1">f </span><span class="s3">in </span><span class="s1">util.local_dataclass_fields(cls)</span>
+                <span class="s3">if </span><span class="s1">sa_dataclass_metadata_key </span><span class="s3">in </span><span class="s1">f.metadata</span>
+            <span class="s1">}</span>
+
+            <span class="s1">absent = object()</span>
+
+            <span class="s3">def </span><span class="s1">attribute_is_overridden(key: str</span><span class="s5">, </span><span class="s1">obj: Any) -&gt; bool:</span>
+                <span class="s3">if </span><span class="s1">_is_declarative_props(obj):</span>
+                    <span class="s1">obj = obj.fget</span>
+
+                <span class="s0"># this function likely has some failure modes still if</span>
+                <span class="s0"># someone is doing a deep mixing of the same attribute</span>
+                <span class="s0"># name as plain Python attribute vs. dataclass field.</span>
+
+                <span class="s1">ret = local_datacls_fields.get(key</span><span class="s5">, </span><span class="s1">absent)</span>
+                <span class="s3">if </span><span class="s1">_is_declarative_props(ret):</span>
+                    <span class="s1">ret = ret.fget</span>
+
+                <span class="s3">if </span><span class="s1">ret </span><span class="s3">is </span><span class="s1">obj:</span>
+                    <span class="s3">return False</span>
+                <span class="s3">elif </span><span class="s1">ret </span><span class="s3">is not </span><span class="s1">absent:</span>
+                    <span class="s3">return True</span>
+
+                <span class="s1">all_field = all_datacls_fields.get(key</span><span class="s5">, </span><span class="s1">absent)</span>
+
+                <span class="s1">ret = getattr(cls</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">obj)</span>
+
+                <span class="s3">if </span><span class="s1">ret </span><span class="s3">is </span><span class="s1">obj:</span>
+                    <span class="s3">return False</span>
+
+                <span class="s0"># for dataclasses, this could be the</span>
+                <span class="s0"># 'default' of the field.  so filter more specifically</span>
+                <span class="s0"># for an already-mapped InstrumentedAttribute</span>
+                <span class="s3">if </span><span class="s1">ret </span><span class="s3">is not </span><span class="s1">absent </span><span class="s3">and </span><span class="s1">isinstance(</span>
+                    <span class="s1">ret</span><span class="s5">, </span><span class="s1">InstrumentedAttribute</span>
+                <span class="s1">):</span>
+                    <span class="s3">return True</span>
+
+                <span class="s3">if </span><span class="s1">all_field </span><span class="s3">is </span><span class="s1">obj:</span>
+                    <span class="s3">return False</span>
+                <span class="s3">elif </span><span class="s1">all_field </span><span class="s3">is not </span><span class="s1">absent:</span>
+                    <span class="s3">return True</span>
+
+                <span class="s0"># can't find another attribute</span>
+                <span class="s3">return False</span>
+
+        <span class="s3">return </span><span class="s1">attribute_is_overridden</span>
+
+    <span class="s1">_include_dunders = {</span>
+        <span class="s4">&quot;__table__&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;__mapper_args__&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;__tablename__&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;__table_args__&quot;</span><span class="s5">,</span>
+    <span class="s1">}</span>
+
+    <span class="s1">_match_exclude_dunders = re.compile(</span><span class="s4">r&quot;^(?:_sa_|__)&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_cls_attr_resolver(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">cls: Type[Any]</span>
+    <span class="s1">) -&gt; Callable[[]</span><span class="s5">, </span><span class="s1">Iterable[Tuple[str</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">bool]]]:</span>
+        <span class="s2">&quot;&quot;&quot;produce a function to iterate the &quot;attributes&quot; of a class 
+        which we want to consider for mapping, adjusting for SQLAlchemy fields 
+        embedded in dataclass fields. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">cls_annotations = util.get_annotations(cls)</span>
+
+        <span class="s1">cls_vars = vars(cls)</span>
+
+        <span class="s1">_include_dunders = self._include_dunders</span>
+        <span class="s1">_match_exclude_dunders = self._match_exclude_dunders</span>
+
+        <span class="s1">names = [</span>
+            <span class="s1">n</span>
+            <span class="s3">for </span><span class="s1">n </span><span class="s3">in </span><span class="s1">util.merge_lists_w_ordering(</span>
+                <span class="s1">list(cls_vars)</span><span class="s5">, </span><span class="s1">list(cls_annotations)</span>
+            <span class="s1">)</span>
+            <span class="s3">if not </span><span class="s1">_match_exclude_dunders.match(n) </span><span class="s3">or </span><span class="s1">n </span><span class="s3">in </span><span class="s1">_include_dunders</span>
+        <span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s1">self.allow_dataclass_fields:</span>
+            <span class="s1">sa_dataclass_metadata_key: Optional[str] = _get_immediate_cls_attr(</span>
+                <span class="s1">cls</span><span class="s5">, </span><span class="s4">&quot;__sa_dataclass_metadata_key__&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">sa_dataclass_metadata_key = </span><span class="s3">None</span>
+
+        <span class="s3">if not </span><span class="s1">sa_dataclass_metadata_key:</span>
+
+            <span class="s3">def </span><span class="s1">local_attributes_for_class() -&gt; (</span>
+                <span class="s1">Iterable[Tuple[str</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">bool]]</span>
+            <span class="s1">):</span>
+                <span class="s3">return </span><span class="s1">(</span>
+                    <span class="s1">(</span>
+                        <span class="s1">name</span><span class="s5">,</span>
+                        <span class="s1">cls_vars.get(name)</span><span class="s5">,</span>
+                        <span class="s1">cls_annotations.get(name)</span><span class="s5">,</span>
+                        <span class="s3">False</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">names</span>
+                <span class="s1">)</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">dataclass_fields = {</span>
+                <span class="s1">field.name: field </span><span class="s3">for </span><span class="s1">field </span><span class="s3">in </span><span class="s1">util.local_dataclass_fields(cls)</span>
+            <span class="s1">}</span>
+
+            <span class="s1">fixed_sa_dataclass_metadata_key = sa_dataclass_metadata_key</span>
+
+            <span class="s3">def </span><span class="s1">local_attributes_for_class() -&gt; (</span>
+                <span class="s1">Iterable[Tuple[str</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">bool]]</span>
+            <span class="s1">):</span>
+                <span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">names:</span>
+                    <span class="s1">field = dataclass_fields.get(name</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">field </span><span class="s3">and </span><span class="s1">sa_dataclass_metadata_key </span><span class="s3">in </span><span class="s1">field.metadata:</span>
+                        <span class="s3">yield </span><span class="s1">field.name</span><span class="s5">, </span><span class="s1">_as_dc_declaredattr(</span>
+                            <span class="s1">field.metadata</span><span class="s5">, </span><span class="s1">fixed_sa_dataclass_metadata_key</span>
+                        <span class="s1">)</span><span class="s5">, </span><span class="s1">cls_annotations.get(field.name)</span><span class="s5">, </span><span class="s3">True</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s3">yield </span><span class="s1">name</span><span class="s5">, </span><span class="s1">cls_vars.get(name)</span><span class="s5">, </span><span class="s1">cls_annotations.get(</span>
+                            <span class="s1">name</span>
+                        <span class="s1">)</span><span class="s5">, </span><span class="s3">False</span>
+
+        <span class="s3">return </span><span class="s1">local_attributes_for_class</span>
+
+    <span class="s3">def </span><span class="s1">_scan_attributes(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">cls = self.cls</span>
+
+        <span class="s1">cls_as_Decl = cast(</span><span class="s4">&quot;_DeclMappedClassProtocol[Any]&quot;</span><span class="s5">, </span><span class="s1">cls)</span>
+
+        <span class="s1">clsdict_view = self.clsdict_view</span>
+        <span class="s1">collected_attributes = self.collected_attributes</span>
+        <span class="s1">column_copies = self.column_copies</span>
+        <span class="s1">_include_dunders = self._include_dunders</span>
+        <span class="s1">mapper_args_fn = </span><span class="s3">None</span>
+        <span class="s1">table_args = inherited_table_args = </span><span class="s3">None</span>
+        <span class="s1">table_fn = </span><span class="s3">None</span>
+        <span class="s1">tablename = </span><span class="s3">None</span>
+        <span class="s1">fixed_table = </span><span class="s4">&quot;__table__&quot; </span><span class="s3">in </span><span class="s1">clsdict_view</span>
+
+        <span class="s1">attribute_is_overridden = self._cls_attr_override_checker(self.cls)</span>
+
+        <span class="s1">bases = []</span>
+
+        <span class="s3">for </span><span class="s1">base </span><span class="s3">in </span><span class="s1">cls.__mro__:</span>
+            <span class="s0"># collect bases and make sure standalone columns are copied</span>
+            <span class="s0"># to be the column they will ultimately be on the class,</span>
+            <span class="s0"># so that declared_attr functions use the right columns.</span>
+            <span class="s0"># need to do this all the way up the hierarchy first</span>
+            <span class="s0"># (see #8190)</span>
+
+            <span class="s1">class_mapped = base </span><span class="s3">is not </span><span class="s1">cls </span><span class="s3">and </span><span class="s1">_is_supercls_for_inherits(base)</span>
+
+            <span class="s1">local_attributes_for_class = self._cls_attr_resolver(base)</span>
+
+            <span class="s3">if not </span><span class="s1">class_mapped </span><span class="s3">and </span><span class="s1">base </span><span class="s3">is not </span><span class="s1">cls:</span>
+                <span class="s1">locally_collected_columns = self._produce_column_copies(</span>
+                    <span class="s1">local_attributes_for_class</span><span class="s5">,</span>
+                    <span class="s1">attribute_is_overridden</span><span class="s5">,</span>
+                    <span class="s1">fixed_table</span><span class="s5">,</span>
+                    <span class="s1">base</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">locally_collected_columns = {}</span>
+
+            <span class="s1">bases.append(</span>
+                <span class="s1">(</span>
+                    <span class="s1">base</span><span class="s5">,</span>
+                    <span class="s1">class_mapped</span><span class="s5">,</span>
+                    <span class="s1">local_attributes_for_class</span><span class="s5">,</span>
+                    <span class="s1">locally_collected_columns</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">for </span><span class="s1">(</span>
+            <span class="s1">base</span><span class="s5">,</span>
+            <span class="s1">class_mapped</span><span class="s5">,</span>
+            <span class="s1">local_attributes_for_class</span><span class="s5">,</span>
+            <span class="s1">locally_collected_columns</span><span class="s5">,</span>
+        <span class="s1">) </span><span class="s3">in </span><span class="s1">bases:</span>
+            <span class="s0"># this transfer can also take place as we scan each name</span>
+            <span class="s0"># for finer-grained control of how collected_attributes is</span>
+            <span class="s0"># populated, as this is what impacts column ordering.</span>
+            <span class="s0"># however it's simpler to get it out of the way here.</span>
+            <span class="s1">collected_attributes.update(locally_collected_columns)</span>
+
+            <span class="s3">for </span><span class="s1">(</span>
+                <span class="s1">name</span><span class="s5">,</span>
+                <span class="s1">obj</span><span class="s5">,</span>
+                <span class="s1">annotation</span><span class="s5">,</span>
+                <span class="s1">is_dataclass_field</span><span class="s5">,</span>
+            <span class="s1">) </span><span class="s3">in </span><span class="s1">local_attributes_for_class():</span>
+                <span class="s3">if </span><span class="s1">name </span><span class="s3">in </span><span class="s1">_include_dunders:</span>
+                    <span class="s3">if </span><span class="s1">name == </span><span class="s4">&quot;__mapper_args__&quot;</span><span class="s1">:</span>
+                        <span class="s1">check_decl = _check_declared_props_nocascade(</span>
+                            <span class="s1">obj</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">cls</span>
+                        <span class="s1">)</span>
+                        <span class="s3">if not </span><span class="s1">mapper_args_fn </span><span class="s3">and </span><span class="s1">(</span>
+                            <span class="s3">not </span><span class="s1">class_mapped </span><span class="s3">or </span><span class="s1">check_decl</span>
+                        <span class="s1">):</span>
+                            <span class="s0"># don't even invoke __mapper_args__ until</span>
+                            <span class="s0"># after we've determined everything about the</span>
+                            <span class="s0"># mapped table.</span>
+                            <span class="s0"># make a copy of it so a class-level dictionary</span>
+                            <span class="s0"># is not overwritten when we update column-based</span>
+                            <span class="s0"># arguments.</span>
+                            <span class="s3">def </span><span class="s1">_mapper_args_fn() -&gt; Dict[str</span><span class="s5">, </span><span class="s1">Any]:</span>
+                                <span class="s3">return </span><span class="s1">dict(cls_as_Decl.__mapper_args__)</span>
+
+                            <span class="s1">mapper_args_fn = _mapper_args_fn</span>
+
+                    <span class="s3">elif </span><span class="s1">name == </span><span class="s4">&quot;__tablename__&quot;</span><span class="s1">:</span>
+                        <span class="s1">check_decl = _check_declared_props_nocascade(</span>
+                            <span class="s1">obj</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">cls</span>
+                        <span class="s1">)</span>
+                        <span class="s3">if not </span><span class="s1">tablename </span><span class="s3">and </span><span class="s1">(</span><span class="s3">not </span><span class="s1">class_mapped </span><span class="s3">or </span><span class="s1">check_decl):</span>
+                            <span class="s1">tablename = cls_as_Decl.__tablename__</span>
+                    <span class="s3">elif </span><span class="s1">name == </span><span class="s4">&quot;__table__&quot;</span><span class="s1">:</span>
+                        <span class="s1">check_decl = _check_declared_props_nocascade(</span>
+                            <span class="s1">obj</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">cls</span>
+                        <span class="s1">)</span>
+                        <span class="s0"># if a @declared_attr using &quot;__table__&quot; is detected,</span>
+                        <span class="s0"># wrap up a callable to look for &quot;__table__&quot; from</span>
+                        <span class="s0"># the final concrete class when we set up a table.</span>
+                        <span class="s0"># this was fixed by</span>
+                        <span class="s0"># #11509, regression in 2.0 from version 1.4.</span>
+                        <span class="s3">if </span><span class="s1">check_decl </span><span class="s3">and not </span><span class="s1">table_fn:</span>
+                            <span class="s0"># don't even invoke __table__ until we're ready</span>
+                            <span class="s3">def </span><span class="s1">_table_fn() -&gt; FromClause:</span>
+                                <span class="s3">return </span><span class="s1">cls_as_Decl.__table__</span>
+
+                            <span class="s1">table_fn = _table_fn</span>
+
+                    <span class="s3">elif </span><span class="s1">name == </span><span class="s4">&quot;__table_args__&quot;</span><span class="s1">:</span>
+                        <span class="s1">check_decl = _check_declared_props_nocascade(</span>
+                            <span class="s1">obj</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">cls</span>
+                        <span class="s1">)</span>
+                        <span class="s3">if not </span><span class="s1">table_args </span><span class="s3">and </span><span class="s1">(</span><span class="s3">not </span><span class="s1">class_mapped </span><span class="s3">or </span><span class="s1">check_decl):</span>
+                            <span class="s1">table_args = cls_as_Decl.__table_args__</span>
+                            <span class="s3">if not </span><span class="s1">isinstance(</span>
+                                <span class="s1">table_args</span><span class="s5">, </span><span class="s1">(tuple</span><span class="s5">, </span><span class="s1">dict</span><span class="s5">, </span><span class="s1">type(</span><span class="s3">None</span><span class="s1">))</span>
+                            <span class="s1">):</span>
+                                <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                                    <span class="s4">&quot;__table_args__ value must be a tuple, &quot;</span>
+                                    <span class="s4">&quot;dict, or None&quot;</span>
+                                <span class="s1">)</span>
+                            <span class="s3">if </span><span class="s1">base </span><span class="s3">is not </span><span class="s1">cls:</span>
+                                <span class="s1">inherited_table_args = </span><span class="s3">True</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s0"># any other dunder names; should not be here</span>
+                        <span class="s0"># as we have tested for all four names in</span>
+                        <span class="s0"># _include_dunders</span>
+                        <span class="s3">assert False</span>
+                <span class="s3">elif </span><span class="s1">class_mapped:</span>
+                    <span class="s3">if </span><span class="s1">_is_declarative_props(obj) </span><span class="s3">and not </span><span class="s1">obj._quiet:</span>
+                        <span class="s1">util.warn(</span>
+                            <span class="s4">&quot;Regular (i.e. not __special__) &quot;</span>
+                            <span class="s4">&quot;attribute '%s.%s' uses @declared_attr, &quot;</span>
+                            <span class="s4">&quot;but owning class %s is mapped - &quot;</span>
+                            <span class="s4">&quot;not applying to subclass %s.&quot;</span>
+                            <span class="s1">% (base.__name__</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">base</span><span class="s5">, </span><span class="s1">cls)</span>
+                        <span class="s1">)</span>
+
+                    <span class="s3">continue</span>
+                <span class="s3">elif </span><span class="s1">base </span><span class="s3">is not </span><span class="s1">cls:</span>
+                    <span class="s0"># we're a mixin, abstract base, or something that is</span>
+                    <span class="s0"># acting like that for now.</span>
+
+                    <span class="s3">if </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">(Column</span><span class="s5">, </span><span class="s1">MappedColumn)):</span>
+                        <span class="s0"># already copied columns to the mapped class.</span>
+                        <span class="s3">continue</span>
+                    <span class="s3">elif </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">MapperProperty):</span>
+                        <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                            <span class="s4">&quot;Mapper properties (i.e. deferred,&quot;</span>
+                            <span class="s4">&quot;column_property(), relationship(), etc.) must &quot;</span>
+                            <span class="s4">&quot;be declared as @declared_attr callables &quot;</span>
+                            <span class="s4">&quot;on declarative mixin classes.  For dataclass &quot;</span>
+                            <span class="s4">&quot;field() objects, use a lambda:&quot;</span>
+                        <span class="s1">)</span>
+                    <span class="s3">elif </span><span class="s1">_is_declarative_props(obj):</span>
+                        <span class="s0"># tried to get overloads to tell this to</span>
+                        <span class="s0"># pylance, no luck</span>
+                        <span class="s3">assert </span><span class="s1">obj </span><span class="s3">is not None</span>
+
+                        <span class="s3">if </span><span class="s1">obj._cascading:</span>
+                            <span class="s3">if </span><span class="s1">name </span><span class="s3">in </span><span class="s1">clsdict_view:</span>
+                                <span class="s0"># unfortunately, while we can use the user-</span>
+                                <span class="s0"># defined attribute here to allow a clean</span>
+                                <span class="s0"># override, if there's another</span>
+                                <span class="s0"># subclass below then it still tries to use</span>
+                                <span class="s0"># this.  not sure if there is enough</span>
+                                <span class="s0"># information here to add this as a feature</span>
+                                <span class="s0"># later on.</span>
+                                <span class="s1">util.warn(</span>
+                                    <span class="s4">&quot;Attribute '%s' on class %s cannot be &quot;</span>
+                                    <span class="s4">&quot;processed due to &quot;</span>
+                                    <span class="s4">&quot;@declared_attr.cascading; &quot;</span>
+                                    <span class="s4">&quot;skipping&quot; </span><span class="s1">% (name</span><span class="s5">, </span><span class="s1">cls)</span>
+                                <span class="s1">)</span>
+                            <span class="s1">collected_attributes[name] = column_copies[obj] = (</span>
+                                <span class="s1">ret</span>
+                            <span class="s1">) = obj.__get__(obj</span><span class="s5">, </span><span class="s1">cls)</span>
+                            <span class="s1">setattr(cls</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">ret)</span>
+                        <span class="s3">else</span><span class="s1">:</span>
+                            <span class="s3">if </span><span class="s1">is_dataclass_field:</span>
+                                <span class="s0"># access attribute using normal class access</span>
+                                <span class="s0"># first, to see if it's been mapped on a</span>
+                                <span class="s0"># superclass.   note if the dataclasses.field()</span>
+                                <span class="s0"># has &quot;default&quot;, this value can be anything.</span>
+                                <span class="s1">ret = getattr(cls</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+                                <span class="s0"># so, if it's anything that's not ORM</span>
+                                <span class="s0"># mapped, assume we should invoke the</span>
+                                <span class="s0"># declared_attr</span>
+                                <span class="s3">if not </span><span class="s1">isinstance(ret</span><span class="s5">, </span><span class="s1">InspectionAttr):</span>
+                                    <span class="s1">ret = obj.fget()</span>
+                            <span class="s3">else</span><span class="s1">:</span>
+                                <span class="s0"># access attribute using normal class access.</span>
+                                <span class="s0"># if the declared attr already took place</span>
+                                <span class="s0"># on a superclass that is mapped, then</span>
+                                <span class="s0"># this is no longer a declared_attr, it will</span>
+                                <span class="s0"># be the InstrumentedAttribute</span>
+                                <span class="s1">ret = getattr(cls</span><span class="s5">, </span><span class="s1">name)</span>
+
+                            <span class="s0"># correct for proxies created from hybrid_property</span>
+                            <span class="s0"># or similar.  note there is no known case that</span>
+                            <span class="s0"># produces nested proxies, so we are only</span>
+                            <span class="s0"># looking one level deep right now.</span>
+
+                            <span class="s3">if </span><span class="s1">(</span>
+                                <span class="s1">isinstance(ret</span><span class="s5">, </span><span class="s1">InspectionAttr)</span>
+                                <span class="s3">and </span><span class="s1">attr_is_internal_proxy(ret)</span>
+                                <span class="s3">and not </span><span class="s1">isinstance(</span>
+                                    <span class="s1">ret.original_property</span><span class="s5">, </span><span class="s1">MapperProperty</span>
+                                <span class="s1">)</span>
+                            <span class="s1">):</span>
+                                <span class="s1">ret = ret.descriptor</span>
+
+                            <span class="s1">collected_attributes[name] = column_copies[obj] = (</span>
+                                <span class="s1">ret</span>
+                            <span class="s1">)</span>
+
+                        <span class="s3">if </span><span class="s1">(</span>
+                            <span class="s1">isinstance(ret</span><span class="s5">, </span><span class="s1">(Column</span><span class="s5">, </span><span class="s1">MapperProperty))</span>
+                            <span class="s3">and </span><span class="s1">ret.doc </span><span class="s3">is None</span>
+                        <span class="s1">):</span>
+                            <span class="s1">ret.doc = obj.__doc__</span>
+
+                        <span class="s1">self._collect_annotation(</span>
+                            <span class="s1">name</span><span class="s5">,</span>
+                            <span class="s1">obj._collect_return_annotation()</span><span class="s5">,</span>
+                            <span class="s1">base</span><span class="s5">,</span>
+                            <span class="s3">True</span><span class="s5">,</span>
+                            <span class="s1">obj</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+                    <span class="s3">elif </span><span class="s1">_is_mapped_annotation(annotation</span><span class="s5">, </span><span class="s1">cls</span><span class="s5">, </span><span class="s1">base):</span>
+                        <span class="s0"># Mapped annotation without any object.</span>
+                        <span class="s0"># product_column_copies should have handled this.</span>
+                        <span class="s0"># if future support for other MapperProperty,</span>
+                        <span class="s0"># then test if this name is already handled and</span>
+                        <span class="s0"># otherwise proceed to generate.</span>
+                        <span class="s3">if not </span><span class="s1">fixed_table:</span>
+                            <span class="s3">assert </span><span class="s1">(</span>
+                                <span class="s1">name </span><span class="s3">in </span><span class="s1">collected_attributes</span>
+                                <span class="s3">or </span><span class="s1">attribute_is_overridden(name</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+                            <span class="s1">)</span>
+                        <span class="s3">continue</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s0"># here, the attribute is some other kind of</span>
+                        <span class="s0"># property that we assume is not part of the</span>
+                        <span class="s0"># declarative mapping.  however, check for some</span>
+                        <span class="s0"># more common mistakes</span>
+                        <span class="s1">self._warn_for_decl_attributes(base</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">obj)</span>
+                <span class="s3">elif </span><span class="s1">is_dataclass_field </span><span class="s3">and </span><span class="s1">(</span>
+                    <span class="s1">name </span><span class="s3">not in </span><span class="s1">clsdict_view </span><span class="s3">or </span><span class="s1">clsdict_view[name] </span><span class="s3">is not </span><span class="s1">obj</span>
+                <span class="s1">):</span>
+                    <span class="s0"># here, we are definitely looking at the target class</span>
+                    <span class="s0"># and not a superclass.   this is currently a</span>
+                    <span class="s0"># dataclass-only path.  if the name is only</span>
+                    <span class="s0"># a dataclass field and isn't in local cls.__dict__,</span>
+                    <span class="s0"># put the object there.</span>
+                    <span class="s0"># assert that the dataclass-enabled resolver agrees</span>
+                    <span class="s0"># with what we are seeing</span>
+
+                    <span class="s3">assert not </span><span class="s1">attribute_is_overridden(name</span><span class="s5">, </span><span class="s1">obj)</span>
+
+                    <span class="s3">if </span><span class="s1">_is_declarative_props(obj):</span>
+                        <span class="s1">obj = obj.fget()</span>
+
+                    <span class="s1">collected_attributes[name] = obj</span>
+                    <span class="s1">self._collect_annotation(</span>
+                        <span class="s1">name</span><span class="s5">, </span><span class="s1">annotation</span><span class="s5">, </span><span class="s1">base</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s1">obj</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">collected_annotation = self._collect_annotation(</span>
+                        <span class="s1">name</span><span class="s5">, </span><span class="s1">annotation</span><span class="s5">, </span><span class="s1">base</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">obj</span>
+                    <span class="s1">)</span>
+                    <span class="s1">is_mapped = (</span>
+                        <span class="s1">collected_annotation </span><span class="s3">is not None</span>
+                        <span class="s3">and </span><span class="s1">collected_annotation.mapped_container </span><span class="s3">is not None</span>
+                    <span class="s1">)</span>
+                    <span class="s1">generated_obj = (</span>
+                        <span class="s1">collected_annotation.attr_value</span>
+                        <span class="s3">if </span><span class="s1">collected_annotation </span><span class="s3">is not None</span>
+                        <span class="s3">else </span><span class="s1">obj</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None and not </span><span class="s1">fixed_table </span><span class="s3">and </span><span class="s1">is_mapped:</span>
+                        <span class="s1">collected_attributes[name] = (</span>
+                            <span class="s1">generated_obj</span>
+                            <span class="s3">if </span><span class="s1">generated_obj </span><span class="s3">is not None</span>
+                            <span class="s3">else </span><span class="s1">MappedColumn()</span>
+                        <span class="s1">)</span>
+                    <span class="s3">elif </span><span class="s1">name </span><span class="s3">in </span><span class="s1">clsdict_view:</span>
+                        <span class="s1">collected_attributes[name] = obj</span>
+                    <span class="s0"># else if the name is not in the cls.__dict__,</span>
+                    <span class="s0"># don't collect it as an attribute.</span>
+                    <span class="s0"># we will see the annotation only, which is meaningful</span>
+                    <span class="s0"># both for mapping and dataclasses setup</span>
+
+        <span class="s3">if </span><span class="s1">inherited_table_args </span><span class="s3">and not </span><span class="s1">tablename:</span>
+            <span class="s1">table_args = </span><span class="s3">None</span>
+
+        <span class="s1">self.table_args = table_args</span>
+        <span class="s1">self.tablename = tablename</span>
+        <span class="s1">self.mapper_args_fn = mapper_args_fn</span>
+        <span class="s1">self.table_fn = table_fn</span>
+
+    <span class="s3">def </span><span class="s1">_setup_dataclasses_transforms(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">dataclass_setup_arguments = self.dataclass_setup_arguments</span>
+        <span class="s3">if not </span><span class="s1">dataclass_setup_arguments:</span>
+            <span class="s3">return</span>
+
+        <span class="s0"># can't use is_dataclass since it uses hasattr</span>
+        <span class="s3">if </span><span class="s4">&quot;__dataclass_fields__&quot; </span><span class="s3">in </span><span class="s1">self.cls.__dict__:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;Class </span><span class="s7">{</span><span class="s1">self.cls</span><span class="s7">} </span><span class="s4">is already a dataclass; ensure that &quot;</span>
+                <span class="s4">&quot;base classes / decorator styles of establishing dataclasses &quot;</span>
+                <span class="s4">&quot;are not being mixed. &quot;</span>
+                <span class="s4">&quot;This can happen if a class that inherits from &quot;</span>
+                <span class="s4">&quot;'MappedAsDataclass', even indirectly, is been mapped with &quot;</span>
+                <span class="s4">&quot;'@registry.mapped_as_dataclass'&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s0"># can't create a dataclass if __table__ is already there. This would</span>
+        <span class="s0"># fail an assertion when calling _get_arguments_for_make_dataclass:</span>
+        <span class="s0"># assert False, &quot;Mapped[] received without a mapping declaration&quot;</span>
+        <span class="s3">if </span><span class="s4">&quot;__table__&quot; </span><span class="s3">in </span><span class="s1">self.cls.__dict__:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;Class </span><span class="s7">{</span><span class="s1">self.cls</span><span class="s7">} </span><span class="s4">already defines a '__table__'. &quot;</span>
+                <span class="s4">&quot;ORM Annotated Dataclasses do not support a pre-existing &quot;</span>
+                <span class="s4">&quot;'__table__' element&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">warn_for_non_dc_attrs = collections.defaultdict(list)</span>
+
+        <span class="s3">def </span><span class="s1">_allow_dataclass_field(</span>
+            <span class="s1">key: str</span><span class="s5">, </span><span class="s1">originating_class: Type[Any]</span>
+        <span class="s1">) -&gt; bool:</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">originating_class </span><span class="s3">is not </span><span class="s1">self.cls</span>
+                <span class="s3">and </span><span class="s4">&quot;__dataclass_fields__&quot; </span><span class="s3">not in </span><span class="s1">originating_class.__dict__</span>
+            <span class="s1">):</span>
+                <span class="s1">warn_for_non_dc_attrs[originating_class].append(key)</span>
+
+            <span class="s3">return True</span>
+
+        <span class="s1">manager = instrumentation.manager_of_class(self.cls)</span>
+        <span class="s3">assert </span><span class="s1">manager </span><span class="s3">is not None</span>
+
+        <span class="s1">field_list = [</span>
+            <span class="s1">_AttributeOptions._get_arguments_for_make_dataclass(</span>
+                <span class="s1">key</span><span class="s5">,</span>
+                <span class="s1">anno</span><span class="s5">,</span>
+                <span class="s1">mapped_container</span><span class="s5">,</span>
+                <span class="s1">self.collected_attributes.get(key</span><span class="s5">, </span><span class="s1">_NoArg.NO_ARG)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">anno</span><span class="s5">, </span><span class="s1">mapped_container </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s1">(</span>
+                    <span class="s1">key</span><span class="s5">,</span>
+                    <span class="s1">mapped_anno </span><span class="s3">if </span><span class="s1">mapped_anno </span><span class="s3">else </span><span class="s1">raw_anno</span><span class="s5">,</span>
+                    <span class="s1">mapped_container</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">(</span>
+                    <span class="s1">raw_anno</span><span class="s5">,</span>
+                    <span class="s1">mapped_container</span><span class="s5">,</span>
+                    <span class="s1">mapped_anno</span><span class="s5">,</span>
+                    <span class="s1">is_dc</span><span class="s5">,</span>
+                    <span class="s1">attr_value</span><span class="s5">,</span>
+                    <span class="s1">originating_module</span><span class="s5">,</span>
+                    <span class="s1">originating_class</span><span class="s5">,</span>
+                <span class="s1">) </span><span class="s3">in </span><span class="s1">self.collected_annotations.items()</span>
+                <span class="s3">if </span><span class="s1">_allow_dataclass_field(key</span><span class="s5">, </span><span class="s1">originating_class)</span>
+                <span class="s3">and </span><span class="s1">(</span>
+                    <span class="s1">key </span><span class="s3">not in </span><span class="s1">self.collected_attributes</span>
+                    <span class="s0"># issue #9226; check for attributes that we've collected</span>
+                    <span class="s0"># which are already instrumented, which we would assume</span>
+                    <span class="s0"># mean we are in an ORM inheritance mapping and this</span>
+                    <span class="s0"># attribute is already mapped on the superclass.   Under</span>
+                    <span class="s0"># no circumstance should any QueryableAttribute be sent to</span>
+                    <span class="s0"># the dataclass() function; anything that's mapped should</span>
+                    <span class="s0"># be Field and that's it</span>
+                    <span class="s3">or not </span><span class="s1">isinstance(</span>
+                        <span class="s1">self.collected_attributes[key]</span><span class="s5">, </span><span class="s1">QueryableAttribute</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s1">warn_for_non_dc_attrs:</span>
+            <span class="s3">for </span><span class="s1">(</span>
+                <span class="s1">originating_class</span><span class="s5">,</span>
+                <span class="s1">non_dc_attrs</span><span class="s5">,</span>
+            <span class="s1">) </span><span class="s3">in </span><span class="s1">warn_for_non_dc_attrs.items():</span>
+                <span class="s1">util.warn_deprecated(</span>
+                    <span class="s4">f&quot;When transforming </span><span class="s7">{</span><span class="s1">self.cls</span><span class="s7">} </span><span class="s4">to a dataclass, &quot;</span>
+                    <span class="s4">f&quot;attribute(s) &quot;</span>
+                    <span class="s4">f&quot;</span><span class="s7">{</span><span class="s4">', '</span><span class="s1">.join(repr(key) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">non_dc_attrs)</span><span class="s7">} </span><span class="s4">&quot;</span>
+                    <span class="s4">f&quot;originates from superclass &quot;</span>
+                    <span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">originating_class</span><span class="s7">}</span><span class="s4">, which is not a dataclass.  This &quot;</span>
+                    <span class="s4">f&quot;usage is deprecated and will raise an error in &quot;</span>
+                    <span class="s4">f&quot;SQLAlchemy 2.1.  When declaring SQLAlchemy Declarative &quot;</span>
+                    <span class="s4">f&quot;Dataclasses, ensure that all mixin classes and other &quot;</span>
+                    <span class="s4">f&quot;superclasses which include attributes are also a &quot;</span>
+                    <span class="s4">f&quot;subclass of MappedAsDataclass.&quot;</span><span class="s5">,</span>
+                    <span class="s4">&quot;2.0&quot;</span><span class="s5">,</span>
+                    <span class="s1">code=</span><span class="s4">&quot;dcmx&quot;</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+        <span class="s1">annotations = {}</span>
+        <span class="s1">defaults = {}</span>
+        <span class="s3">for </span><span class="s1">item </span><span class="s3">in </span><span class="s1">field_list:</span>
+            <span class="s3">if </span><span class="s1">len(item) == </span><span class="s6">2</span><span class="s1">:</span>
+                <span class="s1">name</span><span class="s5">, </span><span class="s1">tp = item</span>
+            <span class="s3">elif </span><span class="s1">len(item) == </span><span class="s6">3</span><span class="s1">:</span>
+                <span class="s1">name</span><span class="s5">, </span><span class="s1">tp</span><span class="s5">, </span><span class="s1">spec = item</span>
+                <span class="s1">defaults[name] = spec</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">assert False</span>
+            <span class="s1">annotations[name] = tp</span>
+
+        <span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">defaults.items():</span>
+            <span class="s1">setattr(self.cls</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v)</span>
+
+        <span class="s1">self._apply_dataclasses_to_any_class(</span>
+            <span class="s1">dataclass_setup_arguments</span><span class="s5">, </span><span class="s1">self.cls</span><span class="s5">, </span><span class="s1">annotations</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_update_annotations_for_non_mapped_class(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">klass: Type[_O]</span>
+    <span class="s1">) -&gt; Mapping[str</span><span class="s5">, </span><span class="s1">_AnnotationScanType]:</span>
+        <span class="s1">cls_annotations = util.get_annotations(klass)</span>
+
+        <span class="s1">new_anno = {}</span>
+        <span class="s3">for </span><span class="s1">name</span><span class="s5">, </span><span class="s1">annotation </span><span class="s3">in </span><span class="s1">cls_annotations.items():</span>
+            <span class="s3">if </span><span class="s1">_is_mapped_annotation(annotation</span><span class="s5">, </span><span class="s1">klass</span><span class="s5">, </span><span class="s1">klass):</span>
+                <span class="s1">extracted = _extract_mapped_subtype(</span>
+                    <span class="s1">annotation</span><span class="s5">,</span>
+                    <span class="s1">klass</span><span class="s5">,</span>
+                    <span class="s1">klass.__module__</span><span class="s5">,</span>
+                    <span class="s1">name</span><span class="s5">,</span>
+                    <span class="s1">type(</span><span class="s3">None</span><span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">required=</span><span class="s3">False</span><span class="s5">,</span>
+                    <span class="s1">is_dataclass_field=</span><span class="s3">False</span><span class="s5">,</span>
+                    <span class="s1">expect_mapped=</span><span class="s3">False</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">extracted:</span>
+                    <span class="s1">inner</span><span class="s5">, </span><span class="s1">_ = extracted</span>
+                    <span class="s1">new_anno[name] = inner</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">new_anno[name] = annotation</span>
+        <span class="s3">return </span><span class="s1">new_anno</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_apply_dataclasses_to_any_class(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">dataclass_setup_arguments: _DataclassArguments</span><span class="s5">,</span>
+        <span class="s1">klass: Type[_O]</span><span class="s5">,</span>
+        <span class="s1">use_annotations: Mapping[str</span><span class="s5">, </span><span class="s1">_AnnotationScanType]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">cls._assert_dc_arguments(dataclass_setup_arguments)</span>
+
+        <span class="s1">dataclass_callable = dataclass_setup_arguments[</span><span class="s4">&quot;dataclass_callable&quot;</span><span class="s1">]</span>
+        <span class="s3">if </span><span class="s1">dataclass_callable </span><span class="s3">is </span><span class="s1">_NoArg.NO_ARG:</span>
+            <span class="s1">dataclass_callable = dataclasses.dataclass</span>
+
+        <span class="s1">restored: Optional[Any]</span>
+
+        <span class="s3">if </span><span class="s1">use_annotations:</span>
+            <span class="s0"># apply constructed annotations that should look &quot;normal&quot; to a</span>
+            <span class="s0"># dataclasses callable, based on the fields present.  This</span>
+            <span class="s0"># means remove the Mapped[] container and ensure all Field</span>
+            <span class="s0"># entries have an annotation</span>
+            <span class="s1">restored = getattr(klass</span><span class="s5">, </span><span class="s4">&quot;__annotations__&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s1">klass.__annotations__ = cast(</span><span class="s4">&quot;Dict[str, Any]&quot;</span><span class="s5">, </span><span class="s1">use_annotations)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">restored = </span><span class="s3">None</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">dataclass_callable(</span>
+                <span class="s1">klass</span><span class="s5">,</span>
+                <span class="s1">**{</span>
+                    <span class="s1">k: v</span>
+                    <span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">dataclass_setup_arguments.items()</span>
+                    <span class="s3">if </span><span class="s1">v </span><span class="s3">is not </span><span class="s1">_NoArg.NO_ARG </span><span class="s3">and </span><span class="s1">k != </span><span class="s4">&quot;dataclass_callable&quot;</span>
+                <span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">(TypeError</span><span class="s5">, </span><span class="s1">ValueError) </span><span class="s3">as </span><span class="s1">ex:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;Python dataclasses error encountered when creating &quot;</span>
+                <span class="s4">f&quot;dataclass for </span><span class="s7">{</span><span class="s1">klass.__name__</span><span class="s7">!r}</span><span class="s4">: &quot;</span>
+                <span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">ex</span><span class="s7">!r}</span><span class="s4">. Please refer to Python dataclasses &quot;</span>
+                <span class="s4">&quot;documentation for additional information.&quot;</span><span class="s5">,</span>
+                <span class="s1">code=</span><span class="s4">&quot;dcte&quot;</span><span class="s5">,</span>
+            <span class="s1">) </span><span class="s3">from </span><span class="s1">ex</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s0"># restore original annotations outside of the dataclasses</span>
+            <span class="s0"># process; for mixins and __abstract__ superclasses, SQLAlchemy</span>
+            <span class="s0"># Declarative will need to see the Mapped[] container inside the</span>
+            <span class="s0"># annotations in order to map subclasses</span>
+            <span class="s3">if </span><span class="s1">use_annotations:</span>
+                <span class="s3">if </span><span class="s1">restored </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s3">del </span><span class="s1">klass.__annotations__</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">klass.__annotations__ = restored</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_assert_dc_arguments(cls</span><span class="s5">, </span><span class="s1">arguments: _DataclassArguments) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">allowed = {</span>
+            <span class="s4">&quot;init&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;repr&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;order&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;eq&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;unsafe_hash&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;kw_only&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;match_args&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;dataclass_callable&quot;</span><span class="s5">,</span>
+        <span class="s1">}</span>
+        <span class="s1">disallowed_args = set(arguments).difference(allowed)</span>
+        <span class="s3">if </span><span class="s1">disallowed_args:</span>
+            <span class="s1">msg = </span><span class="s4">&quot;, &quot;</span><span class="s1">.join(</span><span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">arg</span><span class="s7">!r}</span><span class="s4">&quot; </span><span class="s3">for </span><span class="s1">arg </span><span class="s3">in </span><span class="s1">sorted(disallowed_args))</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">f&quot;Dataclass argument(s) </span><span class="s7">{</span><span class="s1">msg</span><span class="s7">} </span><span class="s4">are not accepted&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_collect_annotation(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">name: str</span><span class="s5">,</span>
+        <span class="s1">raw_annotation: _AnnotationScanType</span><span class="s5">,</span>
+        <span class="s1">originating_class: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">expect_mapped: Optional[bool]</span><span class="s5">,</span>
+        <span class="s1">attr_value: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Optional[_CollectedAnnotation]:</span>
+        <span class="s3">if </span><span class="s1">name </span><span class="s3">in </span><span class="s1">self.collected_annotations:</span>
+            <span class="s3">return </span><span class="s1">self.collected_annotations[name]</span>
+
+        <span class="s3">if </span><span class="s1">raw_annotation </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">is_dataclass = self.is_dataclass_prior_to_mapping</span>
+        <span class="s1">allow_unmapped = self.allow_unmapped_annotations</span>
+
+        <span class="s3">if </span><span class="s1">expect_mapped </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">is_dataclass_field = isinstance(attr_value</span><span class="s5">, </span><span class="s1">dataclasses.Field)</span>
+            <span class="s1">expect_mapped = (</span>
+                <span class="s3">not </span><span class="s1">is_dataclass_field</span>
+                <span class="s3">and not </span><span class="s1">allow_unmapped</span>
+                <span class="s3">and </span><span class="s1">(</span>
+                    <span class="s1">attr_value </span><span class="s3">is None</span>
+                    <span class="s3">or </span><span class="s1">isinstance(attr_value</span><span class="s5">, </span><span class="s1">_MappedAttribute)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">is_dataclass_field = </span><span class="s3">False</span>
+
+        <span class="s1">is_dataclass_field = </span><span class="s3">False</span>
+        <span class="s1">extracted = _extract_mapped_subtype(</span>
+            <span class="s1">raw_annotation</span><span class="s5">,</span>
+            <span class="s1">self.cls</span><span class="s5">,</span>
+            <span class="s1">originating_class.__module__</span><span class="s5">,</span>
+            <span class="s1">name</span><span class="s5">,</span>
+            <span class="s1">type(attr_value)</span><span class="s5">,</span>
+            <span class="s1">required=</span><span class="s3">False</span><span class="s5">,</span>
+            <span class="s1">is_dataclass_field=is_dataclass_field</span><span class="s5">,</span>
+            <span class="s1">expect_mapped=expect_mapped</span>
+            <span class="s3">and not </span><span class="s1">is_dataclass</span><span class="s5">,  </span><span class="s0"># self.allow_dataclass_fields,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">extracted </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s0"># ClassVar can come out here</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">extracted_mapped_annotation</span><span class="s5">, </span><span class="s1">mapped_container = extracted</span>
+
+        <span class="s3">if </span><span class="s1">attr_value </span><span class="s3">is None and not </span><span class="s1">is_literal(extracted_mapped_annotation):</span>
+            <span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">typing_get_args(extracted_mapped_annotation):</span>
+                <span class="s3">if </span><span class="s1">isinstance(elem</span><span class="s5">, </span><span class="s1">str) </span><span class="s3">or </span><span class="s1">is_fwd_ref(</span>
+                    <span class="s1">elem</span><span class="s5">, </span><span class="s1">check_generic=</span><span class="s3">True</span>
+                <span class="s1">):</span>
+                    <span class="s1">elem = de_stringify_annotation(</span>
+                        <span class="s1">self.cls</span><span class="s5">,</span>
+                        <span class="s1">elem</span><span class="s5">,</span>
+                        <span class="s1">originating_class.__module__</span><span class="s5">,</span>
+                        <span class="s1">include_generic=</span><span class="s3">True</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s0"># look in Annotated[...] for an ORM construct,</span>
+                <span class="s0"># such as Annotated[int, mapped_column(primary_key=True)]</span>
+                <span class="s3">if </span><span class="s1">isinstance(elem</span><span class="s5">, </span><span class="s1">_IntrospectsAnnotations):</span>
+                    <span class="s1">attr_value = elem.found_in_pep593_annotated()</span>
+
+        <span class="s1">self.collected_annotations[name] = ca = _CollectedAnnotation(</span>
+            <span class="s1">raw_annotation</span><span class="s5">,</span>
+            <span class="s1">mapped_container</span><span class="s5">,</span>
+            <span class="s1">extracted_mapped_annotation</span><span class="s5">,</span>
+            <span class="s1">is_dataclass</span><span class="s5">,</span>
+            <span class="s1">attr_value</span><span class="s5">,</span>
+            <span class="s1">originating_class.__module__</span><span class="s5">,</span>
+            <span class="s1">originating_class</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">ca</span>
+
+    <span class="s3">def </span><span class="s1">_warn_for_decl_attributes(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">cls: Type[Any]</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">c: Any</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">isinstance(c</span><span class="s5">, </span><span class="s1">expression.ColumnElement):</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">f&quot;Attribute '</span><span class="s7">{</span><span class="s1">key</span><span class="s7">}</span><span class="s4">' on class </span><span class="s7">{</span><span class="s1">cls</span><span class="s7">} </span><span class="s4">appears to &quot;</span>
+                <span class="s4">&quot;be a non-schema SQLAlchemy expression &quot;</span>
+                <span class="s4">&quot;object; this won't be part of the declarative mapping. &quot;</span>
+                <span class="s4">&quot;To map arbitrary expressions, use ``column_property()`` &quot;</span>
+                <span class="s4">&quot;or a similar function such as ``deferred()``, &quot;</span>
+                <span class="s4">&quot;``query_expression()`` etc. &quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_produce_column_copies(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attributes_for_class: Callable[</span>
+            <span class="s1">[]</span><span class="s5">, </span><span class="s1">Iterable[Tuple[str</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">bool]]</span>
+        <span class="s1">]</span><span class="s5">,</span>
+        <span class="s1">attribute_is_overridden: Callable[[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">bool]</span><span class="s5">,</span>
+        <span class="s1">fixed_table: bool</span><span class="s5">,</span>
+        <span class="s1">originating_class: Type[Any]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Dict[str</span><span class="s5">, </span><span class="s1">Union[Column[Any]</span><span class="s5">, </span><span class="s1">MappedColumn[Any]]]:</span>
+        <span class="s1">cls = self.cls</span>
+        <span class="s1">dict_ = self.clsdict_view</span>
+        <span class="s1">locally_collected_attributes = {}</span>
+        <span class="s1">column_copies = self.column_copies</span>
+        <span class="s0"># copy mixin columns to the mapped class</span>
+
+        <span class="s3">for </span><span class="s1">name</span><span class="s5">, </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">annotation</span><span class="s5">, </span><span class="s1">is_dataclass </span><span class="s3">in </span><span class="s1">attributes_for_class():</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s3">not </span><span class="s1">fixed_table</span>
+                <span class="s3">and </span><span class="s1">obj </span><span class="s3">is None</span>
+                <span class="s3">and </span><span class="s1">_is_mapped_annotation(annotation</span><span class="s5">, </span><span class="s1">cls</span><span class="s5">, </span><span class="s1">originating_class)</span>
+            <span class="s1">):</span>
+                <span class="s0"># obj is None means this is the annotation only path</span>
+
+                <span class="s3">if </span><span class="s1">attribute_is_overridden(name</span><span class="s5">, </span><span class="s1">obj):</span>
+                    <span class="s0"># perform same &quot;overridden&quot; check as we do for</span>
+                    <span class="s0"># Column/MappedColumn, this is how a mixin col is not</span>
+                    <span class="s0"># applied to an inherited subclass that does not have</span>
+                    <span class="s0"># the mixin.   the anno-only path added here for</span>
+                    <span class="s0"># #9564</span>
+                    <span class="s3">continue</span>
+
+                <span class="s1">collected_annotation = self._collect_annotation(</span>
+                    <span class="s1">name</span><span class="s5">, </span><span class="s1">annotation</span><span class="s5">, </span><span class="s1">originating_class</span><span class="s5">, </span><span class="s3">True</span><span class="s5">, </span><span class="s1">obj</span>
+                <span class="s1">)</span>
+                <span class="s1">obj = (</span>
+                    <span class="s1">collected_annotation.attr_value</span>
+                    <span class="s3">if </span><span class="s1">collected_annotation </span><span class="s3">is not None</span>
+                    <span class="s3">else </span><span class="s1">obj</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s1">obj = MappedColumn()</span>
+
+                <span class="s1">locally_collected_attributes[name] = obj</span>
+                <span class="s1">setattr(cls</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">obj)</span>
+
+            <span class="s3">elif </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">(Column</span><span class="s5">, </span><span class="s1">MappedColumn)):</span>
+                <span class="s3">if </span><span class="s1">attribute_is_overridden(name</span><span class="s5">, </span><span class="s1">obj):</span>
+                    <span class="s0"># if column has been overridden</span>
+                    <span class="s0"># (like by the InstrumentedAttribute of the</span>
+                    <span class="s0"># superclass), skip.  don't collect the annotation</span>
+                    <span class="s0"># either (issue #8718)</span>
+                    <span class="s3">continue</span>
+
+                <span class="s1">collected_annotation = self._collect_annotation(</span>
+                    <span class="s1">name</span><span class="s5">, </span><span class="s1">annotation</span><span class="s5">, </span><span class="s1">originating_class</span><span class="s5">, </span><span class="s3">True</span><span class="s5">, </span><span class="s1">obj</span>
+                <span class="s1">)</span>
+                <span class="s1">obj = (</span>
+                    <span class="s1">collected_annotation.attr_value</span>
+                    <span class="s3">if </span><span class="s1">collected_annotation </span><span class="s3">is not None</span>
+                    <span class="s3">else </span><span class="s1">obj</span>
+                <span class="s1">)</span>
+
+                <span class="s3">if </span><span class="s1">name </span><span class="s3">not in </span><span class="s1">dict_ </span><span class="s3">and not </span><span class="s1">(</span>
+                    <span class="s4">&quot;__table__&quot; </span><span class="s3">in </span><span class="s1">dict_</span>
+                    <span class="s3">and </span><span class="s1">(getattr(obj</span><span class="s5">, </span><span class="s4">&quot;name&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">) </span><span class="s3">or </span><span class="s1">name)</span>
+                    <span class="s3">in </span><span class="s1">dict_[</span><span class="s4">&quot;__table__&quot;</span><span class="s1">].c</span>
+                <span class="s1">):</span>
+                    <span class="s3">if </span><span class="s1">obj.foreign_keys:</span>
+                        <span class="s3">for </span><span class="s1">fk </span><span class="s3">in </span><span class="s1">obj.foreign_keys:</span>
+                            <span class="s3">if </span><span class="s1">(</span>
+                                <span class="s1">fk._table_column </span><span class="s3">is not None</span>
+                                <span class="s3">and </span><span class="s1">fk._table_column.table </span><span class="s3">is None</span>
+                            <span class="s1">):</span>
+                                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                                    <span class="s4">&quot;Columns with foreign keys to &quot;</span>
+                                    <span class="s4">&quot;non-table-bound &quot;</span>
+                                    <span class="s4">&quot;columns must be declared as &quot;</span>
+                                    <span class="s4">&quot;@declared_attr callables &quot;</span>
+                                    <span class="s4">&quot;on declarative mixin classes.  &quot;</span>
+                                    <span class="s4">&quot;For dataclass &quot;</span>
+                                    <span class="s4">&quot;field() objects, use a lambda:.&quot;</span>
+                                <span class="s1">)</span>
+
+                    <span class="s1">column_copies[obj] = copy_ = obj._copy()</span>
+
+                    <span class="s1">locally_collected_attributes[name] = copy_</span>
+                    <span class="s1">setattr(cls</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">copy_)</span>
+
+        <span class="s3">return </span><span class="s1">locally_collected_attributes</span>
+
+    <span class="s3">def </span><span class="s1">_extract_mappable_attributes(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">cls = self.cls</span>
+        <span class="s1">collected_attributes = self.collected_attributes</span>
+
+        <span class="s1">our_stuff = self.properties</span>
+
+        <span class="s1">_include_dunders = self._include_dunders</span>
+
+        <span class="s1">late_mapped = _get_immediate_cls_attr(</span>
+            <span class="s1">cls</span><span class="s5">, </span><span class="s4">&quot;_sa_decl_prepare_nocascade&quot;</span><span class="s5">, </span><span class="s1">strict=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+
+        <span class="s1">allow_unmapped_annotations = self.allow_unmapped_annotations</span>
+        <span class="s1">expect_annotations_wo_mapped = (</span>
+            <span class="s1">allow_unmapped_annotations </span><span class="s3">or </span><span class="s1">self.is_dataclass_prior_to_mapping</span>
+        <span class="s1">)</span>
+
+        <span class="s1">look_for_dataclass_things = bool(self.dataclass_setup_arguments)</span>
+
+        <span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">list(collected_attributes):</span>
+            <span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">_include_dunders:</span>
+                <span class="s3">continue</span>
+
+            <span class="s1">value = collected_attributes[k]</span>
+
+            <span class="s3">if </span><span class="s1">_is_declarative_props(value):</span>
+                <span class="s0"># @declared_attr in collected_attributes only occurs here for a</span>
+                <span class="s0"># @declared_attr that's directly on the mapped class;</span>
+                <span class="s0"># for a mixin, these have already been evaluated</span>
+                <span class="s3">if </span><span class="s1">value._cascading:</span>
+                    <span class="s1">util.warn(</span>
+                        <span class="s4">&quot;Use of @declared_attr.cascading only applies to &quot;</span>
+                        <span class="s4">&quot;Declarative 'mixin' and 'abstract' classes.  &quot;</span>
+                        <span class="s4">&quot;Currently, this flag is ignored on mapped class &quot;</span>
+                        <span class="s4">&quot;%s&quot; </span><span class="s1">% self.cls</span>
+                    <span class="s1">)</span>
+
+                <span class="s1">value = getattr(cls</span><span class="s5">, </span><span class="s1">k)</span>
+
+            <span class="s3">elif </span><span class="s1">(</span>
+                <span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">QueryableAttribute)</span>
+                <span class="s3">and </span><span class="s1">value.class_ </span><span class="s3">is not </span><span class="s1">cls</span>
+                <span class="s3">and </span><span class="s1">value.key != k</span>
+            <span class="s1">):</span>
+                <span class="s0"># detect a QueryableAttribute that's already mapped being</span>
+                <span class="s0"># assigned elsewhere in userland, turn into a synonym()</span>
+                <span class="s1">value = SynonymProperty(value.key)</span>
+                <span class="s1">setattr(cls</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">value)</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">tuple)</span>
+                <span class="s3">and </span><span class="s1">len(value) == </span><span class="s6">1</span>
+                <span class="s3">and </span><span class="s1">isinstance(value[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">(Column</span><span class="s5">, </span><span class="s1">_MappedAttribute))</span>
+            <span class="s1">):</span>
+                <span class="s1">util.warn(</span>
+                    <span class="s4">&quot;Ignoring declarative-like tuple value of attribute &quot;</span>
+                    <span class="s4">&quot;'%s': possibly a copy-and-paste error with a comma &quot;</span>
+                    <span class="s4">&quot;accidentally placed at the end of the line?&quot; </span><span class="s1">% k</span>
+                <span class="s1">)</span>
+                <span class="s3">continue</span>
+            <span class="s3">elif </span><span class="s1">look_for_dataclass_things </span><span class="s3">and </span><span class="s1">isinstance(</span>
+                <span class="s1">value</span><span class="s5">, </span><span class="s1">dataclasses.Field</span>
+            <span class="s1">):</span>
+                <span class="s0"># we collected a dataclass Field; dataclasses would have</span>
+                <span class="s0"># set up the correct state on the class</span>
+                <span class="s3">continue</span>
+            <span class="s3">elif not </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">(Column</span><span class="s5">, </span><span class="s1">_DCAttributeOptions)):</span>
+                <span class="s0"># using @declared_attr for some object that</span>
+                <span class="s0"># isn't Column/MapperProperty/_DCAttributeOptions; remove</span>
+                <span class="s0"># from the clsdict_view</span>
+                <span class="s0"># and place the evaluated value onto the class.</span>
+                <span class="s1">collected_attributes.pop(k)</span>
+                <span class="s1">self._warn_for_decl_attributes(cls</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">value)</span>
+                <span class="s3">if not </span><span class="s1">late_mapped:</span>
+                    <span class="s1">setattr(cls</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">value)</span>
+                <span class="s3">continue</span>
+            <span class="s0"># we expect to see the name 'metadata' in some valid cases;</span>
+            <span class="s0"># however at this point we see it's assigned to something trying</span>
+            <span class="s0"># to be mapped, so raise for that.</span>
+            <span class="s0"># TODO: should &quot;registry&quot; here be also?   might be too late</span>
+            <span class="s0"># to change that now (2.0 betas)</span>
+            <span class="s3">elif </span><span class="s1">k </span><span class="s3">in </span><span class="s1">(</span><span class="s4">&quot;metadata&quot;</span><span class="s5">,</span><span class="s1">):</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s4">f&quot;Attribute name '</span><span class="s7">{</span><span class="s1">k</span><span class="s7">}</span><span class="s4">' is reserved when using the &quot;</span>
+                    <span class="s4">&quot;Declarative API.&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">Column):</span>
+                <span class="s1">_undefer_column_name(</span>
+                    <span class="s1">k</span><span class="s5">, </span><span class="s1">self.column_copies.get(value</span><span class="s5">, </span><span class="s1">value)  </span><span class="s0"># type: ignore</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">_IntrospectsAnnotations):</span>
+                    <span class="s1">(</span>
+                        <span class="s1">annotation</span><span class="s5">,</span>
+                        <span class="s1">mapped_container</span><span class="s5">,</span>
+                        <span class="s1">extracted_mapped_annotation</span><span class="s5">,</span>
+                        <span class="s1">is_dataclass</span><span class="s5">,</span>
+                        <span class="s1">attr_value</span><span class="s5">,</span>
+                        <span class="s1">originating_module</span><span class="s5">,</span>
+                        <span class="s1">originating_class</span><span class="s5">,</span>
+                    <span class="s1">) = self.collected_annotations.get(</span>
+                        <span class="s1">k</span><span class="s5">, </span><span class="s1">(</span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">False</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+                    <span class="s1">)</span>
+
+                    <span class="s0"># issue #8692 - don't do any annotation interpretation if</span>
+                    <span class="s0"># an annotation were present and a container such as</span>
+                    <span class="s0"># Mapped[] etc. were not used.  If annotation is None,</span>
+                    <span class="s0"># do declarative_scan so that the property can raise</span>
+                    <span class="s0"># for required</span>
+                    <span class="s3">if </span><span class="s1">(</span>
+                        <span class="s1">mapped_container </span><span class="s3">is not None</span>
+                        <span class="s3">or </span><span class="s1">annotation </span><span class="s3">is None</span>
+                        <span class="s0"># issue #10516: need to do declarative_scan even with</span>
+                        <span class="s0"># a non-Mapped annotation if we are doing</span>
+                        <span class="s0"># __allow_unmapped__, for things like col.name</span>
+                        <span class="s0"># assignment</span>
+                        <span class="s3">or </span><span class="s1">allow_unmapped_annotations</span>
+                    <span class="s1">):</span>
+                        <span class="s3">try</span><span class="s1">:</span>
+                            <span class="s1">value.declarative_scan(</span>
+                                <span class="s1">self</span><span class="s5">,</span>
+                                <span class="s1">self.registry</span><span class="s5">,</span>
+                                <span class="s1">cls</span><span class="s5">,</span>
+                                <span class="s1">originating_module</span><span class="s5">,</span>
+                                <span class="s1">k</span><span class="s5">,</span>
+                                <span class="s1">mapped_container</span><span class="s5">,</span>
+                                <span class="s1">annotation</span><span class="s5">,</span>
+                                <span class="s1">extracted_mapped_annotation</span><span class="s5">,</span>
+                                <span class="s1">is_dataclass</span><span class="s5">,</span>
+                            <span class="s1">)</span>
+                        <span class="s3">except </span><span class="s1">NameError </span><span class="s3">as </span><span class="s1">ne:</span>
+                            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                                <span class="s4">f&quot;Could not resolve all types within mapped &quot;</span>
+                                <span class="s4">f'annotation: &quot;</span><span class="s7">{</span><span class="s1">annotation</span><span class="s7">}</span><span class="s4">&quot;.  Ensure all '</span>
+                                <span class="s4">f&quot;types are written correctly and are &quot;</span>
+                                <span class="s4">f&quot;imported within the module in use.&quot;</span>
+                            <span class="s1">) </span><span class="s3">from </span><span class="s1">ne</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s0"># assert that we were expecting annotations</span>
+                        <span class="s0"># without Mapped[] were going to be passed.</span>
+                        <span class="s0"># otherwise an error should have been raised</span>
+                        <span class="s0"># by util._extract_mapped_subtype before we got here.</span>
+                        <span class="s3">assert </span><span class="s1">expect_annotations_wo_mapped</span>
+
+                <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">_DCAttributeOptions):</span>
+                    <span class="s3">if </span><span class="s1">(</span>
+                        <span class="s1">value._has_dataclass_arguments</span>
+                        <span class="s3">and not </span><span class="s1">look_for_dataclass_things</span>
+                    <span class="s1">):</span>
+                        <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">MapperProperty):</span>
+                            <span class="s1">argnames = [</span>
+                                <span class="s4">&quot;init&quot;</span><span class="s5">,</span>
+                                <span class="s4">&quot;default_factory&quot;</span><span class="s5">,</span>
+                                <span class="s4">&quot;repr&quot;</span><span class="s5">,</span>
+                                <span class="s4">&quot;default&quot;</span><span class="s5">,</span>
+                            <span class="s1">]</span>
+                        <span class="s3">else</span><span class="s1">:</span>
+                            <span class="s1">argnames = [</span><span class="s4">&quot;init&quot;</span><span class="s5">, </span><span class="s4">&quot;default_factory&quot;</span><span class="s5">, </span><span class="s4">&quot;repr&quot;</span><span class="s1">]</span>
+
+                        <span class="s1">args = {</span>
+                            <span class="s1">a</span>
+                            <span class="s3">for </span><span class="s1">a </span><span class="s3">in </span><span class="s1">argnames</span>
+                            <span class="s3">if </span><span class="s1">getattr(</span>
+                                <span class="s1">value._attribute_options</span><span class="s5">, </span><span class="s4">f&quot;dataclasses_</span><span class="s7">{</span><span class="s1">a</span><span class="s7">}</span><span class="s4">&quot;</span>
+                            <span class="s1">)</span>
+                            <span class="s3">is not </span><span class="s1">_NoArg.NO_ARG</span>
+                        <span class="s1">}</span>
+
+                        <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                            <span class="s4">f&quot;Attribute '</span><span class="s7">{</span><span class="s1">k</span><span class="s7">}</span><span class="s4">' on class </span><span class="s7">{</span><span class="s1">cls</span><span class="s7">} </span><span class="s4">includes &quot;</span>
+                            <span class="s4">f&quot;dataclasses argument(s): &quot;</span>
+                            <span class="s4">f&quot;</span><span class="s7">{</span><span class="s4">', '</span><span class="s1">.join(sorted(repr(a) </span><span class="s3">for </span><span class="s1">a </span><span class="s3">in </span><span class="s1">args))</span><span class="s7">} </span><span class="s4">but &quot;</span>
+                            <span class="s4">f&quot;class does not specify &quot;</span>
+                            <span class="s4">&quot;SQLAlchemy native dataclass configuration.&quot;</span>
+                        <span class="s1">)</span>
+
+                    <span class="s3">if not </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">(MapperProperty</span><span class="s5">, </span><span class="s1">_MapsColumns)):</span>
+                        <span class="s0"># filter for _DCAttributeOptions objects that aren't</span>
+                        <span class="s0"># MapperProperty / mapped_column().  Currently this</span>
+                        <span class="s0"># includes AssociationProxy.   pop it from the things</span>
+                        <span class="s0"># we're going to map and set it up as a descriptor</span>
+                        <span class="s0"># on the class.</span>
+                        <span class="s1">collected_attributes.pop(k)</span>
+
+                        <span class="s0"># Assoc Prox (or other descriptor object that may</span>
+                        <span class="s0"># use _DCAttributeOptions) is usually here, except if</span>
+                        <span class="s0"># 1. we're a</span>
+                        <span class="s0"># dataclass, dataclasses would have removed the</span>
+                        <span class="s0"># attr here or 2. assoc proxy is coming from a</span>
+                        <span class="s0"># superclass, we want it to be direct here so it</span>
+                        <span class="s0"># tracks state or 3. assoc prox comes from</span>
+                        <span class="s0"># declared_attr, uncommon case</span>
+                        <span class="s1">setattr(cls</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">value)</span>
+                        <span class="s3">continue</span>
+
+            <span class="s1">our_stuff[k] = value</span>
+
+    <span class="s3">def </span><span class="s1">_extract_declared_columns(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">our_stuff = self.properties</span>
+
+        <span class="s0"># extract columns from the class dict</span>
+        <span class="s1">declared_columns = self.declared_columns</span>
+        <span class="s1">column_ordering = self.column_ordering</span>
+        <span class="s1">name_to_prop_key = collections.defaultdict(set)</span>
+
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">c </span><span class="s3">in </span><span class="s1">list(our_stuff.items()):</span>
+            <span class="s3">if </span><span class="s1">isinstance(c</span><span class="s5">, </span><span class="s1">_MapsColumns):</span>
+                <span class="s1">mp_to_assign = c.mapper_property_to_assign</span>
+                <span class="s3">if </span><span class="s1">mp_to_assign:</span>
+                    <span class="s1">our_stuff[key] = mp_to_assign</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s0"># if no mapper property to assign, this currently means</span>
+                    <span class="s0"># this is a MappedColumn that will produce a Column for us</span>
+                    <span class="s3">del </span><span class="s1">our_stuff[key]</span>
+
+                <span class="s3">for </span><span class="s1">col</span><span class="s5">, </span><span class="s1">sort_order </span><span class="s3">in </span><span class="s1">c.columns_to_assign:</span>
+                    <span class="s3">if not </span><span class="s1">isinstance(c</span><span class="s5">, </span><span class="s1">CompositeProperty):</span>
+                        <span class="s1">name_to_prop_key[col.name].add(key)</span>
+                    <span class="s1">declared_columns.add(col)</span>
+
+                    <span class="s0"># we would assert this, however we want the below</span>
+                    <span class="s0"># warning to take effect instead.  See #9630</span>
+                    <span class="s0"># assert col not in column_ordering</span>
+
+                    <span class="s1">column_ordering[col] = sort_order</span>
+
+                    <span class="s0"># if this is a MappedColumn and the attribute key we</span>
+                    <span class="s0"># have is not what the column has for its key, map the</span>
+                    <span class="s0"># Column explicitly under the attribute key name.</span>
+                    <span class="s0"># otherwise, Mapper will map it under the column key.</span>
+                    <span class="s3">if </span><span class="s1">mp_to_assign </span><span class="s3">is None and </span><span class="s1">key != col.key:</span>
+                        <span class="s1">our_stuff[key] = col</span>
+            <span class="s3">elif </span><span class="s1">isinstance(c</span><span class="s5">, </span><span class="s1">Column):</span>
+                <span class="s0"># undefer previously occurred here, and now occurs earlier.</span>
+                <span class="s0"># ensure every column we get here has been named</span>
+                <span class="s3">assert </span><span class="s1">c.name </span><span class="s3">is not None</span>
+                <span class="s1">name_to_prop_key[c.name].add(key)</span>
+                <span class="s1">declared_columns.add(c)</span>
+                <span class="s0"># if the column is the same name as the key,</span>
+                <span class="s0"># remove it from the explicit properties dict.</span>
+                <span class="s0"># the normal rules for assigning column-based properties</span>
+                <span class="s0"># will take over, including precedence of columns</span>
+                <span class="s0"># in multi-column ColumnProperties.</span>
+                <span class="s3">if </span><span class="s1">key == c.key:</span>
+                    <span class="s3">del </span><span class="s1">our_stuff[key]</span>
+
+        <span class="s3">for </span><span class="s1">name</span><span class="s5">, </span><span class="s1">keys </span><span class="s3">in </span><span class="s1">name_to_prop_key.items():</span>
+            <span class="s3">if </span><span class="s1">len(keys) &gt; </span><span class="s6">1</span><span class="s1">:</span>
+                <span class="s1">util.warn(</span>
+                    <span class="s4">&quot;On class %r, Column object %r named &quot;</span>
+                    <span class="s4">&quot;directly multiple times, &quot;</span>
+                    <span class="s4">&quot;only one will be used: %s. &quot;</span>
+                    <span class="s4">&quot;Consider using orm.synonym instead&quot;</span>
+                    <span class="s1">% (self.classname</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">(</span><span class="s4">&quot;, &quot;</span><span class="s1">.join(sorted(keys))))</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_setup_table(self</span><span class="s5">, </span><span class="s1">table: Optional[FromClause] = </span><span class="s3">None</span><span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">cls = self.cls</span>
+        <span class="s1">cls_as_Decl = cast(</span><span class="s4">&quot;MappedClassProtocol[Any]&quot;</span><span class="s5">, </span><span class="s1">cls)</span>
+
+        <span class="s1">tablename = self.tablename</span>
+        <span class="s1">table_args = self.table_args</span>
+        <span class="s1">clsdict_view = self.clsdict_view</span>
+        <span class="s1">declared_columns = self.declared_columns</span>
+        <span class="s1">column_ordering = self.column_ordering</span>
+
+        <span class="s1">manager = attributes.manager_of_class(cls)</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">self.table_fn </span><span class="s3">is None</span>
+            <span class="s3">and </span><span class="s4">&quot;__table__&quot; </span><span class="s3">not in </span><span class="s1">clsdict_view</span>
+            <span class="s3">and </span><span class="s1">table </span><span class="s3">is None</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">hasattr(cls</span><span class="s5">, </span><span class="s4">&quot;__table_cls__&quot;</span><span class="s1">):</span>
+                <span class="s1">table_cls = cast(</span>
+                    <span class="s1">Type[Table]</span><span class="s5">,</span>
+                    <span class="s1">util.unbound_method_to_callable(cls.__table_cls__)</span><span class="s5">,  </span><span class="s0"># type: ignore  # noqa: E501</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">table_cls = Table</span>
+
+            <span class="s3">if </span><span class="s1">tablename </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">args: Tuple[Any</span><span class="s5">, </span><span class="s1">...] = ()</span>
+                <span class="s1">table_kw: Dict[str</span><span class="s5">, </span><span class="s1">Any] = {}</span>
+
+                <span class="s3">if </span><span class="s1">table_args:</span>
+                    <span class="s3">if </span><span class="s1">isinstance(table_args</span><span class="s5">, </span><span class="s1">dict):</span>
+                        <span class="s1">table_kw = table_args</span>
+                    <span class="s3">elif </span><span class="s1">isinstance(table_args</span><span class="s5">, </span><span class="s1">tuple):</span>
+                        <span class="s3">if </span><span class="s1">isinstance(table_args[-</span><span class="s6">1</span><span class="s1">]</span><span class="s5">, </span><span class="s1">dict):</span>
+                            <span class="s1">args</span><span class="s5">, </span><span class="s1">table_kw = table_args[</span><span class="s6">0</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]</span><span class="s5">, </span><span class="s1">table_args[-</span><span class="s6">1</span><span class="s1">]</span>
+                        <span class="s3">else</span><span class="s1">:</span>
+                            <span class="s1">args = table_args</span>
+
+                <span class="s1">autoload_with = clsdict_view.get(</span><span class="s4">&quot;__autoload_with__&quot;</span><span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">autoload_with:</span>
+                    <span class="s1">table_kw[</span><span class="s4">&quot;autoload_with&quot;</span><span class="s1">] = autoload_with</span>
+
+                <span class="s1">autoload = clsdict_view.get(</span><span class="s4">&quot;__autoload__&quot;</span><span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">autoload:</span>
+                    <span class="s1">table_kw[</span><span class="s4">&quot;autoload&quot;</span><span class="s1">] = </span><span class="s3">True</span>
+
+                <span class="s1">sorted_columns = sorted(</span>
+                    <span class="s1">declared_columns</span><span class="s5">,</span>
+                    <span class="s1">key=</span><span class="s3">lambda </span><span class="s1">c: column_ordering.get(c</span><span class="s5">, </span><span class="s6">0</span><span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s1">table = self.set_cls_attribute(</span>
+                    <span class="s4">&quot;__table__&quot;</span><span class="s5">,</span>
+                    <span class="s1">table_cls(</span>
+                        <span class="s1">tablename</span><span class="s5">,</span>
+                        <span class="s1">self._metadata_for_cls(manager)</span><span class="s5">,</span>
+                        <span class="s1">*sorted_columns</span><span class="s5">,</span>
+                        <span class="s1">*args</span><span class="s5">,</span>
+                        <span class="s1">**table_kw</span><span class="s5">,</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">table </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">self.table_fn:</span>
+                    <span class="s1">table = self.set_cls_attribute(</span>
+                        <span class="s4">&quot;__table__&quot;</span><span class="s5">, </span><span class="s1">self.table_fn()</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">table = cls_as_Decl.__table__</span>
+            <span class="s3">if </span><span class="s1">declared_columns:</span>
+                <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">declared_columns:</span>
+                    <span class="s3">if not </span><span class="s1">table.c.contains_column(c):</span>
+                        <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                            <span class="s4">&quot;Can't add additional column %r when &quot;</span>
+                            <span class="s4">&quot;specifying __table__&quot; </span><span class="s1">% c.key</span>
+                        <span class="s1">)</span>
+
+        <span class="s1">self.local_table = table</span>
+
+    <span class="s3">def </span><span class="s1">_metadata_for_cls(self</span><span class="s5">, </span><span class="s1">manager: ClassManager[Any]) -&gt; MetaData:</span>
+        <span class="s1">meta: Optional[MetaData] = getattr(self.cls</span><span class="s5">, </span><span class="s4">&quot;metadata&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">meta </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">meta</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">manager.registry.metadata</span>
+
+    <span class="s3">def </span><span class="s1">_setup_inheriting_mapper(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">cls = self.cls</span>
+
+        <span class="s1">inherits = mapper_kw.get(</span><span class="s4">&quot;inherits&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">inherits </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s0"># since we search for classical mappings now, search for</span>
+            <span class="s0"># multiple mapped bases as well and raise an error.</span>
+            <span class="s1">inherits_search = []</span>
+            <span class="s3">for </span><span class="s1">base_ </span><span class="s3">in </span><span class="s1">cls.__bases__:</span>
+                <span class="s1">c = _resolve_for_abstract_or_classical(base_)</span>
+                <span class="s3">if </span><span class="s1">c </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s3">continue</span>
+
+                <span class="s3">if </span><span class="s1">_is_supercls_for_inherits(c) </span><span class="s3">and </span><span class="s1">c </span><span class="s3">not in </span><span class="s1">inherits_search:</span>
+                    <span class="s1">inherits_search.append(c)</span>
+
+            <span class="s3">if </span><span class="s1">inherits_search:</span>
+                <span class="s3">if </span><span class="s1">len(inherits_search) &gt; </span><span class="s6">1</span><span class="s1">:</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">&quot;Class %s has multiple mapped bases: %r&quot;</span>
+                        <span class="s1">% (cls</span><span class="s5">, </span><span class="s1">inherits_search)</span>
+                    <span class="s1">)</span>
+                <span class="s1">inherits = inherits_search[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s3">elif </span><span class="s1">isinstance(inherits</span><span class="s5">, </span><span class="s1">Mapper):</span>
+            <span class="s1">inherits = inherits.class_</span>
+
+        <span class="s1">self.inherits = inherits</span>
+
+        <span class="s1">clsdict_view = self.clsdict_view</span>
+        <span class="s3">if </span><span class="s4">&quot;__table__&quot; </span><span class="s3">not in </span><span class="s1">clsdict_view </span><span class="s3">and </span><span class="s1">self.tablename </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">self.single = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">_setup_inheriting_columns(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">table = self.local_table</span>
+        <span class="s1">cls = self.cls</span>
+        <span class="s1">table_args = self.table_args</span>
+        <span class="s1">declared_columns = self.declared_columns</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">table </span><span class="s3">is None</span>
+            <span class="s3">and </span><span class="s1">self.inherits </span><span class="s3">is None</span>
+            <span class="s3">and not </span><span class="s1">_get_immediate_cls_attr(cls</span><span class="s5">, </span><span class="s4">&quot;__no_table__&quot;</span><span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Class %r does not have a __table__ or __tablename__ &quot;</span>
+                <span class="s4">&quot;specified and does not inherit from an existing &quot;</span>
+                <span class="s4">&quot;table-mapped class.&quot; </span><span class="s1">% cls</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">self.inherits:</span>
+            <span class="s1">inherited_mapper_or_config = _declared_mapping_info(self.inherits)</span>
+            <span class="s3">assert </span><span class="s1">inherited_mapper_or_config </span><span class="s3">is not None</span>
+            <span class="s1">inherited_table = inherited_mapper_or_config.local_table</span>
+            <span class="s1">inherited_persist_selectable = (</span>
+                <span class="s1">inherited_mapper_or_config.persist_selectable</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">table </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s0"># single table inheritance.</span>
+                <span class="s0"># ensure no table args</span>
+                <span class="s3">if </span><span class="s1">table_args:</span>
+                    <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                        <span class="s4">&quot;Can't place __table_args__ on an inherited class &quot;</span>
+                        <span class="s4">&quot;with no table.&quot;</span>
+                    <span class="s1">)</span>
+
+                <span class="s0"># add any columns declared here to the inherited table.</span>
+                <span class="s3">if </span><span class="s1">declared_columns </span><span class="s3">and not </span><span class="s1">isinstance(inherited_table</span><span class="s5">, </span><span class="s1">Table):</span>
+                    <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                        <span class="s4">f&quot;Can't declare columns on single-table-inherited &quot;</span>
+                        <span class="s4">f&quot;subclass </span><span class="s7">{</span><span class="s1">self.cls</span><span class="s7">}</span><span class="s4">; superclass </span><span class="s7">{</span><span class="s1">self.inherits</span><span class="s7">} </span><span class="s4">&quot;</span>
+                        <span class="s4">&quot;is not mapped to a Table&quot;</span>
+                    <span class="s1">)</span>
+
+                <span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">declared_columns:</span>
+                    <span class="s3">assert </span><span class="s1">inherited_table </span><span class="s3">is not None</span>
+                    <span class="s3">if </span><span class="s1">col.name </span><span class="s3">in </span><span class="s1">inherited_table.c:</span>
+                        <span class="s3">if </span><span class="s1">inherited_table.c[col.name] </span><span class="s3">is </span><span class="s1">col:</span>
+                            <span class="s3">continue</span>
+                        <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                            <span class="s4">f&quot;Column '</span><span class="s7">{</span><span class="s1">col</span><span class="s7">}</span><span class="s4">' on class </span><span class="s7">{</span><span class="s1">cls.__name__</span><span class="s7">} </span><span class="s4">&quot;</span>
+                            <span class="s4">f&quot;conflicts with existing column &quot;</span>
+                            <span class="s4">f&quot;'</span><span class="s7">{</span><span class="s1">inherited_table.c[col.name]</span><span class="s7">}</span><span class="s4">'.  If using &quot;</span>
+                            <span class="s4">f&quot;Declarative, consider using the &quot;</span>
+                            <span class="s4">&quot;use_existing_column parameter of mapped_column() &quot;</span>
+                            <span class="s4">&quot;to resolve conflicts.&quot;</span>
+                        <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">col.primary_key:</span>
+                        <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                            <span class="s4">&quot;Can't place primary key columns on an inherited &quot;</span>
+                            <span class="s4">&quot;class with no table.&quot;</span>
+                        <span class="s1">)</span>
+
+                    <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+                        <span class="s3">assert </span><span class="s1">isinstance(inherited_table</span><span class="s5">, </span><span class="s1">Table)</span>
+
+                    <span class="s1">inherited_table.append_column(col)</span>
+                    <span class="s3">if </span><span class="s1">(</span>
+                        <span class="s1">inherited_persist_selectable </span><span class="s3">is not None</span>
+                        <span class="s3">and </span><span class="s1">inherited_persist_selectable </span><span class="s3">is not </span><span class="s1">inherited_table</span>
+                    <span class="s1">):</span>
+                        <span class="s1">inherited_persist_selectable._refresh_for_new_column(</span>
+                            <span class="s1">col</span>
+                        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_prepare_mapper_arguments(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">properties = self.properties</span>
+
+        <span class="s3">if </span><span class="s1">self.mapper_args_fn:</span>
+            <span class="s1">mapper_args = self.mapper_args_fn()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">mapper_args = {}</span>
+
+        <span class="s3">if </span><span class="s1">mapper_kw:</span>
+            <span class="s1">mapper_args.update(mapper_kw)</span>
+
+        <span class="s3">if </span><span class="s4">&quot;properties&quot; </span><span class="s3">in </span><span class="s1">mapper_args:</span>
+            <span class="s1">properties = dict(properties)</span>
+            <span class="s1">properties.update(mapper_args[</span><span class="s4">&quot;properties&quot;</span><span class="s1">])</span>
+
+        <span class="s0"># make sure that column copies are used rather</span>
+        <span class="s0"># than the original columns from any mixins</span>
+        <span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">(</span><span class="s4">&quot;version_id_col&quot;</span><span class="s5">, </span><span class="s4">&quot;polymorphic_on&quot;</span><span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">mapper_args:</span>
+                <span class="s1">v = mapper_args[k]</span>
+                <span class="s1">mapper_args[k] = self.column_copies.get(v</span><span class="s5">, </span><span class="s1">v)</span>
+
+        <span class="s3">if </span><span class="s4">&quot;primary_key&quot; </span><span class="s3">in </span><span class="s1">mapper_args:</span>
+            <span class="s1">mapper_args[</span><span class="s4">&quot;primary_key&quot;</span><span class="s1">] = [</span>
+                <span class="s1">self.column_copies.get(v</span><span class="s5">, </span><span class="s1">v)</span>
+                <span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">util.to_list(mapper_args[</span><span class="s4">&quot;primary_key&quot;</span><span class="s1">])</span>
+            <span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s4">&quot;inherits&quot; </span><span class="s3">in </span><span class="s1">mapper_args:</span>
+            <span class="s1">inherits_arg = mapper_args[</span><span class="s4">&quot;inherits&quot;</span><span class="s1">]</span>
+            <span class="s3">if </span><span class="s1">isinstance(inherits_arg</span><span class="s5">, </span><span class="s1">Mapper):</span>
+                <span class="s1">inherits_arg = inherits_arg.class_</span>
+
+            <span class="s3">if </span><span class="s1">inherits_arg </span><span class="s3">is not </span><span class="s1">self.inherits:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;mapper inherits argument given for non-inheriting &quot;</span>
+                    <span class="s4">&quot;class %s&quot; </span><span class="s1">% (mapper_args[</span><span class="s4">&quot;inherits&quot;</span><span class="s1">])</span>
+                <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self.inherits:</span>
+            <span class="s1">mapper_args[</span><span class="s4">&quot;inherits&quot;</span><span class="s1">] = self.inherits</span>
+
+        <span class="s3">if </span><span class="s1">self.inherits </span><span class="s3">and not </span><span class="s1">mapper_args.get(</span><span class="s4">&quot;concrete&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s0"># note the superclass is expected to have a Mapper assigned and</span>
+            <span class="s0"># not be a deferred config, as this is called within map()</span>
+            <span class="s1">inherited_mapper = class_mapper(self.inherits</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+            <span class="s1">inherited_table = inherited_mapper.local_table</span>
+
+            <span class="s0"># single or joined inheritance</span>
+            <span class="s0"># exclude any cols on the inherited table which are</span>
+            <span class="s0"># not mapped on the parent class, to avoid</span>
+            <span class="s0"># mapping columns specific to sibling/nephew classes</span>
+            <span class="s3">if </span><span class="s4">&quot;exclude_properties&quot; </span><span class="s3">not in </span><span class="s1">mapper_args:</span>
+                <span class="s1">mapper_args[</span><span class="s4">&quot;exclude_properties&quot;</span><span class="s1">] = exclude_properties = {</span>
+                    <span class="s1">c.key</span>
+                    <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">inherited_table.c</span>
+                    <span class="s3">if </span><span class="s1">c </span><span class="s3">not in </span><span class="s1">inherited_mapper._columntoproperty</span>
+                <span class="s1">}.union(inherited_mapper.exclude_properties </span><span class="s3">or </span><span class="s1">())</span>
+                <span class="s1">exclude_properties.difference_update(</span>
+                    <span class="s1">[c.key </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">self.declared_columns]</span>
+                <span class="s1">)</span>
+
+            <span class="s0"># look through columns in the current mapper that</span>
+            <span class="s0"># are keyed to a propname different than the colname</span>
+            <span class="s0"># (if names were the same, we'd have popped it out above,</span>
+            <span class="s0"># in which case the mapper makes this combination).</span>
+            <span class="s0"># See if the superclass has a similar column property.</span>
+            <span class="s0"># If so, join them together.</span>
+            <span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">col </span><span class="s3">in </span><span class="s1">list(properties.items()):</span>
+                <span class="s3">if not </span><span class="s1">isinstance(col</span><span class="s5">, </span><span class="s1">expression.ColumnElement):</span>
+                    <span class="s3">continue</span>
+                <span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">inherited_mapper._props:</span>
+                    <span class="s1">p = inherited_mapper._props[k]</span>
+                    <span class="s3">if </span><span class="s1">isinstance(p</span><span class="s5">, </span><span class="s1">ColumnProperty):</span>
+                        <span class="s0"># note here we place the subclass column</span>
+                        <span class="s0"># first.  See [ticket:1892] for background.</span>
+                        <span class="s1">properties[k] = [col] + p.columns</span>
+        <span class="s1">result_mapper_args = mapper_args.copy()</span>
+        <span class="s1">result_mapper_args[</span><span class="s4">&quot;properties&quot;</span><span class="s1">] = properties</span>
+        <span class="s1">self.mapper_args = result_mapper_args</span>
+
+    <span class="s3">def </span><span class="s1">map(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs = util.EMPTY_DICT) -&gt; Mapper[Any]:</span>
+        <span class="s1">self._prepare_mapper_arguments(mapper_kw)</span>
+        <span class="s3">if </span><span class="s1">hasattr(self.cls</span><span class="s5">, </span><span class="s4">&quot;__mapper_cls__&quot;</span><span class="s1">):</span>
+            <span class="s1">mapper_cls = cast(</span>
+                <span class="s4">&quot;Type[Mapper[Any]]&quot;</span><span class="s5">,</span>
+                <span class="s1">util.unbound_method_to_callable(</span>
+                    <span class="s1">self.cls.__mapper_cls__  </span><span class="s0"># type: ignore</span>
+                <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">mapper_cls = Mapper</span>
+
+        <span class="s3">return </span><span class="s1">self.set_cls_attribute(</span>
+            <span class="s4">&quot;__mapper__&quot;</span><span class="s5">,</span>
+            <span class="s1">mapper_cls(self.cls</span><span class="s5">, </span><span class="s1">self.local_table</span><span class="s5">, </span><span class="s1">**self.mapper_args)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s1">@util.preload_module(</span><span class="s4">&quot;sqlalchemy.orm.decl_api&quot;</span><span class="s1">)</span>
+<span class="s3">def </span><span class="s1">_as_dc_declaredattr(</span>
+    <span class="s1">field_metadata: Mapping[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">sa_dataclass_metadata_key: str</span>
+<span class="s1">) -&gt; Any:</span>
+    <span class="s0"># wrap lambdas inside dataclass fields inside an ad-hoc declared_attr.</span>
+    <span class="s0"># we can't write it because field.metadata is immutable :( so we have</span>
+    <span class="s0"># to go through extra trouble to compare these</span>
+    <span class="s1">decl_api = util.preloaded.orm_decl_api</span>
+    <span class="s1">obj = field_metadata[sa_dataclass_metadata_key]</span>
+    <span class="s3">if </span><span class="s1">callable(obj) </span><span class="s3">and not </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">decl_api.declared_attr):</span>
+        <span class="s3">return </span><span class="s1">decl_api.declared_attr(obj)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">obj</span>
+
+
+<span class="s3">class </span><span class="s1">_DeferredMapperConfig(_ClassScanMapperConfig):</span>
+    <span class="s1">_cls: weakref.ref[Type[Any]]</span>
+
+    <span class="s1">is_deferred = </span><span class="s3">True</span>
+
+    <span class="s1">_configs: util.OrderedDict[</span>
+        <span class="s1">weakref.ref[Type[Any]]</span><span class="s5">, </span><span class="s1">_DeferredMapperConfig</span>
+    <span class="s1">] = util.OrderedDict()</span>
+
+    <span class="s3">def </span><span class="s1">_early_mapping(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">pass</span>
+
+    <span class="s0"># mypy disallows plain property override of variable</span>
+    <span class="s1">@property  </span><span class="s0"># type: ignore</span>
+    <span class="s3">def </span><span class="s1">cls(self) -&gt; Type[Any]:</span>
+        <span class="s3">return </span><span class="s1">self._cls()  </span><span class="s0"># type: ignore</span>
+
+    <span class="s1">@cls.setter</span>
+    <span class="s3">def </span><span class="s1">cls(self</span><span class="s5">, </span><span class="s1">class_: Type[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._cls = weakref.ref(class_</span><span class="s5">, </span><span class="s1">self._remove_config_cls)</span>
+        <span class="s1">self._configs[self._cls] = self</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_remove_config_cls(cls</span><span class="s5">, </span><span class="s1">ref: weakref.ref[Type[Any]]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">cls._configs.pop(ref</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">has_cls(cls</span><span class="s5">, </span><span class="s1">class_: Type[Any]) -&gt; bool:</span>
+        <span class="s0"># 2.6 fails on weakref if class_ is an old style class</span>
+        <span class="s3">return </span><span class="s1">isinstance(class_</span><span class="s5">, </span><span class="s1">type) </span><span class="s3">and </span><span class="s1">weakref.ref(class_) </span><span class="s3">in </span><span class="s1">cls._configs</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">raise_unmapped_for_cls(cls</span><span class="s5">, </span><span class="s1">class_: Type[Any]) -&gt; NoReturn:</span>
+        <span class="s3">if </span><span class="s1">hasattr(class_</span><span class="s5">, </span><span class="s4">&quot;_sa_raise_deferred_config&quot;</span><span class="s1">):</span>
+            <span class="s1">class_._sa_raise_deferred_config()</span>
+
+        <span class="s3">raise </span><span class="s1">orm_exc.UnmappedClassError(</span>
+            <span class="s1">class_</span><span class="s5">,</span>
+            <span class="s1">msg=(</span>
+                <span class="s4">f&quot;Class </span><span class="s7">{</span><span class="s1">orm_exc._safe_cls_name(class_)</span><span class="s7">} </span><span class="s4">has a deferred &quot;</span>
+                <span class="s4">&quot;mapping on it.  It is not yet usable as a mapped class.&quot;</span>
+            <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">config_for_cls(cls</span><span class="s5">, </span><span class="s1">class_: Type[Any]) -&gt; _DeferredMapperConfig:</span>
+        <span class="s3">return </span><span class="s1">cls._configs[weakref.ref(class_)]</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">classes_for_base(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">base_cls: Type[Any]</span><span class="s5">, </span><span class="s1">sort: bool = </span><span class="s3">True</span>
+    <span class="s1">) -&gt; List[_DeferredMapperConfig]:</span>
+        <span class="s1">classes_for_base = [</span>
+            <span class="s1">m</span>
+            <span class="s3">for </span><span class="s1">m</span><span class="s5">, </span><span class="s1">cls_ </span><span class="s3">in </span><span class="s1">[(m</span><span class="s5">, </span><span class="s1">m.cls) </span><span class="s3">for </span><span class="s1">m </span><span class="s3">in </span><span class="s1">cls._configs.values()]</span>
+            <span class="s3">if </span><span class="s1">cls_ </span><span class="s3">is not None and </span><span class="s1">issubclass(cls_</span><span class="s5">, </span><span class="s1">base_cls)</span>
+        <span class="s1">]</span>
+
+        <span class="s3">if not </span><span class="s1">sort:</span>
+            <span class="s3">return </span><span class="s1">classes_for_base</span>
+
+        <span class="s1">all_m_by_cls = {m.cls: m </span><span class="s3">for </span><span class="s1">m </span><span class="s3">in </span><span class="s1">classes_for_base}</span>
+
+        <span class="s1">tuples: List[Tuple[_DeferredMapperConfig</span><span class="s5">, </span><span class="s1">_DeferredMapperConfig]] = []</span>
+        <span class="s3">for </span><span class="s1">m_cls </span><span class="s3">in </span><span class="s1">all_m_by_cls:</span>
+            <span class="s1">tuples.extend(</span>
+                <span class="s1">(all_m_by_cls[base_cls]</span><span class="s5">, </span><span class="s1">all_m_by_cls[m_cls])</span>
+                <span class="s3">for </span><span class="s1">base_cls </span><span class="s3">in </span><span class="s1">m_cls.__bases__</span>
+                <span class="s3">if </span><span class="s1">base_cls </span><span class="s3">in </span><span class="s1">all_m_by_cls</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">list(topological.sort(tuples</span><span class="s5">, </span><span class="s1">classes_for_base))</span>
+
+    <span class="s3">def </span><span class="s1">map(self</span><span class="s5">, </span><span class="s1">mapper_kw: _MapperKwArgs = util.EMPTY_DICT) -&gt; Mapper[Any]:</span>
+        <span class="s1">self._configs.pop(self._cls</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">super().map(mapper_kw)</span>
+
+
+<span class="s3">def </span><span class="s1">_add_attribute(</span>
+    <span class="s1">cls: Type[Any]</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">value: MapperProperty[Any]</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s2">&quot;&quot;&quot;add an attribute to an existing declarative class. 
+ 
+    This runs through the logic to determine MapperProperty, 
+    adds it to the Mapper, adds a column to the mapped Table, etc. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s4">&quot;__mapper__&quot; </span><span class="s3">in </span><span class="s1">cls.__dict__:</span>
+        <span class="s1">mapped_cls = cast(</span><span class="s4">&quot;MappedClassProtocol[Any]&quot;</span><span class="s5">, </span><span class="s1">cls)</span>
+
+        <span class="s3">def </span><span class="s1">_table_or_raise(mc: MappedClassProtocol[Any]) -&gt; Table:</span>
+            <span class="s3">if </span><span class="s1">isinstance(mc.__table__</span><span class="s5">, </span><span class="s1">Table):</span>
+                <span class="s3">return </span><span class="s1">mc.__table__</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;Cannot add a new attribute to mapped class </span><span class="s7">{</span><span class="s1">mc.__name__</span><span class="s7">!r} </span><span class="s4">&quot;</span>
+                <span class="s4">&quot;because it's not mapped against a table.&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">Column):</span>
+            <span class="s1">_undefer_column_name(key</span><span class="s5">, </span><span class="s1">value)</span>
+            <span class="s1">_table_or_raise(mapped_cls).append_column(</span>
+                <span class="s1">value</span><span class="s5">, </span><span class="s1">replace_existing=</span><span class="s3">True</span>
+            <span class="s1">)</span>
+            <span class="s1">mapped_cls.__mapper__.add_property(key</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s3">elif </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">_MapsColumns):</span>
+            <span class="s1">mp = value.mapper_property_to_assign</span>
+            <span class="s3">for </span><span class="s1">col</span><span class="s5">, </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">value.columns_to_assign:</span>
+                <span class="s1">_undefer_column_name(key</span><span class="s5">, </span><span class="s1">col)</span>
+                <span class="s1">_table_or_raise(mapped_cls).append_column(</span>
+                    <span class="s1">col</span><span class="s5">, </span><span class="s1">replace_existing=</span><span class="s3">True</span>
+                <span class="s1">)</span>
+                <span class="s3">if not </span><span class="s1">mp:</span>
+                    <span class="s1">mapped_cls.__mapper__.add_property(key</span><span class="s5">, </span><span class="s1">col)</span>
+            <span class="s3">if </span><span class="s1">mp:</span>
+                <span class="s1">mapped_cls.__mapper__.add_property(key</span><span class="s5">, </span><span class="s1">mp)</span>
+        <span class="s3">elif </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">MapperProperty):</span>
+            <span class="s1">mapped_cls.__mapper__.add_property(key</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s3">elif </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">QueryableAttribute) </span><span class="s3">and </span><span class="s1">value.key != key:</span>
+            <span class="s0"># detect a QueryableAttribute that's already mapped being</span>
+            <span class="s0"># assigned elsewhere in userland, turn into a synonym()</span>
+            <span class="s1">value = SynonymProperty(value.key)</span>
+            <span class="s1">mapped_cls.__mapper__.add_property(key</span><span class="s5">, </span><span class="s1">value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">type.__setattr__(cls</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value)</span>
+            <span class="s1">mapped_cls.__mapper__._expire_memoizations()</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">type.__setattr__(cls</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value)</span>
+
+
+<span class="s3">def </span><span class="s1">_del_attribute(cls: Type[Any]</span><span class="s5">, </span><span class="s1">key: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s4">&quot;__mapper__&quot; </span><span class="s3">in </span><span class="s1">cls.__dict__</span>
+        <span class="s3">and </span><span class="s1">key </span><span class="s3">in </span><span class="s1">cls.__dict__</span>
+        <span class="s3">and not </span><span class="s1">cast(</span>
+            <span class="s4">&quot;MappedClassProtocol[Any]&quot;</span><span class="s5">, </span><span class="s1">cls</span>
+        <span class="s1">).__mapper__._dispose_called</span>
+    <span class="s1">):</span>
+        <span class="s1">value = cls.__dict__[key]</span>
+        <span class="s3">if </span><span class="s1">isinstance(</span>
+            <span class="s1">value</span><span class="s5">, </span><span class="s1">(Column</span><span class="s5">, </span><span class="s1">_MapsColumns</span><span class="s5">, </span><span class="s1">MapperProperty</span><span class="s5">, </span><span class="s1">QueryableAttribute)</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+                <span class="s4">&quot;Can't un-map individual mapped attributes on a mapped class.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">type.__delattr__(cls</span><span class="s5">, </span><span class="s1">key)</span>
+            <span class="s1">cast(</span>
+                <span class="s4">&quot;MappedClassProtocol[Any]&quot;</span><span class="s5">, </span><span class="s1">cls</span>
+            <span class="s1">).__mapper__._expire_memoizations()</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">type.__delattr__(cls</span><span class="s5">, </span><span class="s1">key)</span>
+
+
+<span class="s3">def </span><span class="s1">_declarative_constructor(self: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s2">&quot;&quot;&quot;A simple constructor that allows initialization from kwargs. 
+ 
+    Sets attributes on the constructed instance using the names and 
+    values in ``kwargs``. 
+ 
+    Only keys that are present as 
+    attributes of the instance's class are allowed. These could be, 
+    for example, any mapped columns or relationships. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">cls_ = type(self)</span>
+    <span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">kwargs:</span>
+        <span class="s3">if not </span><span class="s1">hasattr(cls_</span><span class="s5">, </span><span class="s1">k):</span>
+            <span class="s3">raise </span><span class="s1">TypeError(</span>
+                <span class="s4">&quot;%r is an invalid keyword argument for %s&quot; </span><span class="s1">% (k</span><span class="s5">, </span><span class="s1">cls_.__name__)</span>
+            <span class="s1">)</span>
+        <span class="s1">setattr(self</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">kwargs[k])</span>
+
+
+<span class="s1">_declarative_constructor.__name__ = </span><span class="s4">&quot;__init__&quot;</span>
+
+
+<span class="s3">def </span><span class="s1">_undefer_column_name(key: str</span><span class="s5">, </span><span class="s1">column: Column[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s3">if </span><span class="s1">column.key </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">column.key = key</span>
+    <span class="s3">if </span><span class="s1">column.name </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">column.name = key</span>
+</pre>
+</body>
+</html>

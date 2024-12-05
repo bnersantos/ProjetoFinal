@@ -1,0 +1,540 @@
+<html>
+<head>
+<title>assertsql.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #bbb55b;}
+.s6 { color: #717ed3; font-style: italic;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+assertsql.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/assertsql.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">collections</span>
+<span class="s2">import </span><span class="s1">contextlib</span>
+<span class="s2">import </span><span class="s1">itertools</span>
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">event</span>
+<span class="s2">from </span><span class="s1">..engine </span><span class="s2">import </span><span class="s1">url</span>
+<span class="s2">from </span><span class="s1">..engine.default </span><span class="s2">import </span><span class="s1">DefaultDialect</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">BaseDDLElement</span>
+
+
+<span class="s2">class </span><span class="s1">AssertRule:</span>
+    <span class="s1">is_consumed = </span><span class="s2">False</span>
+    <span class="s1">errormessage = </span><span class="s2">None</span>
+    <span class="s1">consume_statement = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">process_statement(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">no_more_statements(self):</span>
+        <span class="s2">assert False</span><span class="s3">, </span><span class="s1">(</span>
+            <span class="s4">&quot;All statements are complete, but pending &quot;</span>
+            <span class="s4">&quot;assertion rules remain&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">SQLMatchRule(AssertRule):</span>
+    <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">CursorSQL(SQLMatchRule):</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">statement</span><span class="s3">, </span><span class="s1">params=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">consume_statement=</span><span class="s2">True</span><span class="s1">):</span>
+        <span class="s1">self.statement = statement</span>
+        <span class="s1">self.params = params</span>
+        <span class="s1">self.consume_statement = consume_statement</span>
+
+    <span class="s2">def </span><span class="s1">process_statement(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s1">stmt = execute_observed.statements[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">self.statement != stmt.statement </span><span class="s2">or </span><span class="s1">(</span>
+            <span class="s1">self.params </span><span class="s2">is not None and </span><span class="s1">self.params != stmt.parameters</span>
+        <span class="s1">):</span>
+            <span class="s1">self.consume_statement = </span><span class="s2">True</span>
+            <span class="s1">self.errormessage = (</span>
+                <span class="s4">&quot;Testing for exact SQL %s parameters %s received %s %s&quot;</span>
+                <span class="s1">% (</span>
+                    <span class="s1">self.statement</span><span class="s3">,</span>
+                    <span class="s1">self.params</span><span class="s3">,</span>
+                    <span class="s1">stmt.statement</span><span class="s3">,</span>
+                    <span class="s1">stmt.parameters</span><span class="s3">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">execute_observed.statements.pop(</span><span class="s5">0</span><span class="s1">)</span>
+            <span class="s1">self.is_consumed = </span><span class="s2">True</span>
+            <span class="s2">if not </span><span class="s1">execute_observed.statements:</span>
+                <span class="s1">self.consume_statement = </span><span class="s2">True</span>
+
+
+<span class="s2">class </span><span class="s1">CompiledSQL(SQLMatchRule):</span>
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">statement</span><span class="s3">, </span><span class="s1">params=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">dialect=</span><span class="s4">&quot;default&quot;</span><span class="s3">, </span><span class="s1">enable_returning=</span><span class="s2">True</span>
+    <span class="s1">):</span>
+        <span class="s1">self.statement = statement</span>
+        <span class="s1">self.params = params</span>
+        <span class="s1">self.dialect = dialect</span>
+        <span class="s1">self.enable_returning = enable_returning</span>
+
+    <span class="s2">def </span><span class="s1">_compare_sql(self</span><span class="s3">, </span><span class="s1">execute_observed</span><span class="s3">, </span><span class="s1">received_statement):</span>
+        <span class="s1">stmt = re.sub(</span><span class="s4">r&quot;[\n\t]&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">self.statement)</span>
+        <span class="s2">return </span><span class="s1">received_statement == stmt</span>
+
+    <span class="s2">def </span><span class="s1">_compile_dialect(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s2">if </span><span class="s1">self.dialect == </span><span class="s4">&quot;default&quot;</span><span class="s1">:</span>
+            <span class="s1">dialect = DefaultDialect()</span>
+            <span class="s0"># this is currently what tests are expecting</span>
+            <span class="s0"># dialect.supports_default_values = True</span>
+            <span class="s1">dialect.supports_default_metavalue = </span><span class="s2">True</span>
+
+            <span class="s2">if </span><span class="s1">self.enable_returning:</span>
+                <span class="s1">dialect.insert_returning = dialect.update_returning = (</span>
+                    <span class="s1">dialect.delete_returning</span>
+                <span class="s1">) = </span><span class="s2">True</span>
+                <span class="s1">dialect.use_insertmanyvalues = </span><span class="s2">True</span>
+                <span class="s1">dialect.supports_multivalues_insert = </span><span class="s2">True</span>
+                <span class="s1">dialect.update_returning_multifrom = </span><span class="s2">True</span>
+                <span class="s1">dialect.delete_returning_multifrom = </span><span class="s2">True</span>
+                <span class="s0"># dialect.favor_returning_over_lastrowid = True</span>
+                <span class="s0"># dialect.insert_null_pk_still_autoincrements = True</span>
+
+                <span class="s0"># this is calculated but we need it to be True for this</span>
+                <span class="s0"># to look like all the current RETURNING dialects</span>
+                <span class="s2">assert </span><span class="s1">dialect.insert_executemany_returning</span>
+
+            <span class="s2">return </span><span class="s1">dialect</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">url.URL.create(self.dialect).get_dialect()()</span>
+
+    <span class="s2">def </span><span class="s1">_received_statement(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s6">&quot;&quot;&quot;reconstruct the statement and params in terms 
+        of a target dialect, which for CompiledSQL is just DefaultDialect.&quot;&quot;&quot;</span>
+
+        <span class="s1">context = execute_observed.context</span>
+        <span class="s1">compare_dialect = self._compile_dialect(execute_observed)</span>
+
+        <span class="s0"># received_statement runs a full compile().  we should not need to</span>
+        <span class="s0"># consider extracted_parameters; if we do this indicates some state</span>
+        <span class="s0"># is being sent from a previous cached query, which some misbehaviors</span>
+        <span class="s0"># in the ORM can cause, see #6881</span>
+        <span class="s1">cache_key = </span><span class="s2">None  </span><span class="s0"># execute_observed.context.compiled.cache_key</span>
+        <span class="s1">extracted_parameters = (</span>
+            <span class="s2">None  </span><span class="s0"># execute_observed.context.extracted_parameters</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s4">&quot;schema_translate_map&quot; </span><span class="s2">in </span><span class="s1">context.execution_options:</span>
+            <span class="s1">map_ = context.execution_options[</span><span class="s4">&quot;schema_translate_map&quot;</span><span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">map_ = </span><span class="s2">None</span>
+
+        <span class="s2">if </span><span class="s1">isinstance(execute_observed.clauseelement</span><span class="s3">, </span><span class="s1">BaseDDLElement):</span>
+            <span class="s1">compiled = execute_observed.clauseelement.compile(</span>
+                <span class="s1">dialect=compare_dialect</span><span class="s3">,</span>
+                <span class="s1">schema_translate_map=map_</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">compiled = execute_observed.clauseelement.compile(</span>
+                <span class="s1">cache_key=cache_key</span><span class="s3">,</span>
+                <span class="s1">dialect=compare_dialect</span><span class="s3">,</span>
+                <span class="s1">column_keys=context.compiled.column_keys</span><span class="s3">,</span>
+                <span class="s1">for_executemany=context.compiled.for_executemany</span><span class="s3">,</span>
+                <span class="s1">schema_translate_map=map_</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s1">_received_statement = re.sub(</span><span class="s4">r&quot;[\n\t]&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">str(compiled))</span>
+        <span class="s1">parameters = execute_observed.parameters</span>
+
+        <span class="s2">if not </span><span class="s1">parameters:</span>
+            <span class="s1">_received_parameters = [</span>
+                <span class="s1">compiled.construct_params(</span>
+                    <span class="s1">extracted_parameters=extracted_parameters</span>
+                <span class="s1">)</span>
+            <span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">_received_parameters = [</span>
+                <span class="s1">compiled.construct_params(</span>
+                    <span class="s1">m</span><span class="s3">, </span><span class="s1">extracted_parameters=extracted_parameters</span>
+                <span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">m </span><span class="s2">in </span><span class="s1">parameters</span>
+            <span class="s1">]</span>
+
+        <span class="s2">return </span><span class="s1">_received_statement</span><span class="s3">, </span><span class="s1">_received_parameters</span>
+
+    <span class="s2">def </span><span class="s1">process_statement(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s1">context = execute_observed.context</span>
+
+        <span class="s1">_received_statement</span><span class="s3">, </span><span class="s1">_received_parameters = self._received_statement(</span>
+            <span class="s1">execute_observed</span>
+        <span class="s1">)</span>
+        <span class="s1">params = self._all_params(context)</span>
+
+        <span class="s1">equivalent = self._compare_sql(execute_observed</span><span class="s3">, </span><span class="s1">_received_statement)</span>
+
+        <span class="s2">if </span><span class="s1">equivalent:</span>
+            <span class="s2">if </span><span class="s1">params </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">all_params = list(params)</span>
+                <span class="s1">all_received = list(_received_parameters)</span>
+                <span class="s2">while </span><span class="s1">all_params </span><span class="s2">and </span><span class="s1">all_received:</span>
+                    <span class="s1">param = dict(all_params.pop(</span><span class="s5">0</span><span class="s1">))</span>
+
+                    <span class="s2">for </span><span class="s1">idx</span><span class="s3">, </span><span class="s1">received </span><span class="s2">in </span><span class="s1">enumerate(list(all_received)):</span>
+                        <span class="s0"># do a positive compare only</span>
+                        <span class="s2">for </span><span class="s1">param_key </span><span class="s2">in </span><span class="s1">param:</span>
+                            <span class="s0"># a key in param did not match current</span>
+                            <span class="s0"># 'received'</span>
+                            <span class="s2">if </span><span class="s1">(</span>
+                                <span class="s1">param_key </span><span class="s2">not in </span><span class="s1">received</span>
+                                <span class="s2">or </span><span class="s1">received[param_key] != param[param_key]</span>
+                            <span class="s1">):</span>
+                                <span class="s2">break</span>
+                        <span class="s2">else</span><span class="s1">:</span>
+                            <span class="s0"># all keys in param matched 'received';</span>
+                            <span class="s0"># onto next param</span>
+                            <span class="s2">del </span><span class="s1">all_received[idx]</span>
+                            <span class="s2">break</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s0"># param did not match any entry</span>
+                        <span class="s0"># in all_received</span>
+                        <span class="s1">equivalent = </span><span class="s2">False</span>
+                        <span class="s2">break</span>
+                <span class="s2">if </span><span class="s1">all_params </span><span class="s2">or </span><span class="s1">all_received:</span>
+                    <span class="s1">equivalent = </span><span class="s2">False</span>
+
+        <span class="s2">if </span><span class="s1">equivalent:</span>
+            <span class="s1">self.is_consumed = </span><span class="s2">True</span>
+            <span class="s1">self.errormessage = </span><span class="s2">None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.errormessage = self._failure_message(</span>
+                <span class="s1">execute_observed</span><span class="s3">, </span><span class="s1">params</span>
+            <span class="s1">) % {</span>
+                <span class="s4">&quot;received_statement&quot;</span><span class="s1">: _received_statement</span><span class="s3">,</span>
+                <span class="s4">&quot;received_parameters&quot;</span><span class="s1">: _received_parameters</span><span class="s3">,</span>
+            <span class="s1">}</span>
+
+    <span class="s2">def </span><span class="s1">_all_params(self</span><span class="s3">, </span><span class="s1">context):</span>
+        <span class="s2">if </span><span class="s1">self.params:</span>
+            <span class="s2">if </span><span class="s1">callable(self.params):</span>
+                <span class="s1">params = self.params(context)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">params = self.params</span>
+            <span class="s2">if not </span><span class="s1">isinstance(params</span><span class="s3">, </span><span class="s1">list):</span>
+                <span class="s1">params = [params]</span>
+            <span class="s2">return </span><span class="s1">params</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return None</span>
+
+    <span class="s2">def </span><span class="s1">_failure_message(self</span><span class="s3">, </span><span class="s1">execute_observed</span><span class="s3">, </span><span class="s1">expected_params):</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s4">&quot;Testing for compiled statement</span><span class="s7">\n</span><span class="s4">%r partial params %s, &quot;</span>
+            <span class="s4">&quot;received</span><span class="s7">\n</span><span class="s4">%%(received_statement)r with params &quot;</span>
+            <span class="s4">&quot;%%(received_parameters)r&quot;</span>
+            <span class="s1">% (</span>
+                <span class="s1">self.statement.replace(</span><span class="s4">&quot;%&quot;</span><span class="s3">, </span><span class="s4">&quot;%%&quot;</span><span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">repr(expected_params).replace(</span><span class="s4">&quot;%&quot;</span><span class="s3">, </span><span class="s4">&quot;%%&quot;</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">RegexSQL(CompiledSQL):</span>
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">regex</span><span class="s3">, </span><span class="s1">params=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">dialect=</span><span class="s4">&quot;default&quot;</span><span class="s3">, </span><span class="s1">enable_returning=</span><span class="s2">False</span>
+    <span class="s1">):</span>
+        <span class="s1">SQLMatchRule.__init__(self)</span>
+        <span class="s1">self.regex = re.compile(regex)</span>
+        <span class="s1">self.orig_regex = regex</span>
+        <span class="s1">self.params = params</span>
+        <span class="s1">self.dialect = dialect</span>
+        <span class="s1">self.enable_returning = enable_returning</span>
+
+    <span class="s2">def </span><span class="s1">_failure_message(self</span><span class="s3">, </span><span class="s1">execute_observed</span><span class="s3">, </span><span class="s1">expected_params):</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s4">&quot;Testing for compiled statement ~%r partial params %s, &quot;</span>
+            <span class="s4">&quot;received %%(received_statement)r with params &quot;</span>
+            <span class="s4">&quot;%%(received_parameters)r&quot;</span>
+            <span class="s1">% (</span>
+                <span class="s1">self.orig_regex.replace(</span><span class="s4">&quot;%&quot;</span><span class="s3">, </span><span class="s4">&quot;%%&quot;</span><span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">repr(expected_params).replace(</span><span class="s4">&quot;%&quot;</span><span class="s3">, </span><span class="s4">&quot;%%&quot;</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_compare_sql(self</span><span class="s3">, </span><span class="s1">execute_observed</span><span class="s3">, </span><span class="s1">received_statement):</span>
+        <span class="s2">return </span><span class="s1">bool(self.regex.match(received_statement))</span>
+
+
+<span class="s2">class </span><span class="s1">DialectSQL(CompiledSQL):</span>
+    <span class="s2">def </span><span class="s1">_compile_dialect(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s2">return </span><span class="s1">execute_observed.context.dialect</span>
+
+    <span class="s2">def </span><span class="s1">_compare_no_space(self</span><span class="s3">, </span><span class="s1">real_stmt</span><span class="s3">, </span><span class="s1">received_stmt):</span>
+        <span class="s1">stmt = re.sub(</span><span class="s4">r&quot;[\n\t]&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">real_stmt)</span>
+        <span class="s2">return </span><span class="s1">received_stmt == stmt</span>
+
+    <span class="s2">def </span><span class="s1">_received_statement(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s1">received_stmt</span><span class="s3">, </span><span class="s1">received_params = super()._received_statement(</span>
+            <span class="s1">execute_observed</span>
+        <span class="s1">)</span>
+
+        <span class="s0"># TODO: why do we need this part?</span>
+        <span class="s2">for </span><span class="s1">real_stmt </span><span class="s2">in </span><span class="s1">execute_observed.statements:</span>
+            <span class="s2">if </span><span class="s1">self._compare_no_space(real_stmt.statement</span><span class="s3">, </span><span class="s1">received_stmt):</span>
+                <span class="s2">break</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">AssertionError(</span>
+                <span class="s4">&quot;Can't locate compiled statement %r in list of &quot;</span>
+                <span class="s4">&quot;statements actually invoked&quot; </span><span class="s1">% received_stmt</span>
+            <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">received_stmt</span><span class="s3">, </span><span class="s1">execute_observed.context.compiled_parameters</span>
+
+    <span class="s2">def </span><span class="s1">_dialect_adjusted_statement(self</span><span class="s3">, </span><span class="s1">dialect):</span>
+        <span class="s1">paramstyle = dialect.paramstyle</span>
+        <span class="s1">stmt = re.sub(</span><span class="s4">r&quot;[\n\t]&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">self.statement)</span>
+
+        <span class="s0"># temporarily escape out PG double colons</span>
+        <span class="s1">stmt = stmt.replace(</span><span class="s4">&quot;::&quot;</span><span class="s3">, </span><span class="s4">&quot;!!&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">paramstyle == </span><span class="s4">&quot;pyformat&quot;</span><span class="s1">:</span>
+            <span class="s1">stmt = re.sub(</span><span class="s4">r&quot;:([\w_]+)&quot;</span><span class="s3">, </span><span class="s4">r&quot;%(\1)s&quot;</span><span class="s3">, </span><span class="s1">stmt)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># positional params</span>
+            <span class="s1">repl = </span><span class="s2">None</span>
+            <span class="s2">if </span><span class="s1">paramstyle == </span><span class="s4">&quot;qmark&quot;</span><span class="s1">:</span>
+                <span class="s1">repl = </span><span class="s4">&quot;?&quot;</span>
+            <span class="s2">elif </span><span class="s1">paramstyle == </span><span class="s4">&quot;format&quot;</span><span class="s1">:</span>
+                <span class="s1">repl = </span><span class="s4">r&quot;%s&quot;</span>
+            <span class="s2">elif </span><span class="s1">paramstyle.startswith(</span><span class="s4">&quot;numeric&quot;</span><span class="s1">):</span>
+                <span class="s1">counter = itertools.count(</span><span class="s5">1</span><span class="s1">)</span>
+
+                <span class="s1">num_identifier = </span><span class="s4">&quot;$&quot; </span><span class="s2">if </span><span class="s1">paramstyle == </span><span class="s4">&quot;numeric_dollar&quot; </span><span class="s2">else </span><span class="s4">&quot;:&quot;</span>
+
+                <span class="s2">def </span><span class="s1">repl(m):</span>
+                    <span class="s2">return </span><span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">num_identifier</span><span class="s7">}{</span><span class="s1">next(counter)</span><span class="s7">}</span><span class="s4">&quot;</span>
+
+            <span class="s1">stmt = re.sub(</span><span class="s4">r&quot;:([\w_]+)&quot;</span><span class="s3">, </span><span class="s1">repl</span><span class="s3">, </span><span class="s1">stmt)</span>
+
+        <span class="s0"># put them back</span>
+        <span class="s1">stmt = stmt.replace(</span><span class="s4">&quot;!!&quot;</span><span class="s3">, </span><span class="s4">&quot;::&quot;</span><span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">stmt</span>
+
+    <span class="s2">def </span><span class="s1">_compare_sql(self</span><span class="s3">, </span><span class="s1">execute_observed</span><span class="s3">, </span><span class="s1">received_statement):</span>
+        <span class="s1">stmt = self._dialect_adjusted_statement(</span>
+            <span class="s1">execute_observed.context.dialect</span>
+        <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">received_statement == stmt</span>
+
+    <span class="s2">def </span><span class="s1">_failure_message(self</span><span class="s3">, </span><span class="s1">execute_observed</span><span class="s3">, </span><span class="s1">expected_params):</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s4">&quot;Testing for compiled statement</span><span class="s7">\n</span><span class="s4">%r partial params %s, &quot;</span>
+            <span class="s4">&quot;received</span><span class="s7">\n</span><span class="s4">%%(received_statement)r with params &quot;</span>
+            <span class="s4">&quot;%%(received_parameters)r&quot;</span>
+            <span class="s1">% (</span>
+                <span class="s1">self._dialect_adjusted_statement(</span>
+                    <span class="s1">execute_observed.context.dialect</span>
+                <span class="s1">).replace(</span><span class="s4">&quot;%&quot;</span><span class="s3">, </span><span class="s4">&quot;%%&quot;</span><span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">repr(expected_params).replace(</span><span class="s4">&quot;%&quot;</span><span class="s3">, </span><span class="s4">&quot;%%&quot;</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">CountStatements(AssertRule):</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">count):</span>
+        <span class="s1">self.count = count</span>
+        <span class="s1">self._statement_count = </span><span class="s5">0</span>
+
+    <span class="s2">def </span><span class="s1">process_statement(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s1">self._statement_count += </span><span class="s5">1</span>
+
+    <span class="s2">def </span><span class="s1">no_more_statements(self):</span>
+        <span class="s2">if </span><span class="s1">self.count != self._statement_count:</span>
+            <span class="s2">assert False</span><span class="s3">, </span><span class="s4">&quot;desired statement count %d does not match %d&quot; </span><span class="s1">% (</span>
+                <span class="s1">self.count</span><span class="s3">,</span>
+                <span class="s1">self._statement_count</span><span class="s3">,</span>
+            <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">AllOf(AssertRule):</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">*rules):</span>
+        <span class="s1">self.rules = set(rules)</span>
+
+    <span class="s2">def </span><span class="s1">process_statement(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s2">for </span><span class="s1">rule </span><span class="s2">in </span><span class="s1">list(self.rules):</span>
+            <span class="s1">rule.errormessage = </span><span class="s2">None</span>
+            <span class="s1">rule.process_statement(execute_observed)</span>
+            <span class="s2">if </span><span class="s1">rule.is_consumed:</span>
+                <span class="s1">self.rules.discard(rule)</span>
+                <span class="s2">if not </span><span class="s1">self.rules:</span>
+                    <span class="s1">self.is_consumed = </span><span class="s2">True</span>
+                <span class="s2">break</span>
+            <span class="s2">elif not </span><span class="s1">rule.errormessage:</span>
+                <span class="s0"># rule is not done yet</span>
+                <span class="s1">self.errormessage = </span><span class="s2">None</span>
+                <span class="s2">break</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.errormessage = list(self.rules)[</span><span class="s5">0</span><span class="s1">].errormessage</span>
+
+
+<span class="s2">class </span><span class="s1">EachOf(AssertRule):</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">*rules):</span>
+        <span class="s1">self.rules = list(rules)</span>
+
+    <span class="s2">def </span><span class="s1">process_statement(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s2">if not </span><span class="s1">self.rules:</span>
+            <span class="s1">self.is_consumed = </span><span class="s2">True</span>
+            <span class="s1">self.consume_statement = </span><span class="s2">False</span>
+
+        <span class="s2">while </span><span class="s1">self.rules:</span>
+            <span class="s1">rule = self.rules[</span><span class="s5">0</span><span class="s1">]</span>
+            <span class="s1">rule.process_statement(execute_observed)</span>
+            <span class="s2">if </span><span class="s1">rule.is_consumed:</span>
+                <span class="s1">self.rules.pop(</span><span class="s5">0</span><span class="s1">)</span>
+            <span class="s2">elif </span><span class="s1">rule.errormessage:</span>
+                <span class="s1">self.errormessage = rule.errormessage</span>
+            <span class="s2">if </span><span class="s1">rule.consume_statement:</span>
+                <span class="s2">break</span>
+
+        <span class="s2">if not </span><span class="s1">self.rules:</span>
+            <span class="s1">self.is_consumed = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">no_more_statements(self):</span>
+        <span class="s2">if </span><span class="s1">self.rules </span><span class="s2">and not </span><span class="s1">self.rules[</span><span class="s5">0</span><span class="s1">].is_consumed:</span>
+            <span class="s1">self.rules[</span><span class="s5">0</span><span class="s1">].no_more_statements()</span>
+        <span class="s2">elif </span><span class="s1">self.rules:</span>
+            <span class="s1">super().no_more_statements()</span>
+
+
+<span class="s2">class </span><span class="s1">Conditional(EachOf):</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">condition</span><span class="s3">, </span><span class="s1">rules</span><span class="s3">, </span><span class="s1">else_rules):</span>
+        <span class="s2">if </span><span class="s1">condition:</span>
+            <span class="s1">super().__init__(*rules)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">super().__init__(*else_rules)</span>
+
+
+<span class="s2">class </span><span class="s1">Or(AllOf):</span>
+    <span class="s2">def </span><span class="s1">process_statement(self</span><span class="s3">, </span><span class="s1">execute_observed):</span>
+        <span class="s2">for </span><span class="s1">rule </span><span class="s2">in </span><span class="s1">self.rules:</span>
+            <span class="s1">rule.process_statement(execute_observed)</span>
+            <span class="s2">if </span><span class="s1">rule.is_consumed:</span>
+                <span class="s1">self.is_consumed = </span><span class="s2">True</span>
+                <span class="s2">break</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.errormessage = list(self.rules)[</span><span class="s5">0</span><span class="s1">].errormessage</span>
+
+
+<span class="s2">class </span><span class="s1">SQLExecuteObserved:</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">context</span><span class="s3">, </span><span class="s1">clauseelement</span><span class="s3">, </span><span class="s1">multiparams</span><span class="s3">, </span><span class="s1">params):</span>
+        <span class="s1">self.context = context</span>
+        <span class="s1">self.clauseelement = clauseelement</span>
+
+        <span class="s2">if </span><span class="s1">multiparams:</span>
+            <span class="s1">self.parameters = multiparams</span>
+        <span class="s2">elif </span><span class="s1">params:</span>
+            <span class="s1">self.parameters = [params]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.parameters = []</span>
+        <span class="s1">self.statements = []</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self):</span>
+        <span class="s2">return </span><span class="s1">str(self.statements)</span>
+
+
+<span class="s2">class </span><span class="s1">SQLCursorExecuteObserved(</span>
+    <span class="s1">collections.namedtuple(</span>
+        <span class="s4">&quot;SQLCursorExecuteObserved&quot;</span><span class="s3">,</span>
+        <span class="s1">[</span><span class="s4">&quot;statement&quot;</span><span class="s3">, </span><span class="s4">&quot;parameters&quot;</span><span class="s3">, </span><span class="s4">&quot;context&quot;</span><span class="s3">, </span><span class="s4">&quot;executemany&quot;</span><span class="s1">]</span><span class="s3">,</span>
+    <span class="s1">)</span>
+<span class="s1">):</span>
+    <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">SQLAsserter:</span>
+    <span class="s2">def </span><span class="s1">__init__(self):</span>
+        <span class="s1">self.accumulated = []</span>
+
+    <span class="s2">def </span><span class="s1">_close(self):</span>
+        <span class="s1">self._final = self.accumulated</span>
+        <span class="s2">del </span><span class="s1">self.accumulated</span>
+
+    <span class="s2">def </span><span class="s1">assert_(self</span><span class="s3">, </span><span class="s1">*rules):</span>
+        <span class="s1">rule = EachOf(*rules)</span>
+
+        <span class="s1">observed = list(self._final)</span>
+        <span class="s2">while </span><span class="s1">observed:</span>
+            <span class="s1">statement = observed.pop(</span><span class="s5">0</span><span class="s1">)</span>
+            <span class="s1">rule.process_statement(statement)</span>
+            <span class="s2">if </span><span class="s1">rule.is_consumed:</span>
+                <span class="s2">break</span>
+            <span class="s2">elif </span><span class="s1">rule.errormessage:</span>
+                <span class="s2">assert False</span><span class="s3">, </span><span class="s1">rule.errormessage</span>
+        <span class="s2">if </span><span class="s1">observed:</span>
+            <span class="s2">assert False</span><span class="s3">, </span><span class="s4">&quot;Additional SQL statements remain:</span><span class="s7">\n</span><span class="s4">%s&quot; </span><span class="s1">% observed</span>
+        <span class="s2">elif not </span><span class="s1">rule.is_consumed:</span>
+            <span class="s1">rule.no_more_statements()</span>
+
+
+<span class="s1">@contextlib.contextmanager</span>
+<span class="s2">def </span><span class="s1">assert_engine(engine):</span>
+    <span class="s1">asserter = SQLAsserter()</span>
+
+    <span class="s1">orig = []</span>
+
+    <span class="s1">@event.listens_for(engine</span><span class="s3">, </span><span class="s4">&quot;before_execute&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">connection_execute(</span>
+        <span class="s1">conn</span><span class="s3">, </span><span class="s1">clauseelement</span><span class="s3">, </span><span class="s1">multiparams</span><span class="s3">, </span><span class="s1">params</span><span class="s3">, </span><span class="s1">execution_options</span>
+    <span class="s1">):</span>
+        <span class="s0"># grab the original statement + params before any cursor</span>
+        <span class="s0"># execution</span>
+        <span class="s1">orig[:] = clauseelement</span><span class="s3">, </span><span class="s1">multiparams</span><span class="s3">, </span><span class="s1">params</span>
+
+    <span class="s1">@event.listens_for(engine</span><span class="s3">, </span><span class="s4">&quot;after_cursor_execute&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">cursor_execute(</span>
+        <span class="s1">conn</span><span class="s3">, </span><span class="s1">cursor</span><span class="s3">, </span><span class="s1">statement</span><span class="s3">, </span><span class="s1">parameters</span><span class="s3">, </span><span class="s1">context</span><span class="s3">, </span><span class="s1">executemany</span>
+    <span class="s1">):</span>
+        <span class="s2">if not </span><span class="s1">context:</span>
+            <span class="s2">return</span>
+        <span class="s0"># then grab real cursor statements and associate them all</span>
+        <span class="s0"># around a single context</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">asserter.accumulated</span>
+            <span class="s2">and </span><span class="s1">asserter.accumulated[-</span><span class="s5">1</span><span class="s1">].context </span><span class="s2">is </span><span class="s1">context</span>
+        <span class="s1">):</span>
+            <span class="s1">obs = asserter.accumulated[-</span><span class="s5">1</span><span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">obs = SQLExecuteObserved(context</span><span class="s3">, </span><span class="s1">orig[</span><span class="s5">0</span><span class="s1">]</span><span class="s3">, </span><span class="s1">orig[</span><span class="s5">1</span><span class="s1">]</span><span class="s3">, </span><span class="s1">orig[</span><span class="s5">2</span><span class="s1">])</span>
+            <span class="s1">asserter.accumulated.append(obs)</span>
+        <span class="s1">obs.statements.append(</span>
+            <span class="s1">SQLCursorExecuteObserved(</span>
+                <span class="s1">statement</span><span class="s3">, </span><span class="s1">parameters</span><span class="s3">, </span><span class="s1">context</span><span class="s3">, </span><span class="s1">executemany</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">yield </span><span class="s1">asserter</span>
+    <span class="s2">finally</span><span class="s1">:</span>
+        <span class="s1">event.remove(engine</span><span class="s3">, </span><span class="s4">&quot;after_cursor_execute&quot;</span><span class="s3">, </span><span class="s1">cursor_execute)</span>
+        <span class="s1">event.remove(engine</span><span class="s3">, </span><span class="s4">&quot;before_execute&quot;</span><span class="s3">, </span><span class="s1">connection_execute)</span>
+        <span class="s1">asserter._close()</span>
+</pre>
+</body>
+</html>

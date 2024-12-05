@@ -1,0 +1,449 @@
+<html>
+<head>
+<title>array.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+array.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/array.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TypeVar</span>
+
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">CONTAINED_BY</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">CONTAINS</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">OVERLAP</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">types </span><span class="s2">as </span><span class="s1">sqltypes</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">expression</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">operators</span>
+<span class="s2">from </span><span class="s1">...sql._typing </span><span class="s2">import </span><span class="s1">_TypeEngineArgument</span>
+
+
+<span class="s1">_T = TypeVar(</span><span class="s3">&quot;_T&quot;</span><span class="s4">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s2">def </span><span class="s1">Any(other</span><span class="s4">, </span><span class="s1">arrexpr</span><span class="s4">, </span><span class="s1">operator=operators.eq):</span>
+    <span class="s5">&quot;&quot;&quot;A synonym for the ARRAY-level :meth:`.ARRAY.Comparator.any` method. 
+    See that method for details. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">return </span><span class="s1">arrexpr.any(other</span><span class="s4">, </span><span class="s1">operator)</span>
+
+
+<span class="s2">def </span><span class="s1">All(other</span><span class="s4">, </span><span class="s1">arrexpr</span><span class="s4">, </span><span class="s1">operator=operators.eq):</span>
+    <span class="s5">&quot;&quot;&quot;A synonym for the ARRAY-level :meth:`.ARRAY.Comparator.all` method. 
+    See that method for details. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">return </span><span class="s1">arrexpr.all(other</span><span class="s4">, </span><span class="s1">operator)</span>
+
+
+<span class="s2">class </span><span class="s1">array(expression.ExpressionClauseList[_T]):</span>
+    <span class="s5">&quot;&quot;&quot;A PostgreSQL ARRAY literal. 
+ 
+    This is used to produce ARRAY literals in SQL expressions, e.g.:: 
+ 
+        from sqlalchemy.dialects.postgresql import array 
+        from sqlalchemy.dialects import postgresql 
+        from sqlalchemy import select, func 
+ 
+        stmt = select(array([1,2]) + array([3,4,5])) 
+ 
+        print(stmt.compile(dialect=postgresql.dialect())) 
+ 
+    Produces the SQL:: 
+ 
+        SELECT ARRAY[%(param_1)s, %(param_2)s] || 
+            ARRAY[%(param_3)s, %(param_4)s, %(param_5)s]) AS anon_1 
+ 
+    An instance of :class:`.array` will always have the datatype 
+    :class:`_types.ARRAY`.  The &quot;inner&quot; type of the array is inferred from 
+    the values present, unless the ``type_`` keyword argument is passed:: 
+ 
+        array(['foo', 'bar'], type_=CHAR) 
+ 
+    Multidimensional arrays are produced by nesting :class:`.array` constructs. 
+    The dimensionality of the final :class:`_types.ARRAY` 
+    type is calculated by 
+    recursively adding the dimensions of the inner :class:`_types.ARRAY` 
+    type:: 
+ 
+        stmt = select( 
+            array([ 
+                array([1, 2]), array([3, 4]), array([column('q'), column('x')]) 
+            ]) 
+        ) 
+        print(stmt.compile(dialect=postgresql.dialect())) 
+ 
+    Produces:: 
+ 
+        SELECT ARRAY[ARRAY[%(param_1)s, %(param_2)s], 
+        ARRAY[%(param_3)s, %(param_4)s], ARRAY[q, x]] AS anon_1 
+ 
+    .. versionadded:: 1.3.6 added support for multidimensional array literals 
+ 
+    .. seealso:: 
+ 
+        :class:`_postgresql.ARRAY` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s3">&quot;array&quot;</span>
+
+    <span class="s1">stringify_dialect = </span><span class="s3">&quot;postgresql&quot;</span>
+    <span class="s1">inherit_cache = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">clauses</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">type_arg = kw.pop(</span><span class="s3">&quot;type_&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s1">super().__init__(operators.comma_op</span><span class="s4">, </span><span class="s1">*clauses</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+        <span class="s1">self._type_tuple = [arg.type </span><span class="s2">for </span><span class="s1">arg </span><span class="s2">in </span><span class="s1">self.clauses]</span>
+
+        <span class="s1">main_type = (</span>
+            <span class="s1">type_arg</span>
+            <span class="s2">if </span><span class="s1">type_arg </span><span class="s2">is not None</span>
+            <span class="s2">else </span><span class="s1">self._type_tuple[</span><span class="s6">0</span><span class="s1">] </span><span class="s2">if </span><span class="s1">self._type_tuple </span><span class="s2">else </span><span class="s1">sqltypes.NULLTYPE</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">isinstance(main_type</span><span class="s4">, </span><span class="s1">ARRAY):</span>
+            <span class="s1">self.type = ARRAY(</span>
+                <span class="s1">main_type.item_type</span><span class="s4">,</span>
+                <span class="s1">dimensions=(</span>
+                    <span class="s1">main_type.dimensions + </span><span class="s6">1</span>
+                    <span class="s2">if </span><span class="s1">main_type.dimensions </span><span class="s2">is not None</span>
+                    <span class="s2">else </span><span class="s6">2</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.type = ARRAY(main_type)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">_select_iterable(self):</span>
+        <span class="s2">return </span><span class="s1">(self</span><span class="s4">,</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_bind_param(self</span><span class="s4">, </span><span class="s1">operator</span><span class="s4">, </span><span class="s1">obj</span><span class="s4">, </span><span class="s1">_assume_scalar=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">type_=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">_assume_scalar </span><span class="s2">or </span><span class="s1">operator </span><span class="s2">is </span><span class="s1">operators.getitem:</span>
+            <span class="s2">return </span><span class="s1">expression.BindParameter(</span>
+                <span class="s2">None</span><span class="s4">,</span>
+                <span class="s1">obj</span><span class="s4">,</span>
+                <span class="s1">_compared_to_operator=operator</span><span class="s4">,</span>
+                <span class="s1">type_=type_</span><span class="s4">,</span>
+                <span class="s1">_compared_to_type=self.type</span><span class="s4">,</span>
+                <span class="s1">unique=</span><span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">array(</span>
+                <span class="s1">[</span>
+                    <span class="s1">self._bind_param(</span>
+                        <span class="s1">operator</span><span class="s4">, </span><span class="s1">o</span><span class="s4">, </span><span class="s1">_assume_scalar=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">type_=type_</span>
+                    <span class="s1">)</span>
+                    <span class="s2">for </span><span class="s1">o </span><span class="s2">in </span><span class="s1">obj</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">self_group(self</span><span class="s4">, </span><span class="s1">against=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">against </span><span class="s2">in </span><span class="s1">(operators.any_op</span><span class="s4">, </span><span class="s1">operators.all_op</span><span class="s4">, </span><span class="s1">operators.getitem):</span>
+            <span class="s2">return </span><span class="s1">expression.Grouping(self)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self</span>
+
+
+<span class="s2">class </span><span class="s1">ARRAY(sqltypes.ARRAY):</span>
+    <span class="s5">&quot;&quot;&quot;PostgreSQL ARRAY type. 
+ 
+    The :class:`_postgresql.ARRAY` type is constructed in the same way 
+    as the core :class:`_types.ARRAY` type; a member type is required, and a 
+    number of dimensions is recommended if the type is to be used for more 
+    than one dimension:: 
+ 
+        from sqlalchemy.dialects import postgresql 
+ 
+        mytable = Table(&quot;mytable&quot;, metadata, 
+                Column(&quot;data&quot;, postgresql.ARRAY(Integer, dimensions=2)) 
+            ) 
+ 
+    The :class:`_postgresql.ARRAY` type provides all operations defined on the 
+    core :class:`_types.ARRAY` type, including support for &quot;dimensions&quot;, 
+    indexed access, and simple matching such as 
+    :meth:`.types.ARRAY.Comparator.any` and 
+    :meth:`.types.ARRAY.Comparator.all`.  :class:`_postgresql.ARRAY` 
+    class also 
+    provides PostgreSQL-specific methods for containment operations, including 
+    :meth:`.postgresql.ARRAY.Comparator.contains` 
+    :meth:`.postgresql.ARRAY.Comparator.contained_by`, and 
+    :meth:`.postgresql.ARRAY.Comparator.overlap`, e.g.:: 
+ 
+        mytable.c.data.contains([1, 2]) 
+ 
+    Indexed access is one-based by default, to match that of PostgreSQL; 
+    for zero-based indexed access, set 
+    :paramref:`_postgresql.ARRAY.zero_indexes`. 
+ 
+    Additionally, the :class:`_postgresql.ARRAY` 
+    type does not work directly in 
+    conjunction with the :class:`.ENUM` type.  For a workaround, see the 
+    special type at :ref:`postgresql_array_of_enum`. 
+ 
+    .. container:: topic 
+ 
+        **Detecting Changes in ARRAY columns when using the ORM** 
+ 
+        The :class:`_postgresql.ARRAY` type, when used with the SQLAlchemy ORM, 
+        does not detect in-place mutations to the array. In order to detect 
+        these, the :mod:`sqlalchemy.ext.mutable` extension must be used, using 
+        the :class:`.MutableList` class:: 
+ 
+            from sqlalchemy.dialects.postgresql import ARRAY 
+            from sqlalchemy.ext.mutable import MutableList 
+ 
+            class SomeOrmClass(Base): 
+                # ... 
+ 
+                data = Column(MutableList.as_mutable(ARRAY(Integer))) 
+ 
+        This extension will allow &quot;in-place&quot; changes such to the array 
+        such as ``.append()`` to produce events which will be detected by the 
+        unit of work.  Note that changes to elements **inside** the array, 
+        including subarrays that are mutated in place, are **not** detected. 
+ 
+        Alternatively, assigning a new array value to an ORM element that 
+        replaces the old one will always trigger a change event. 
+ 
+    .. seealso:: 
+ 
+        :class:`_types.ARRAY` - base array type 
+ 
+        :class:`_postgresql.array` - produces a literal array value. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">item_type: _TypeEngineArgument[Any]</span><span class="s4">,</span>
+        <span class="s1">as_tuple: bool = </span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">dimensions: Optional[int] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">zero_indexes: bool = </span><span class="s2">False</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot;Construct an ARRAY. 
+ 
+        E.g.:: 
+ 
+          Column('myarray', ARRAY(Integer)) 
+ 
+        Arguments are: 
+ 
+        :param item_type: The data type of items of this array. Note that 
+          dimensionality is irrelevant here, so multi-dimensional arrays like 
+          ``INTEGER[][]``, are constructed as ``ARRAY(Integer)``, not as 
+          ``ARRAY(ARRAY(Integer))`` or such. 
+ 
+        :param as_tuple=False: Specify whether return results 
+          should be converted to tuples from lists. DBAPIs such 
+          as psycopg2 return lists by default. When tuples are 
+          returned, the results are hashable. 
+ 
+        :param dimensions: if non-None, the ARRAY will assume a fixed 
+         number of dimensions.  This will cause the DDL emitted for this 
+         ARRAY to include the exact number of bracket clauses ``[]``, 
+         and will also optimize the performance of the type overall. 
+         Note that PG arrays are always implicitly &quot;non-dimensioned&quot;, 
+         meaning they can store any number of dimensions no matter how 
+         they were declared. 
+ 
+        :param zero_indexes=False: when True, index values will be converted 
+         between Python zero-based and PostgreSQL one-based indexes, e.g. 
+         a value of one will be added to all index values before passing 
+         to the database. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">isinstance(item_type</span><span class="s4">, </span><span class="s1">ARRAY):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span>
+                <span class="s3">&quot;Do not nest ARRAY types; ARRAY(basetype) &quot;</span>
+                <span class="s3">&quot;handles multi-dimensional arrays of basetype&quot;</span>
+            <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">isinstance(item_type</span><span class="s4">, </span><span class="s1">type):</span>
+            <span class="s1">item_type = item_type()</span>
+        <span class="s1">self.item_type = item_type</span>
+        <span class="s1">self.as_tuple = as_tuple</span>
+        <span class="s1">self.dimensions = dimensions</span>
+        <span class="s1">self.zero_indexes = zero_indexes</span>
+
+    <span class="s2">class </span><span class="s1">Comparator(sqltypes.ARRAY.Comparator):</span>
+        <span class="s5">&quot;&quot;&quot;Define comparison operations for :class:`_types.ARRAY`. 
+ 
+        Note that these operations are in addition to those provided 
+        by the base :class:`.types.ARRAY.Comparator` class, including 
+        :meth:`.types.ARRAY.Comparator.any` and 
+        :meth:`.types.ARRAY.Comparator.all`. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s2">def </span><span class="s1">contains(self</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression.  Test if elements are a superset of the 
+            elements of the argument array expression. 
+ 
+            kwargs may be ignored by this operator but are required for API 
+            conformance. 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(CONTAINS</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean)</span>
+
+        <span class="s2">def </span><span class="s1">contained_by(self</span><span class="s4">, </span><span class="s1">other):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression.  Test if elements are a proper subset of the 
+            elements of the argument array expression. 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(</span>
+                <span class="s1">CONTAINED_BY</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean</span>
+            <span class="s1">)</span>
+
+        <span class="s2">def </span><span class="s1">overlap(self</span><span class="s4">, </span><span class="s1">other):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression.  Test if array has elements in common with 
+            an argument array expression. 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(OVERLAP</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean)</span>
+
+    <span class="s1">comparator_factory = Comparator</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">hashable(self):</span>
+        <span class="s2">return </span><span class="s1">self.as_tuple</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">python_type(self):</span>
+        <span class="s2">return </span><span class="s1">list</span>
+
+    <span class="s2">def </span><span class="s1">compare_values(self</span><span class="s4">, </span><span class="s1">x</span><span class="s4">, </span><span class="s1">y):</span>
+        <span class="s2">return </span><span class="s1">x == y</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s2">def </span><span class="s1">_against_native_enum(self):</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">isinstance(self.item_type</span><span class="s4">, </span><span class="s1">sqltypes.Enum)</span>
+            <span class="s2">and </span><span class="s1">self.item_type.native_enum</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">literal_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s1">item_proc = self.item_type.dialect_impl(dialect).literal_processor(</span>
+            <span class="s1">dialect</span>
+        <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">item_proc </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return None</span>
+
+        <span class="s2">def </span><span class="s1">to_str(elements):</span>
+            <span class="s2">return </span><span class="s3">f&quot;ARRAY[</span><span class="s7">{</span><span class="s3">', '</span><span class="s1">.join(elements)</span><span class="s7">}</span><span class="s3">]&quot;</span>
+
+        <span class="s2">def </span><span class="s1">process(value):</span>
+            <span class="s1">inner = self._apply_item_processor(</span>
+                <span class="s1">value</span><span class="s4">, </span><span class="s1">item_proc</span><span class="s4">, </span><span class="s1">self.dimensions</span><span class="s4">, </span><span class="s1">to_str</span>
+            <span class="s1">)</span>
+            <span class="s2">return </span><span class="s1">inner</span>
+
+        <span class="s2">return </span><span class="s1">process</span>
+
+    <span class="s2">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s1">item_proc = self.item_type.dialect_impl(dialect).bind_processor(</span>
+            <span class="s1">dialect</span>
+        <span class="s1">)</span>
+
+        <span class="s2">def </span><span class="s1">process(value):</span>
+            <span class="s2">if </span><span class="s1">value </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">value</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">self._apply_item_processor(</span>
+                    <span class="s1">value</span><span class="s4">, </span><span class="s1">item_proc</span><span class="s4">, </span><span class="s1">self.dimensions</span><span class="s4">, </span><span class="s1">list</span>
+                <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">process</span>
+
+    <span class="s2">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s1">item_proc = self.item_type.dialect_impl(dialect).result_processor(</span>
+            <span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype</span>
+        <span class="s1">)</span>
+
+        <span class="s2">def </span><span class="s1">process(value):</span>
+            <span class="s2">if </span><span class="s1">value </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">value</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">self._apply_item_processor(</span>
+                    <span class="s1">value</span><span class="s4">,</span>
+                    <span class="s1">item_proc</span><span class="s4">,</span>
+                    <span class="s1">self.dimensions</span><span class="s4">,</span>
+                    <span class="s1">tuple </span><span class="s2">if </span><span class="s1">self.as_tuple </span><span class="s2">else </span><span class="s1">list</span><span class="s4">,</span>
+                <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">self._against_native_enum:</span>
+            <span class="s1">super_rp = process</span>
+            <span class="s1">pattern = re.compile(</span><span class="s3">r&quot;^{(.*)}$&quot;</span><span class="s1">)</span>
+
+            <span class="s2">def </span><span class="s1">handle_raw_string(value):</span>
+                <span class="s1">inner = pattern.match(value).group(</span><span class="s6">1</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">_split_enum_values(inner)</span>
+
+            <span class="s2">def </span><span class="s1">process(value):</span>
+                <span class="s2">if </span><span class="s1">value </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s2">return </span><span class="s1">value</span>
+                <span class="s0"># isinstance(value, str) is required to handle</span>
+                <span class="s0"># the case where a TypeDecorator for and Array of Enum is</span>
+                <span class="s0"># used like was required in sa &lt; 1.3.17</span>
+                <span class="s2">return </span><span class="s1">super_rp(</span>
+                    <span class="s1">handle_raw_string(value)</span>
+                    <span class="s2">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">str)</span>
+                    <span class="s2">else </span><span class="s1">value</span>
+                <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">process</span>
+
+
+<span class="s2">def </span><span class="s1">_split_enum_values(array_string):</span>
+    <span class="s2">if </span><span class="s3">'&quot;' </span><span class="s2">not in </span><span class="s1">array_string:</span>
+        <span class="s0"># no escape char is present so it can just split on the comma</span>
+        <span class="s2">return </span><span class="s1">array_string.split(</span><span class="s3">&quot;,&quot;</span><span class="s1">) </span><span class="s2">if </span><span class="s1">array_string </span><span class="s2">else </span><span class="s1">[]</span>
+
+    <span class="s0"># handles quoted strings from:</span>
+    <span class="s0"># r'abc,&quot;quoted&quot;,&quot;also\\\\quoted&quot;, &quot;quoted, comma&quot;, &quot;esc \&quot; quot&quot;, qpr'</span>
+    <span class="s0"># returns</span>
+    <span class="s0"># ['abc', 'quoted', 'also\\quoted', 'quoted, comma', 'esc &quot; quot', 'qpr']</span>
+    <span class="s1">text = array_string.replace(</span><span class="s3">r&quot;\&quot;&quot;</span><span class="s4">, </span><span class="s3">&quot;_$ESC_QUOTE$_&quot;</span><span class="s1">)</span>
+    <span class="s1">text = text.replace(</span><span class="s3">r&quot;\\&quot;</span><span class="s4">, </span><span class="s3">&quot;</span><span class="s7">\\</span><span class="s3">&quot;</span><span class="s1">)</span>
+    <span class="s1">result = []</span>
+    <span class="s1">on_quotes = re.split(</span><span class="s3">r'(&quot;)'</span><span class="s4">, </span><span class="s1">text)</span>
+    <span class="s1">in_quotes = </span><span class="s2">False</span>
+    <span class="s2">for </span><span class="s1">tok </span><span class="s2">in </span><span class="s1">on_quotes:</span>
+        <span class="s2">if </span><span class="s1">tok == </span><span class="s3">'&quot;'</span><span class="s1">:</span>
+            <span class="s1">in_quotes = </span><span class="s2">not </span><span class="s1">in_quotes</span>
+        <span class="s2">elif </span><span class="s1">in_quotes:</span>
+            <span class="s1">result.append(tok.replace(</span><span class="s3">&quot;_$ESC_QUOTE$_&quot;</span><span class="s4">, </span><span class="s3">'&quot;'</span><span class="s1">))</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">result.extend(re.findall(</span><span class="s3">r&quot;([^\s,]+),?&quot;</span><span class="s4">, </span><span class="s1">tok))</span>
+    <span class="s2">return </span><span class="s1">result</span>
+</pre>
+</body>
+</html>

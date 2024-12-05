@@ -1,0 +1,529 @@
+<html>
+<head>
+<title>dictionary.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+dictionary.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/oracle/dictionary.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">.types </span><span class="s2">import </span><span class="s1">DATE</span>
+<span class="s2">from </span><span class="s1">.types </span><span class="s2">import </span><span class="s1">LONG</span>
+<span class="s2">from </span><span class="s1">.types </span><span class="s2">import </span><span class="s1">NUMBER</span>
+<span class="s2">from </span><span class="s1">.types </span><span class="s2">import </span><span class="s1">RAW</span>
+<span class="s2">from </span><span class="s1">.types </span><span class="s2">import </span><span class="s1">VARCHAR2</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Column</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">MetaData</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Table</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">table</span>
+<span class="s2">from </span><span class="s1">...sql.sqltypes </span><span class="s2">import </span><span class="s1">CHAR</span>
+
+<span class="s0"># constants</span>
+<span class="s1">DB_LINK_PLACEHOLDER = </span><span class="s3">&quot;__$sa_dblink$__&quot;</span>
+<span class="s0"># tables</span>
+<span class="s1">dual = table(</span><span class="s3">&quot;dual&quot;</span><span class="s1">)</span>
+<span class="s1">dictionary_meta = MetaData()</span>
+
+<span class="s0"># NOTE: all the dictionary_meta are aliases because oracle does not like</span>
+<span class="s0"># using the full table@dblink for every column in query, and complains with</span>
+<span class="s0"># ORA-00960: ambiguous column naming in select list</span>
+<span class="s1">all_tables = Table(</span>
+    <span class="s3">&quot;all_tables&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;tablespace_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">30</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;cluster_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;iot_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;status&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;pct_free&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;pct_used&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;ini_trans&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;max_trans&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;initial_extent&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;next_extent&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;min_extents&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;max_extents&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;pct_increase&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;freelists&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;freelist_groups&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;logging&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;backed_up&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;num_rows&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;blocks&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;empty_blocks&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;avg_space&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;chain_cnt&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;avg_row_len&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;avg_space_freelist_blocks&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;num_freelist_blocks&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;degree&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">10</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;instances&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">10</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;cache&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">5</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_lock&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sample_size&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;last_analyzed&quot;</span><span class="s4">, </span><span class="s1">DATE)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;partitioned&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;iot_type&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">12</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;temporary&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;secondary&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;nested&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;buffer_pool&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;flash_cache&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;cell_flash_cache&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;row_movement&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;global_stats&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;user_stats&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;duration&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">15</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;skip_corrupt&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;monitoring&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;cluster_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;dependencies&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;compression&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;compress_for&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">30</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;dropped&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;read_only&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;segment_created&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;result_cache&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;clustering&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;activity_tracking&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">23</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;dml_timestamp&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">25</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;has_identity&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;container_data&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;inmemory&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;inmemory_priority&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;inmemory_distribute&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">15</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;inmemory_compression&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">17</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;inmemory_duplicate&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">13</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;default_collation&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">100</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;duplicated&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sharded&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;externally_sharded&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;externally_duplicated&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;external&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;hybrid&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;cellmemory&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">24</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;containers_default&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;container_map&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;extended_data_link&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;extended_data_link_map&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;inmemory_service&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">12</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;inmemory_service_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;container_map_object&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;memoptimize_read&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;memoptimize_write&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;has_sensitive_column&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;admit_null&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_link_dml_enabled&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;logical_replication&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_tables&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_views = Table(</span>
+    <span class="s3">&quot;all_views&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;view_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;text_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;text&quot;</span><span class="s4">, </span><span class="s1">LONG)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;text_vc&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;type_text_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;type_text&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;oid_text_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;oid_text&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;view_type_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;view_type&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;superview_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;editioning_view&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;read_only&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;container_data&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;bequeath&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">12</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;origin_con_id&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">256</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;default_collation&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">100</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;containers_default&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;container_map&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;extended_data_link&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;extended_data_link_map&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;has_sensitive_column&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;admit_null&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;pdb_local_only&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_views&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_sequences = Table(</span>
+    <span class="s3">&quot;all_sequences&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sequence_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sequence_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;min_value&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;max_value&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;increment_by&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;cycle_flag&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;order_flag&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;cache_size&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;last_number&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;scale_flag&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;extend_flag&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sharded_flag&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;session_flag&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;keep_value&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_sequences&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_users = Table(</span>
+    <span class="s3">&quot;all_users&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;username&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;user_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;created&quot;</span><span class="s4">, </span><span class="s1">DATE</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;common&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;oracle_maintained&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;inherited&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;default_collation&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">100</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;implicit&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;all_shard&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;external_shard&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_users&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_mviews = Table(</span>
+    <span class="s3">&quot;all_mviews&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;mview_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;container_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;query&quot;</span><span class="s4">, </span><span class="s1">LONG)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;query_len&quot;</span><span class="s4">, </span><span class="s1">NUMBER(</span><span class="s5">38</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;updatable&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;update_log&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;master_rollback_seg&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;master_link&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;rewrite_enabled&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;rewrite_capability&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">9</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;refresh_mode&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">6</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;refresh_method&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;build_mode&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">9</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;fast_refreshable&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">18</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;last_refresh_type&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;last_refresh_date&quot;</span><span class="s4">, </span><span class="s1">DATE)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;last_refresh_end_time&quot;</span><span class="s4">, </span><span class="s1">DATE)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;staleness&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">19</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;after_fast_refresh&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">19</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unknown_prebuilt&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unknown_plsql_func&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unknown_external_table&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unknown_consider_fresh&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unknown_import&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unknown_trusted_fd&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;compile_state&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">19</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;use_no_index&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;stale_since&quot;</span><span class="s4">, </span><span class="s1">DATE)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;num_pct_tables&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;num_fresh_pct_regions&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;num_stale_pct_regions&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;segment_created&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;evaluation_edition&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unusable_before&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unusable_beginning&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;default_collation&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">100</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;on_query_computation&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;auto&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_mviews&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_tab_identity_cols = Table(</span>
+    <span class="s3">&quot;all_tab_identity_cols&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;generation_type&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">10</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sequence_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;identity_options&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">298</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_tab_identity_cols&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_tab_cols = Table(</span>
+    <span class="s3">&quot;all_tab_cols&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_type&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_type_mod&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_type_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_precision&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_scale&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;nullable&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;default_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_default&quot;</span><span class="s4">, </span><span class="s1">LONG)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;num_distinct&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;low_value&quot;</span><span class="s4">, </span><span class="s1">RAW(</span><span class="s5">1000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;high_value&quot;</span><span class="s4">, </span><span class="s1">RAW(</span><span class="s5">1000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;density&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;num_nulls&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;num_buckets&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;last_analyzed&quot;</span><span class="s4">, </span><span class="s1">DATE)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sample_size&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;character_set_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">44</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;char_col_decl_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;global_stats&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;user_stats&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;avg_col_len&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;char_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;char_used&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;v80_fmt_image&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_upgraded&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;hidden_column&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;virtual_column&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;segment_column_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;internal_column_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;histogram&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">15</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;qualified_col_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;user_generated&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;default_on_null&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;identity_column&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;evaluation_edition&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unusable_before&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;unusable_beginning&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;collation&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">100</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;collated_column_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_tab_cols&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_tab_comments = Table(</span>
+    <span class="s3">&quot;all_tab_comments&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_type&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">11</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;comments&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;origin_con_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_tab_comments&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_col_comments = Table(</span>
+    <span class="s3">&quot;all_col_comments&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;comments&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;origin_con_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_col_comments&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_mview_comments = Table(</span>
+    <span class="s3">&quot;all_mview_comments&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;mview_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;comments&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_mview_comments&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_ind_columns = Table(</span>
+    <span class="s3">&quot;all_ind_columns&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;index_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;index_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_position&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;char_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;descend&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;collated_column_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_ind_columns&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_indexes = Table(</span>
+    <span class="s3">&quot;all_indexes&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;index_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;index_type&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">27</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_type&quot;</span><span class="s4">, </span><span class="s1">CHAR(</span><span class="s5">11</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;uniqueness&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">9</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;compression&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">13</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;prefix_length&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;tablespace_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">30</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;ini_trans&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;max_trans&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;initial_extent&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;next_extent&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;min_extents&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;max_extents&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;pct_increase&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;pct_threshold&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;include_column&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;freelists&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;freelist_groups&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;pct_free&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;logging&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;blevel&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;leaf_blocks&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;distinct_keys&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;avg_leaf_blocks_per_key&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;avg_data_blocks_per_key&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;clustering_factor&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;status&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;num_rows&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sample_size&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;last_analyzed&quot;</span><span class="s4">, </span><span class="s1">DATE)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;degree&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">40</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;instances&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">40</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;partitioned&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;temporary&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;generated&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;secondary&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;buffer_pool&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;flash_cache&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;cell_flash_cache&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;user_stats&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;duration&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">15</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;pct_direct_access&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;ityp_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;ityp_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;parameters&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;global_stats&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;domidx_status&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">12</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;domidx_opstatus&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">6</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;funcidx_status&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;join_index&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;iot_redundant_pkey_elim&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;dropped&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;visibility&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">9</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;domidx_management&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">14</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;segment_created&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;orphaned_entries&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;indexing&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;auto&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_indexes&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_ind_expressions = Table(</span>
+    <span class="s3">&quot;all_ind_expressions&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;index_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;index_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_expression&quot;</span><span class="s4">, </span><span class="s1">LONG)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_position&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_ind_expressions&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_constraints = Table(</span>
+    <span class="s3">&quot;all_constraints&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;constraint_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;constraint_type&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;search_condition&quot;</span><span class="s4">, </span><span class="s1">LONG)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;search_condition_vc&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;r_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;r_constraint_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;delete_rule&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">9</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;status&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">8</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;deferrable&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">14</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;deferred&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">9</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;validated&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">13</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;generated&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">14</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;bad&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;rely&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;last_change&quot;</span><span class="s4">, </span><span class="s1">DATE)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;index_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;index_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;invalid&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;view_related&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">14</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;origin_con_id&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">256</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_constraints&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_cons_columns = Table(</span>
+    <span class="s3">&quot;all_cons_columns&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;constraint_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;column_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">4000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;position&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_cons_columns&quot;</span><span class="s1">)</span>
+
+<span class="s0"># TODO figure out if it's still relevant, since there is no mention from here</span>
+<span class="s0"># https://docs.oracle.com/en/database/oracle/oracle-database/21/refrn/ALL_DB_LINKS.html</span>
+<span class="s0"># original note:</span>
+<span class="s0"># using user_db_links here since all_db_links appears</span>
+<span class="s0"># to have more restricted permissions.</span>
+<span class="s0"># https://docs.oracle.com/cd/B28359_01/server.111/b28310/ds_admin005.htm</span>
+<span class="s0"># will need to hear from more users if we are doing</span>
+<span class="s0"># the right thing here.  See [ticket:2619]</span>
+<span class="s1">all_db_links = Table(</span>
+    <span class="s3">&quot;all_db_links&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;db_link&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;username&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;host&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">2000</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;created&quot;</span><span class="s4">, </span><span class="s1">DATE</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;hidden&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;shard_internal&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;valid&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;intra_cdb&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">3</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_db_links&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_synonyms = Table(</span>
+    <span class="s3">&quot;all_synonyms&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;synonym_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;table_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;db_link&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;origin_con_id&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">256</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_synonyms&quot;</span><span class="s1">)</span>
+
+<span class="s1">all_objects = Table(</span>
+    <span class="s3">&quot;all_objects&quot; </span><span class="s1">+ DB_LINK_PLACEHOLDER</span><span class="s4">,</span>
+    <span class="s1">dictionary_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;owner&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;object_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">)</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;subobject_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;object_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;data_object_id&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;object_type&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">23</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;created&quot;</span><span class="s4">, </span><span class="s1">DATE</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;last_ddl_time&quot;</span><span class="s4">, </span><span class="s1">DATE</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;timestamp&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">19</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;status&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">7</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;temporary&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;generated&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;secondary&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;namespace&quot;</span><span class="s4">, </span><span class="s1">NUMBER</span><span class="s4">, </span><span class="s1">nullable=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;edition_name&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">128</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sharing&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">13</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;editionable&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;oracle_maintained&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;application&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;default_collation&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">100</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;duplicated&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;sharded&quot;</span><span class="s4">, </span><span class="s1">VARCHAR2(</span><span class="s5">1</span><span class="s1">))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;created_appid&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;created_vsnid&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;modified_appid&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s3">&quot;modified_vsnid&quot;</span><span class="s4">, </span><span class="s1">NUMBER)</span><span class="s4">,</span>
+<span class="s1">).alias(</span><span class="s3">&quot;a_objects&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

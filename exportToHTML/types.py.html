@@ -1,0 +1,327 @@
+<html>
+<head>
+<title>types.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #bbb55b;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #717ed3; font-style: italic;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+types.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/types.py</span>
+<span class="s0"># Copyright (C) 2013-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">datetime </span><span class="s2">as </span><span class="s1">dt</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">overload</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Type</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">uuid </span><span class="s2">import </span><span class="s1">UUID </span><span class="s2">as </span><span class="s1">_python_UUID</span>
+
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">sqltypes</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">type_api</span>
+<span class="s2">from </span><span class="s1">...util.typing </span><span class="s2">import </span><span class="s1">Literal</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">...engine.interfaces </span><span class="s2">import </span><span class="s1">Dialect</span>
+    <span class="s2">from </span><span class="s1">...sql.operators </span><span class="s2">import </span><span class="s1">OperatorType</span>
+    <span class="s2">from </span><span class="s1">...sql.type_api </span><span class="s2">import </span><span class="s1">_LiteralProcessorType</span>
+    <span class="s2">from </span><span class="s1">...sql.type_api </span><span class="s2">import </span><span class="s1">TypeEngine</span>
+
+<span class="s1">_DECIMAL_TYPES = (</span><span class="s3">1231</span><span class="s4">, </span><span class="s3">1700</span><span class="s1">)</span>
+<span class="s1">_FLOAT_TYPES = (</span><span class="s3">700</span><span class="s4">, </span><span class="s3">701</span><span class="s4">, </span><span class="s3">1021</span><span class="s4">, </span><span class="s3">1022</span><span class="s1">)</span>
+<span class="s1">_INT_TYPES = (</span><span class="s3">20</span><span class="s4">, </span><span class="s3">21</span><span class="s4">, </span><span class="s3">23</span><span class="s4">, </span><span class="s3">26</span><span class="s4">, </span><span class="s3">1005</span><span class="s4">, </span><span class="s3">1007</span><span class="s4">, </span><span class="s3">1016</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">PGUuid(sqltypes.UUID[sqltypes._UUID_RETURN]):</span>
+    <span class="s1">render_bind_cast = </span><span class="s2">True</span>
+    <span class="s1">render_literal_cast = </span><span class="s2">True</span>
+
+    <span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s1">@overload</span>
+        <span class="s2">def </span><span class="s1">__init__(</span>
+            <span class="s1">self: PGUuid[_python_UUID]</span><span class="s4">, </span><span class="s1">as_uuid: Literal[</span><span class="s2">True</span><span class="s1">] = ...</span>
+        <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+        <span class="s1">@overload</span>
+        <span class="s2">def </span><span class="s1">__init__(</span>
+            <span class="s1">self: PGUuid[str]</span><span class="s4">, </span><span class="s1">as_uuid: Literal[</span><span class="s2">False</span><span class="s1">] = ...</span>
+        <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+        <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">as_uuid: bool = </span><span class="s2">True</span><span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">BYTEA(sqltypes.LargeBinary):</span>
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;BYTEA&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">INET(sqltypes.TypeEngine[str]):</span>
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;INET&quot;</span>
+
+
+<span class="s1">PGInet = INET</span>
+
+
+<span class="s2">class </span><span class="s1">CIDR(sqltypes.TypeEngine[str]):</span>
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;CIDR&quot;</span>
+
+
+<span class="s1">PGCidr = CIDR</span>
+
+
+<span class="s2">class </span><span class="s1">MACADDR(sqltypes.TypeEngine[str]):</span>
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;MACADDR&quot;</span>
+
+
+<span class="s1">PGMacAddr = MACADDR</span>
+
+
+<span class="s2">class </span><span class="s1">MACADDR8(sqltypes.TypeEngine[str]):</span>
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;MACADDR8&quot;</span>
+
+
+<span class="s1">PGMacAddr8 = MACADDR8</span>
+
+
+<span class="s2">class </span><span class="s1">MONEY(sqltypes.TypeEngine[str]):</span>
+    <span class="s6">r&quot;&quot;&quot;Provide the PostgreSQL MONEY type. 
+ 
+    Depending on driver, result rows using this type may return a 
+    string value which includes currency symbols. 
+ 
+    For this reason, it may be preferable to provide conversion to a 
+    numerically-based currency datatype using :class:`_types.TypeDecorator`:: 
+ 
+        import re 
+        import decimal 
+        from sqlalchemy import Dialect 
+        from sqlalchemy import TypeDecorator 
+ 
+        class NumericMoney(TypeDecorator): 
+            impl = MONEY 
+ 
+            def process_result_value( 
+                self, value: Any, dialect: Dialect 
+            ) -&gt; None: 
+                if value is not None: 
+                    # adjust this for the currency and numeric 
+                    m = re.match(r&quot;\$([\d.]+)&quot;, value) 
+                    if m: 
+                        value = decimal.Decimal(m.group(1)) 
+                return value 
+ 
+    Alternatively, the conversion may be applied as a CAST using 
+    the :meth:`_types.TypeDecorator.column_expression` method as follows:: 
+ 
+        import decimal 
+        from sqlalchemy import cast 
+        from sqlalchemy import TypeDecorator 
+ 
+        class NumericMoney(TypeDecorator): 
+            impl = MONEY 
+ 
+            def column_expression(self, column: Any): 
+                return cast(column, Numeric()) 
+ 
+    .. versionadded:: 1.2 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;MONEY&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">OID(sqltypes.TypeEngine[int]):</span>
+    <span class="s6">&quot;&quot;&quot;Provide the PostgreSQL OID type.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;OID&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">REGCONFIG(sqltypes.TypeEngine[str]):</span>
+    <span class="s6">&quot;&quot;&quot;Provide the PostgreSQL REGCONFIG type. 
+ 
+    .. versionadded:: 2.0.0rc1 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;REGCONFIG&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">TSQUERY(sqltypes.TypeEngine[str]):</span>
+    <span class="s6">&quot;&quot;&quot;Provide the PostgreSQL TSQUERY type. 
+ 
+    .. versionadded:: 2.0.0rc1 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;TSQUERY&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">REGCLASS(sqltypes.TypeEngine[str]):</span>
+    <span class="s6">&quot;&quot;&quot;Provide the PostgreSQL REGCLASS type. 
+ 
+    .. versionadded:: 1.2.7 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;REGCLASS&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">TIMESTAMP(sqltypes.TIMESTAMP):</span>
+    <span class="s6">&quot;&quot;&quot;Provide the PostgreSQL TIMESTAMP type.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;TIMESTAMP&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">timezone: bool = </span><span class="s2">False</span><span class="s4">, </span><span class="s1">precision: Optional[int] = </span><span class="s2">None</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s6">&quot;&quot;&quot;Construct a TIMESTAMP. 
+ 
+        :param timezone: boolean value if timezone present, default False 
+        :param precision: optional integer precision value 
+ 
+         .. versionadded:: 1.4 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">super().__init__(timezone=timezone)</span>
+        <span class="s1">self.precision = precision</span>
+
+
+<span class="s2">class </span><span class="s1">TIME(sqltypes.TIME):</span>
+    <span class="s6">&quot;&quot;&quot;PostgreSQL TIME type.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;TIME&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">timezone: bool = </span><span class="s2">False</span><span class="s4">, </span><span class="s1">precision: Optional[int] = </span><span class="s2">None</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s6">&quot;&quot;&quot;Construct a TIME. 
+ 
+        :param timezone: boolean value if timezone present, default False 
+        :param precision: optional integer precision value 
+ 
+         .. versionadded:: 1.4 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">super().__init__(timezone=timezone)</span>
+        <span class="s1">self.precision = precision</span>
+
+
+<span class="s2">class </span><span class="s1">INTERVAL(type_api.NativeForEmulated</span><span class="s4">, </span><span class="s1">sqltypes._AbstractInterval):</span>
+    <span class="s6">&quot;&quot;&quot;PostgreSQL INTERVAL type.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;INTERVAL&quot;</span>
+    <span class="s1">native = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">precision: Optional[int] = </span><span class="s2">None</span><span class="s4">, </span><span class="s1">fields: Optional[str] = </span><span class="s2">None</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s6">&quot;&quot;&quot;Construct an INTERVAL. 
+ 
+        :param precision: optional integer precision value 
+        :param fields: string fields specifier.  allows storage of fields 
+         to be limited, such as ``&quot;YEAR&quot;``, ``&quot;MONTH&quot;``, ``&quot;DAY TO HOUR&quot;``, 
+         etc. 
+ 
+         .. versionadded:: 1.2 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.precision = precision</span>
+        <span class="s1">self.fields = fields</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">adapt_emulated_to_native(</span>
+        <span class="s1">cls</span><span class="s4">, </span><span class="s1">interval: sqltypes.Interval</span><span class="s4">, </span><span class="s1">**kw: Any  </span><span class="s0"># type: ignore[override]</span>
+    <span class="s1">) -&gt; INTERVAL:</span>
+        <span class="s2">return </span><span class="s1">INTERVAL(precision=interval.second_precision)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">_type_affinity(self) -&gt; Type[sqltypes.Interval]:</span>
+        <span class="s2">return </span><span class="s1">sqltypes.Interval</span>
+
+    <span class="s2">def </span><span class="s1">as_generic(self</span><span class="s4">, </span><span class="s1">allow_nulltype: bool = </span><span class="s2">False</span><span class="s1">) -&gt; sqltypes.Interval:</span>
+        <span class="s2">return </span><span class="s1">sqltypes.Interval(native=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">second_precision=self.precision)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">python_type(self) -&gt; Type[dt.timedelta]:</span>
+        <span class="s2">return </span><span class="s1">dt.timedelta</span>
+
+    <span class="s2">def </span><span class="s1">literal_processor(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">dialect: Dialect</span>
+    <span class="s1">) -&gt; Optional[_LiteralProcessorType[dt.timedelta]]:</span>
+        <span class="s2">def </span><span class="s1">process(value: dt.timedelta) -&gt; str:</span>
+            <span class="s2">return </span><span class="s5">f&quot;make_interval(secs=&gt;</span><span class="s7">{</span><span class="s1">value.total_seconds()</span><span class="s7">}</span><span class="s5">)&quot;</span>
+
+        <span class="s2">return </span><span class="s1">process</span>
+
+
+<span class="s1">PGInterval = INTERVAL</span>
+
+
+<span class="s2">class </span><span class="s1">BIT(sqltypes.TypeEngine[int]):</span>
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;BIT&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">length: Optional[int] = </span><span class="s2">None</span><span class="s4">, </span><span class="s1">varying: bool = </span><span class="s2">False</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">varying:</span>
+            <span class="s0"># BIT VARYING can be unlimited-length, so no default</span>
+            <span class="s1">self.length = length</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># BIT without VARYING defaults to length 1</span>
+            <span class="s1">self.length = length </span><span class="s2">or </span><span class="s3">1</span>
+        <span class="s1">self.varying = varying</span>
+
+
+<span class="s1">PGBit = BIT</span>
+
+
+<span class="s2">class </span><span class="s1">TSVECTOR(sqltypes.TypeEngine[str]):</span>
+    <span class="s6">&quot;&quot;&quot;The :class:`_postgresql.TSVECTOR` type implements the PostgreSQL 
+    text search type TSVECTOR. 
+ 
+    It can be used to do full text queries on natural language 
+    documents. 
+ 
+    .. seealso:: 
+ 
+        :ref:`postgresql_match` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;TSVECTOR&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">CITEXT(sqltypes.TEXT):</span>
+    <span class="s6">&quot;&quot;&quot;Provide the PostgreSQL CITEXT type. 
+ 
+    .. versionadded:: 2.0.7 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;CITEXT&quot;</span>
+
+    <span class="s2">def </span><span class="s1">coerce_compared_value(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">op: Optional[OperatorType]</span><span class="s4">, </span><span class="s1">value: Any</span>
+    <span class="s1">) -&gt; TypeEngine[Any]:</span>
+        <span class="s2">return </span><span class="s1">self</span>
+</pre>
+</body>
+</html>

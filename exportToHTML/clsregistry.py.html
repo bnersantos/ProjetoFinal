@@ -1,0 +1,595 @@
+<html>
+<head>
+<title>clsregistry.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+clsregistry.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/clsregistry.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Routines to handle the string class registry used by declarative. 
+ 
+This system allows specification of classes and expressions used in 
+:func:`_orm.relationship` using strings. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">re</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">MutableMapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">weakref</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">interfaces</span>
+<span class="s3">from </span><span class="s1">.descriptor_props </span><span class="s3">import </span><span class="s1">SynonymProperty</span>
+<span class="s3">from </span><span class="s1">.properties </span><span class="s3">import </span><span class="s1">ColumnProperty</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">class_mapper</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">inspection</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..sql.schema </span><span class="s3">import </span><span class="s1">_get_table_key</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">CallableReference</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.relationships </span><span class="s3">import </span><span class="s1">RelationshipProperty</span>
+    <span class="s3">from </span><span class="s1">..sql.schema </span><span class="s3">import </span><span class="s1">MetaData</span>
+    <span class="s3">from </span><span class="s1">..sql.schema </span><span class="s3">import </span><span class="s1">Table</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+<span class="s1">_ClsRegistryType = MutableMapping[str</span><span class="s5">, </span><span class="s1">Union[type</span><span class="s5">, </span><span class="s4">&quot;ClsRegistryToken&quot;</span><span class="s1">]]</span>
+
+<span class="s0"># strong references to registries which we place in</span>
+<span class="s0"># the _decl_class_registry, which is usually weak referencing.</span>
+<span class="s0"># the internal registries here link to classes with weakrefs and remove</span>
+<span class="s0"># themselves when all references to contained classes are removed.</span>
+<span class="s1">_registries: Set[ClsRegistryToken] = set()</span>
+
+
+<span class="s3">def </span><span class="s1">add_class(</span>
+    <span class="s1">classname: str</span><span class="s5">, </span><span class="s1">cls: Type[_T]</span><span class="s5">, </span><span class="s1">decl_class_registry: _ClsRegistryType</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s2">&quot;&quot;&quot;Add a class to the _decl_class_registry associated with the 
+    given declarative class. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">classname </span><span class="s3">in </span><span class="s1">decl_class_registry:</span>
+        <span class="s0"># class already exists.</span>
+        <span class="s1">existing = decl_class_registry[classname]</span>
+        <span class="s3">if not </span><span class="s1">isinstance(existing</span><span class="s5">, </span><span class="s1">_MultipleClassMarker):</span>
+            <span class="s1">existing = decl_class_registry[classname] = _MultipleClassMarker(</span>
+                <span class="s1">[cls</span><span class="s5">, </span><span class="s1">cast(</span><span class="s4">&quot;Type[Any]&quot;</span><span class="s5">, </span><span class="s1">existing)]</span>
+            <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">decl_class_registry[classname] = cls</span>
+
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">root_module = cast(</span>
+            <span class="s1">_ModuleMarker</span><span class="s5">, </span><span class="s1">decl_class_registry[</span><span class="s4">&quot;_sa_module_registry&quot;</span><span class="s1">]</span>
+        <span class="s1">)</span>
+    <span class="s3">except </span><span class="s1">KeyError:</span>
+        <span class="s1">decl_class_registry[</span><span class="s4">&quot;_sa_module_registry&quot;</span><span class="s1">] = root_module = (</span>
+            <span class="s1">_ModuleMarker(</span><span class="s4">&quot;_sa_module_registry&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">tokens = cls.__module__.split(</span><span class="s4">&quot;.&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># build up a tree like this:</span>
+    <span class="s0"># modulename:  myapp.snacks.nuts</span>
+    <span class="s0">#</span>
+    <span class="s0"># myapp-&gt;snack-&gt;nuts-&gt;(classes)</span>
+    <span class="s0"># snack-&gt;nuts-&gt;(classes)</span>
+    <span class="s0"># nuts-&gt;(classes)</span>
+    <span class="s0">#</span>
+    <span class="s0"># this allows partial token paths to be used.</span>
+    <span class="s3">while </span><span class="s1">tokens:</span>
+        <span class="s1">token = tokens.pop(</span><span class="s6">0</span><span class="s1">)</span>
+        <span class="s1">module = root_module.get_module(token)</span>
+        <span class="s3">for </span><span class="s1">token </span><span class="s3">in </span><span class="s1">tokens:</span>
+            <span class="s1">module = module.get_module(token)</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">module.add_class(classname</span><span class="s5">, </span><span class="s1">cls)</span>
+        <span class="s3">except </span><span class="s1">AttributeError </span><span class="s3">as </span><span class="s1">ae:</span>
+            <span class="s3">if not </span><span class="s1">isinstance(module</span><span class="s5">, </span><span class="s1">_ModuleMarker):</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s4">f'name &quot;</span><span class="s7">{</span><span class="s1">classname</span><span class="s7">}</span><span class="s4">&quot; matches both a '</span>
+                    <span class="s4">&quot;class name and a module name&quot;</span>
+                <span class="s1">) </span><span class="s3">from </span><span class="s1">ae</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise</span>
+
+
+<span class="s3">def </span><span class="s1">remove_class(</span>
+    <span class="s1">classname: str</span><span class="s5">, </span><span class="s1">cls: Type[Any]</span><span class="s5">, </span><span class="s1">decl_class_registry: _ClsRegistryType</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s3">if </span><span class="s1">classname </span><span class="s3">in </span><span class="s1">decl_class_registry:</span>
+        <span class="s1">existing = decl_class_registry[classname]</span>
+        <span class="s3">if </span><span class="s1">isinstance(existing</span><span class="s5">, </span><span class="s1">_MultipleClassMarker):</span>
+            <span class="s1">existing.remove_item(cls)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">del </span><span class="s1">decl_class_registry[classname]</span>
+
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">root_module = cast(</span>
+            <span class="s1">_ModuleMarker</span><span class="s5">, </span><span class="s1">decl_class_registry[</span><span class="s4">&quot;_sa_module_registry&quot;</span><span class="s1">]</span>
+        <span class="s1">)</span>
+    <span class="s3">except </span><span class="s1">KeyError:</span>
+        <span class="s3">return</span>
+
+    <span class="s1">tokens = cls.__module__.split(</span><span class="s4">&quot;.&quot;</span><span class="s1">)</span>
+
+    <span class="s3">while </span><span class="s1">tokens:</span>
+        <span class="s1">token = tokens.pop(</span><span class="s6">0</span><span class="s1">)</span>
+        <span class="s1">module = root_module.get_module(token)</span>
+        <span class="s3">for </span><span class="s1">token </span><span class="s3">in </span><span class="s1">tokens:</span>
+            <span class="s1">module = module.get_module(token)</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">module.remove_class(classname</span><span class="s5">, </span><span class="s1">cls)</span>
+        <span class="s3">except </span><span class="s1">AttributeError:</span>
+            <span class="s3">if not </span><span class="s1">isinstance(module</span><span class="s5">, </span><span class="s1">_ModuleMarker):</span>
+                <span class="s3">pass</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise</span>
+
+
+<span class="s3">def </span><span class="s1">_key_is_empty(</span>
+    <span class="s1">key: str</span><span class="s5">,</span>
+    <span class="s1">decl_class_registry: _ClsRegistryType</span><span class="s5">,</span>
+    <span class="s1">test: Callable[[Any]</span><span class="s5">, </span><span class="s1">bool]</span><span class="s5">,</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s2">&quot;&quot;&quot;test if a key is empty of a certain object. 
+ 
+    used for unit tests against the registry to see if garbage collection 
+    is working. 
+ 
+    &quot;test&quot; is a callable that will be passed an object should return True 
+    if the given object is the one we were looking for. 
+ 
+    We can't pass the actual object itself b.c. this is for testing garbage 
+    collection; the caller will have to have removed references to the 
+    object itself. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">decl_class_registry:</span>
+        <span class="s3">return True</span>
+
+    <span class="s1">thing = decl_class_registry[key]</span>
+    <span class="s3">if </span><span class="s1">isinstance(thing</span><span class="s5">, </span><span class="s1">_MultipleClassMarker):</span>
+        <span class="s3">for </span><span class="s1">sub_thing </span><span class="s3">in </span><span class="s1">thing.contents:</span>
+            <span class="s3">if </span><span class="s1">test(sub_thing):</span>
+                <span class="s3">return False</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;unknown codepath&quot;</span><span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return not </span><span class="s1">test(thing)</span>
+
+
+<span class="s3">class </span><span class="s1">ClsRegistryToken:</span>
+    <span class="s2">&quot;&quot;&quot;an object that can be in the registry._class_registry as a value.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s3">class </span><span class="s1">_MultipleClassMarker(ClsRegistryToken):</span>
+    <span class="s2">&quot;&quot;&quot;refers to multiple classes of the same name 
+    within _decl_class_registry. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = </span><span class="s4">&quot;on_remove&quot;</span><span class="s5">, </span><span class="s4">&quot;contents&quot;</span><span class="s5">, </span><span class="s4">&quot;__weakref__&quot;</span>
+
+    <span class="s1">contents: Set[weakref.ref[Type[Any]]]</span>
+    <span class="s1">on_remove: CallableReference[Optional[Callable[[]</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]]]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">classes: Iterable[Type[Any]]</span><span class="s5">,</span>
+        <span class="s1">on_remove: Optional[Callable[[]</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.on_remove = on_remove</span>
+        <span class="s1">self.contents = {</span>
+            <span class="s1">weakref.ref(item</span><span class="s5">, </span><span class="s1">self._remove_item) </span><span class="s3">for </span><span class="s1">item </span><span class="s3">in </span><span class="s1">classes</span>
+        <span class="s1">}</span>
+        <span class="s1">_registries.add(self)</span>
+
+    <span class="s3">def </span><span class="s1">remove_item(self</span><span class="s5">, </span><span class="s1">cls: Type[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._remove_item(weakref.ref(cls))</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Generator[Optional[Type[Any]]</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]:</span>
+        <span class="s3">return </span><span class="s1">(ref() </span><span class="s3">for </span><span class="s1">ref </span><span class="s3">in </span><span class="s1">self.contents)</span>
+
+    <span class="s3">def </span><span class="s1">attempt_get(self</span><span class="s5">, </span><span class="s1">path: List[str]</span><span class="s5">, </span><span class="s1">key: str) -&gt; Type[Any]:</span>
+        <span class="s3">if </span><span class="s1">len(self.contents) &gt; </span><span class="s6">1</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">'Multiple classes found for path &quot;%s&quot; '</span>
+                <span class="s4">&quot;in the registry of this declarative &quot;</span>
+                <span class="s4">&quot;base. Please use a fully module-qualified path.&quot;</span>
+                <span class="s1">% (</span><span class="s4">&quot;.&quot;</span><span class="s1">.join(path + [key]))</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">ref = list(self.contents)[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s1">cls = ref()</span>
+            <span class="s3">if </span><span class="s1">cls </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">NameError(key)</span>
+            <span class="s3">return </span><span class="s1">cls</span>
+
+    <span class="s3">def </span><span class="s1">_remove_item(self</span><span class="s5">, </span><span class="s1">ref: weakref.ref[Type[Any]]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.contents.discard(ref)</span>
+        <span class="s3">if not </span><span class="s1">self.contents:</span>
+            <span class="s1">_registries.discard(self)</span>
+            <span class="s3">if </span><span class="s1">self.on_remove:</span>
+                <span class="s1">self.on_remove()</span>
+
+    <span class="s3">def </span><span class="s1">add_item(self</span><span class="s5">, </span><span class="s1">item: Type[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s0"># protect against class registration race condition against</span>
+        <span class="s0"># asynchronous garbage collection calling _remove_item,</span>
+        <span class="s0"># [ticket:3208] and [ticket:10782]</span>
+        <span class="s1">modules = {</span>
+            <span class="s1">cls.__module__</span>
+            <span class="s3">for </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">[ref() </span><span class="s3">for </span><span class="s1">ref </span><span class="s3">in </span><span class="s1">list(self.contents)]</span>
+            <span class="s3">if </span><span class="s1">cls </span><span class="s3">is not None</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">item.__module__ </span><span class="s3">in </span><span class="s1">modules:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">&quot;This declarative base already contains a class with the &quot;</span>
+                <span class="s4">&quot;same class name and module name as %s.%s, and will &quot;</span>
+                <span class="s4">&quot;be replaced in the string-lookup table.&quot;</span>
+                <span class="s1">% (item.__module__</span><span class="s5">, </span><span class="s1">item.__name__)</span>
+            <span class="s1">)</span>
+        <span class="s1">self.contents.add(weakref.ref(item</span><span class="s5">, </span><span class="s1">self._remove_item))</span>
+
+
+<span class="s3">class </span><span class="s1">_ModuleMarker(ClsRegistryToken):</span>
+    <span class="s2">&quot;&quot;&quot;Refers to a module name within 
+    _decl_class_registry. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = </span><span class="s4">&quot;parent&quot;</span><span class="s5">, </span><span class="s4">&quot;name&quot;</span><span class="s5">, </span><span class="s4">&quot;contents&quot;</span><span class="s5">, </span><span class="s4">&quot;mod_ns&quot;</span><span class="s5">, </span><span class="s4">&quot;path&quot;</span><span class="s5">, </span><span class="s4">&quot;__weakref__&quot;</span>
+
+    <span class="s1">parent: Optional[_ModuleMarker]</span>
+    <span class="s1">contents: Dict[str</span><span class="s5">, </span><span class="s1">Union[_ModuleMarker</span><span class="s5">, </span><span class="s1">_MultipleClassMarker]]</span>
+    <span class="s1">mod_ns: _ModNS</span>
+    <span class="s1">path: List[str]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">name: str</span><span class="s5">, </span><span class="s1">parent: Optional[_ModuleMarker]):</span>
+        <span class="s1">self.parent = parent</span>
+        <span class="s1">self.name = name</span>
+        <span class="s1">self.contents = {}</span>
+        <span class="s1">self.mod_ns = _ModNS(self)</span>
+        <span class="s3">if </span><span class="s1">self.parent:</span>
+            <span class="s1">self.path = self.parent.path + [self.name]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.path = []</span>
+        <span class="s1">_registries.add(self)</span>
+
+    <span class="s3">def </span><span class="s1">__contains__(self</span><span class="s5">, </span><span class="s1">name: str) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">name </span><span class="s3">in </span><span class="s1">self.contents</span>
+
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s5">, </span><span class="s1">name: str) -&gt; ClsRegistryToken:</span>
+        <span class="s3">return </span><span class="s1">self.contents[name]</span>
+
+    <span class="s3">def </span><span class="s1">_remove_item(self</span><span class="s5">, </span><span class="s1">name: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.contents.pop(name</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if not </span><span class="s1">self.contents:</span>
+            <span class="s3">if </span><span class="s1">self.parent </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">self.parent._remove_item(self.name)</span>
+            <span class="s1">_registries.discard(self)</span>
+
+    <span class="s3">def </span><span class="s1">resolve_attr(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; Union[_ModNS</span><span class="s5">, </span><span class="s1">Type[Any]]:</span>
+        <span class="s3">return </span><span class="s1">self.mod_ns.__getattr__(key)</span>
+
+    <span class="s3">def </span><span class="s1">get_module(self</span><span class="s5">, </span><span class="s1">name: str) -&gt; _ModuleMarker:</span>
+        <span class="s3">if </span><span class="s1">name </span><span class="s3">not in </span><span class="s1">self.contents:</span>
+            <span class="s1">marker = _ModuleMarker(name</span><span class="s5">, </span><span class="s1">self)</span>
+            <span class="s1">self.contents[name] = marker</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">marker = cast(_ModuleMarker</span><span class="s5">, </span><span class="s1">self.contents[name])</span>
+        <span class="s3">return </span><span class="s1">marker</span>
+
+    <span class="s3">def </span><span class="s1">add_class(self</span><span class="s5">, </span><span class="s1">name: str</span><span class="s5">, </span><span class="s1">cls: Type[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">name </span><span class="s3">in </span><span class="s1">self.contents:</span>
+            <span class="s1">existing = cast(_MultipleClassMarker</span><span class="s5">, </span><span class="s1">self.contents[name])</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">existing.add_item(cls)</span>
+            <span class="s3">except </span><span class="s1">AttributeError </span><span class="s3">as </span><span class="s1">ae:</span>
+                <span class="s3">if not </span><span class="s1">isinstance(existing</span><span class="s5">, </span><span class="s1">_MultipleClassMarker):</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">f'name &quot;</span><span class="s7">{</span><span class="s1">name</span><span class="s7">}</span><span class="s4">&quot; matches both a '</span>
+                        <span class="s4">&quot;class name and a module name&quot;</span>
+                    <span class="s1">) </span><span class="s3">from </span><span class="s1">ae</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">raise</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">existing = self.contents[name] = _MultipleClassMarker(</span>
+                <span class="s1">[cls]</span><span class="s5">, </span><span class="s1">on_remove=</span><span class="s3">lambda</span><span class="s1">: self._remove_item(name)</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">remove_class(self</span><span class="s5">, </span><span class="s1">name: str</span><span class="s5">, </span><span class="s1">cls: Type[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">name </span><span class="s3">in </span><span class="s1">self.contents:</span>
+            <span class="s1">existing = cast(_MultipleClassMarker</span><span class="s5">, </span><span class="s1">self.contents[name])</span>
+            <span class="s1">existing.remove_item(cls)</span>
+
+
+<span class="s3">class </span><span class="s1">_ModNS:</span>
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;__parent&quot;</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s1">__parent: _ModuleMarker</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">parent: _ModuleMarker):</span>
+        <span class="s1">self.__parent = parent</span>
+
+    <span class="s3">def </span><span class="s1">__getattr__(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; Union[_ModNS</span><span class="s5">, </span><span class="s1">Type[Any]]:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">value = self.__parent.contents[key]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s3">pass</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">_ModuleMarker):</span>
+                    <span class="s3">return </span><span class="s1">value.mod_ns</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">assert </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">_MultipleClassMarker)</span>
+                    <span class="s3">return </span><span class="s1">value.attempt_get(self.__parent.path</span><span class="s5">, </span><span class="s1">key)</span>
+        <span class="s3">raise </span><span class="s1">NameError(</span>
+            <span class="s4">&quot;Module %r has no mapped classes &quot;</span>
+            <span class="s4">&quot;registered under the name %r&quot; </span><span class="s1">% (self.__parent.name</span><span class="s5">, </span><span class="s1">key)</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_GetColumns:</span>
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;cls&quot;</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s1">cls: Type[Any]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">cls: Type[Any]):</span>
+        <span class="s1">self.cls = cls</span>
+
+    <span class="s3">def </span><span class="s1">__getattr__(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; Any:</span>
+        <span class="s1">mp = class_mapper(self.cls</span><span class="s5">, </span><span class="s1">configure=</span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">mp:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">mp.all_orm_descriptors:</span>
+                <span class="s3">raise </span><span class="s1">AttributeError(</span>
+                    <span class="s4">&quot;Class %r does not have a mapped column named %r&quot;</span>
+                    <span class="s1">% (self.cls</span><span class="s5">, </span><span class="s1">key)</span>
+                <span class="s1">)</span>
+
+            <span class="s1">desc = mp.all_orm_descriptors[key]</span>
+            <span class="s3">if </span><span class="s1">desc.extension_type </span><span class="s3">is </span><span class="s1">interfaces.NotExtension.NOT_EXTENSION:</span>
+                <span class="s3">assert </span><span class="s1">isinstance(desc</span><span class="s5">, </span><span class="s1">attributes.QueryableAttribute)</span>
+                <span class="s1">prop = desc.property</span>
+                <span class="s3">if </span><span class="s1">isinstance(prop</span><span class="s5">, </span><span class="s1">SynonymProperty):</span>
+                    <span class="s1">key = prop.name</span>
+                <span class="s3">elif not </span><span class="s1">isinstance(prop</span><span class="s5">, </span><span class="s1">ColumnProperty):</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">&quot;Property %r is not an instance of&quot;</span>
+                        <span class="s4">&quot; ColumnProperty (i.e. does not correspond&quot;</span>
+                        <span class="s4">&quot; directly to a Column).&quot; </span><span class="s1">% key</span>
+                    <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">getattr(self.cls</span><span class="s5">, </span><span class="s1">key)</span>
+
+
+<span class="s1">inspection._inspects(_GetColumns)(</span>
+    <span class="s3">lambda </span><span class="s1">target: inspection.inspect(target.cls)</span>
+<span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_GetTable:</span>
+    <span class="s1">__slots__ = </span><span class="s4">&quot;key&quot;</span><span class="s5">, </span><span class="s4">&quot;metadata&quot;</span>
+
+    <span class="s1">key: str</span>
+    <span class="s1">metadata: MetaData</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">metadata: MetaData):</span>
+        <span class="s1">self.key = key</span>
+        <span class="s1">self.metadata = metadata</span>
+
+    <span class="s3">def </span><span class="s1">__getattr__(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; Table:</span>
+        <span class="s3">return </span><span class="s1">self.metadata.tables[_get_table_key(key</span><span class="s5">, </span><span class="s1">self.key)]</span>
+
+
+<span class="s3">def </span><span class="s1">_determine_container(key: str</span><span class="s5">, </span><span class="s1">value: Any) -&gt; _GetColumns:</span>
+    <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">_MultipleClassMarker):</span>
+        <span class="s1">value = value.attempt_get([]</span><span class="s5">, </span><span class="s1">key)</span>
+    <span class="s3">return </span><span class="s1">_GetColumns(value)</span>
+
+
+<span class="s3">class </span><span class="s1">_class_resolver:</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;cls&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;prop&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;arg&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;fallback&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_dict&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_resolvers&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;favor_tables&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">cls: Type[Any]</span>
+    <span class="s1">prop: RelationshipProperty[Any]</span>
+    <span class="s1">fallback: Mapping[str</span><span class="s5">, </span><span class="s1">Any]</span>
+    <span class="s1">arg: str</span>
+    <span class="s1">favor_tables: bool</span>
+    <span class="s1">_resolvers: Tuple[Callable[[str]</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">...]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">cls: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">prop: RelationshipProperty[Any]</span><span class="s5">,</span>
+        <span class="s1">fallback: Mapping[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">,</span>
+        <span class="s1">arg: str</span><span class="s5">,</span>
+        <span class="s1">favor_tables: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.cls = cls</span>
+        <span class="s1">self.prop = prop</span>
+        <span class="s1">self.arg = arg</span>
+        <span class="s1">self.fallback = fallback</span>
+        <span class="s1">self._dict = util.PopulateDict(self._access_cls)</span>
+        <span class="s1">self._resolvers = ()</span>
+        <span class="s1">self.favor_tables = favor_tables</span>
+
+    <span class="s3">def </span><span class="s1">_access_cls(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; Any:</span>
+        <span class="s1">cls = self.cls</span>
+
+        <span class="s1">manager = attributes.manager_of_class(cls)</span>
+        <span class="s1">decl_base = manager.registry</span>
+        <span class="s3">assert </span><span class="s1">decl_base </span><span class="s3">is not None</span>
+        <span class="s1">decl_class_registry = decl_base._class_registry</span>
+        <span class="s1">metadata = decl_base.metadata</span>
+
+        <span class="s3">if </span><span class="s1">self.favor_tables:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">metadata.tables:</span>
+                <span class="s3">return </span><span class="s1">metadata.tables[key]</span>
+            <span class="s3">elif </span><span class="s1">key </span><span class="s3">in </span><span class="s1">metadata._schemas:</span>
+                <span class="s3">return </span><span class="s1">_GetTable(key</span><span class="s5">, </span><span class="s1">getattr(cls</span><span class="s5">, </span><span class="s4">&quot;metadata&quot;</span><span class="s5">, </span><span class="s1">metadata))</span>
+
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">decl_class_registry:</span>
+            <span class="s3">return </span><span class="s1">_determine_container(key</span><span class="s5">, </span><span class="s1">decl_class_registry[key])</span>
+
+        <span class="s3">if not </span><span class="s1">self.favor_tables:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">metadata.tables:</span>
+                <span class="s3">return </span><span class="s1">metadata.tables[key]</span>
+            <span class="s3">elif </span><span class="s1">key </span><span class="s3">in </span><span class="s1">metadata._schemas:</span>
+                <span class="s3">return </span><span class="s1">_GetTable(key</span><span class="s5">, </span><span class="s1">getattr(cls</span><span class="s5">, </span><span class="s4">&quot;metadata&quot;</span><span class="s5">, </span><span class="s1">metadata))</span>
+
+        <span class="s3">if </span><span class="s4">&quot;_sa_module_registry&quot; </span><span class="s3">in </span><span class="s1">decl_class_registry </span><span class="s3">and </span><span class="s1">key </span><span class="s3">in </span><span class="s1">cast(</span>
+            <span class="s1">_ModuleMarker</span><span class="s5">, </span><span class="s1">decl_class_registry[</span><span class="s4">&quot;_sa_module_registry&quot;</span><span class="s1">]</span>
+        <span class="s1">):</span>
+            <span class="s1">registry = cast(</span>
+                <span class="s1">_ModuleMarker</span><span class="s5">, </span><span class="s1">decl_class_registry[</span><span class="s4">&quot;_sa_module_registry&quot;</span><span class="s1">]</span>
+            <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">registry.resolve_attr(key)</span>
+        <span class="s3">elif </span><span class="s1">self._resolvers:</span>
+            <span class="s3">for </span><span class="s1">resolv </span><span class="s3">in </span><span class="s1">self._resolvers:</span>
+                <span class="s1">value = resolv(key)</span>
+                <span class="s3">if </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">self.fallback[key]</span>
+
+    <span class="s3">def </span><span class="s1">_raise_for_name(self</span><span class="s5">, </span><span class="s1">name: str</span><span class="s5">, </span><span class="s1">err: Exception) -&gt; NoReturn:</span>
+        <span class="s1">generic_match = re.match(</span><span class="s4">r&quot;(.+)\[(.+)\]&quot;</span><span class="s5">, </span><span class="s1">name)</span>
+
+        <span class="s3">if </span><span class="s1">generic_match:</span>
+            <span class="s1">clsarg = generic_match.group(</span><span class="s6">2</span><span class="s1">).strip(</span><span class="s4">&quot;'&quot;</span><span class="s1">)</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;When initializing mapper </span><span class="s7">{</span><span class="s1">self.prop.parent</span><span class="s7">}</span><span class="s4">, &quot;</span>
+                <span class="s4">f'expression &quot;relationship(</span><span class="s7">{</span><span class="s1">self.arg</span><span class="s7">!r}</span><span class="s4">)&quot; seems to be '</span>
+                <span class="s4">&quot;using a generic class as the argument to relationship(); &quot;</span>
+                <span class="s4">&quot;please state the generic argument &quot;</span>
+                <span class="s4">&quot;using an annotation, e.g. &quot;</span>
+                <span class="s4">f'&quot;</span><span class="s7">{</span><span class="s1">self.prop.key</span><span class="s7">}</span><span class="s4">: Mapped[</span><span class="s7">{</span><span class="s1">generic_match.group(</span><span class="s6">1</span><span class="s1">)</span><span class="s7">}</span><span class="s4">'</span>
+                <span class="s4">f&quot;['</span><span class="s7">{</span><span class="s1">clsarg</span><span class="s7">}</span><span class="s4">']] = relationship()</span><span class="s7">\&quot;</span><span class="s4">&quot;</span>
+            <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;When initializing mapper %s, expression %r failed to &quot;</span>
+                <span class="s4">&quot;locate a name (%r). If this is a class name, consider &quot;</span>
+                <span class="s4">&quot;adding this relationship() to the %r class after &quot;</span>
+                <span class="s4">&quot;both dependent classes have been defined.&quot;</span>
+                <span class="s1">% (self.prop.parent</span><span class="s5">, </span><span class="s1">self.arg</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">self.cls)</span>
+            <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+
+    <span class="s3">def </span><span class="s1">_resolve_name(self) -&gt; Union[Table</span><span class="s5">, </span><span class="s1">Type[Any]</span><span class="s5">, </span><span class="s1">_ModNS]:</span>
+        <span class="s1">name = self.arg</span>
+        <span class="s1">d = self._dict</span>
+        <span class="s1">rval = </span><span class="s3">None</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">for </span><span class="s1">token </span><span class="s3">in </span><span class="s1">name.split(</span><span class="s4">&quot;.&quot;</span><span class="s1">):</span>
+                <span class="s3">if </span><span class="s1">rval </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s1">rval = d[token]</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">rval = getattr(rval</span><span class="s5">, </span><span class="s1">token)</span>
+        <span class="s3">except </span><span class="s1">KeyError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">self._raise_for_name(name</span><span class="s5">, </span><span class="s1">err)</span>
+        <span class="s3">except </span><span class="s1">NameError </span><span class="s3">as </span><span class="s1">n:</span>
+            <span class="s1">self._raise_for_name(n.args[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">n)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">isinstance(rval</span><span class="s5">, </span><span class="s1">_GetColumns):</span>
+                <span class="s3">return </span><span class="s1">rval.cls</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+                    <span class="s3">assert </span><span class="s1">isinstance(rval</span><span class="s5">, </span><span class="s1">(type</span><span class="s5">, </span><span class="s1">Table</span><span class="s5">, </span><span class="s1">_ModNS))</span>
+                <span class="s3">return </span><span class="s1">rval</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self) -&gt; Any:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">x = eval(self.arg</span><span class="s5">, </span><span class="s1">globals()</span><span class="s5">, </span><span class="s1">self._dict)</span>
+
+            <span class="s3">if </span><span class="s1">isinstance(x</span><span class="s5">, </span><span class="s1">_GetColumns):</span>
+                <span class="s3">return </span><span class="s1">x.cls</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">x</span>
+        <span class="s3">except </span><span class="s1">NameError </span><span class="s3">as </span><span class="s1">n:</span>
+            <span class="s1">self._raise_for_name(n.args[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">n)</span>
+
+
+<span class="s1">_fallback_dict: Mapping[str</span><span class="s5">, </span><span class="s1">Any] = </span><span class="s3">None  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s3">def </span><span class="s1">_resolver(cls: Type[Any]</span><span class="s5">, </span><span class="s1">prop: RelationshipProperty[Any]) -&gt; Tuple[</span>
+    <span class="s1">Callable[[str]</span><span class="s5">, </span><span class="s1">Callable[[]</span><span class="s5">, </span><span class="s1">Union[Type[Any]</span><span class="s5">, </span><span class="s1">Table</span><span class="s5">, </span><span class="s1">_ModNS]]]</span><span class="s5">,</span>
+    <span class="s1">Callable[[str</span><span class="s5">, </span><span class="s1">bool]</span><span class="s5">, </span><span class="s1">_class_resolver]</span><span class="s5">,</span>
+<span class="s1">]:</span>
+    <span class="s3">global </span><span class="s1">_fallback_dict</span>
+
+    <span class="s3">if </span><span class="s1">_fallback_dict </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s3">import </span><span class="s1">sqlalchemy</span>
+        <span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">foreign</span>
+        <span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">remote</span>
+
+        <span class="s1">_fallback_dict = util.immutabledict(sqlalchemy.__dict__).union(</span>
+            <span class="s1">{</span><span class="s4">&quot;foreign&quot;</span><span class="s1">: foreign</span><span class="s5">, </span><span class="s4">&quot;remote&quot;</span><span class="s1">: remote}</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">resolve_arg(arg: str</span><span class="s5">, </span><span class="s1">favor_tables: bool = </span><span class="s3">False</span><span class="s1">) -&gt; _class_resolver:</span>
+        <span class="s3">return </span><span class="s1">_class_resolver(</span>
+            <span class="s1">cls</span><span class="s5">, </span><span class="s1">prop</span><span class="s5">, </span><span class="s1">_fallback_dict</span><span class="s5">, </span><span class="s1">arg</span><span class="s5">, </span><span class="s1">favor_tables=favor_tables</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">resolve_name(</span>
+        <span class="s1">arg: str</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Callable[[]</span><span class="s5">, </span><span class="s1">Union[Type[Any]</span><span class="s5">, </span><span class="s1">Table</span><span class="s5">, </span><span class="s1">_ModNS]]:</span>
+        <span class="s3">return </span><span class="s1">_class_resolver(cls</span><span class="s5">, </span><span class="s1">prop</span><span class="s5">, </span><span class="s1">_fallback_dict</span><span class="s5">, </span><span class="s1">arg)._resolve_name</span>
+
+    <span class="s3">return </span><span class="s1">resolve_name</span><span class="s5">, </span><span class="s1">resolve_arg</span>
+</pre>
+</body>
+</html>

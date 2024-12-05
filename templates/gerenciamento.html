@@ -1,0 +1,28 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+<h1 class="TituloGerenciamento">Gerenciamento</h1>
+
+<div class="card-container">
+    <div class="card">
+        <h3>Gerenciar Funcionários</h3>
+        <p>Visualize, adicione ou edite funcionários na plataforma.</p>
+        <a href="{{ url_for('gerenciar_funcionarios') }}" class="btn">Ir para Funcionários</a>
+    </div>
+
+    <div class="card">
+        <h3>Gerenciar Fornecedores</h3>
+        <p>Gerencie seus fornecedores, mantendo o controle sobre todos os dados.</p>
+        <a href="{{ url_for('gerenciar_fornecedores') }}" class="btn">Ir para Fornecedores</a>
+    </div>
+
+    <div class="card">
+        <h3>Gerenciar Produtos</h3>
+        <p>Adicione, edite ou visualize os produtos disponíveis em estoque.</p>
+        <a href="{{ url_for('gerenciar_produtos') }}" class="btn">Ir para Produtos</a>
+    </div>
+</div>
+
+<a href="{{ url_for('home') }}" class="btn voltar">Voltar</a>
+
+{% endblock %}

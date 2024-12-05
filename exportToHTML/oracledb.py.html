@@ -1,0 +1,454 @@
+<html>
+<head>
+<title>oracledb.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #bbb55b;}
+.s5 { color: #cc7832;}
+.s6 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+oracledb.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/oracle/oracledb.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">r&quot;&quot;&quot; 
+.. dialect:: oracle+oracledb 
+    :name: python-oracledb 
+    :dbapi: oracledb 
+    :connectstring: oracle+oracledb://user:pass@hostname:port[/dbname][?service_name=&lt;service&gt;[&amp;key=value&amp;key=value...]] 
+    :url: https://oracle.github.io/python-oracledb/ 
+ 
+Description 
+----------- 
+ 
+python-oracledb is released by Oracle to supersede the cx_Oracle driver. 
+It is fully compatible with cx_Oracle and features both a &quot;thin&quot; client 
+mode that requires no dependencies, as well as a &quot;thick&quot; mode that uses 
+the Oracle Client Interface in the same way as cx_Oracle. 
+ 
+.. seealso:: 
+ 
+    :ref:`cx_oracle` - all of cx_Oracle's notes apply to the oracledb driver 
+    as well, with the exception that oracledb supports two phase transactions. 
+ 
+The SQLAlchemy ``oracledb`` dialect provides both a sync and an async 
+implementation under the same dialect name. The proper version is 
+selected depending on how the engine is created: 
+ 
+* calling :func:`_sa.create_engine` with ``oracle+oracledb://...`` will 
+  automatically select the sync version, e.g.:: 
+ 
+    from sqlalchemy import create_engine 
+    sync_engine = create_engine(&quot;oracle+oracledb://scott:tiger@localhost/?service_name=XEPDB1&quot;) 
+ 
+* calling :func:`_asyncio.create_async_engine` with 
+  ``oracle+oracledb://...`` will automatically select the async version, 
+  e.g.:: 
+ 
+    from sqlalchemy.ext.asyncio import create_async_engine 
+    asyncio_engine = create_async_engine(&quot;oracle+oracledb://scott:tiger@localhost/?service_name=XEPDB1&quot;) 
+ 
+The asyncio version of the dialect may also be specified explicitly using the 
+``oracledb_async`` suffix, as:: 
+ 
+    from sqlalchemy.ext.asyncio import create_async_engine 
+    asyncio_engine = create_async_engine(&quot;oracle+oracledb_async://scott:tiger@localhost/?service_name=XEPDB1&quot;) 
+ 
+.. versionadded:: 2.0.25 added support for the async version of oracledb. 
+ 
+Thick mode support 
+------------------ 
+ 
+By default the ``python-oracledb`` is started in thin mode, that does not 
+require oracle client libraries to be installed in the system. The 
+``python-oracledb`` driver also support a &quot;thick&quot; mode, that behaves 
+similarly to ``cx_oracle`` and requires that Oracle Client Interface (OCI) 
+is installed. 
+ 
+To enable this mode, the user may call ``oracledb.init_oracle_client`` 
+manually, or by passing the parameter ``thick_mode=True`` to 
+:func:`_sa.create_engine`. To pass custom arguments to ``init_oracle_client``, 
+like the ``lib_dir`` path, a dict may be passed to this parameter, as in:: 
+ 
+    engine = sa.create_engine(&quot;oracle+oracledb://...&quot;, thick_mode={ 
+        &quot;lib_dir&quot;: &quot;/path/to/oracle/client/lib&quot;, &quot;driver_name&quot;: &quot;my-app&quot; 
+    }) 
+ 
+.. seealso:: 
+ 
+    https://python-oracledb.readthedocs.io/en/latest/api_manual/module.html#oracledb.init_oracle_client 
+ 
+Two Phase Transactions Supported 
+-------------------------------- 
+ 
+Two phase transactions are fully supported under oracledb. Starting with 
+oracledb 2.3 two phase transactions are supported also in thin mode.    APIs 
+for two phase transactions are provided at the Core level via 
+:meth:`_engine.Connection.begin_twophase` and :paramref:`_orm.Session.twophase` 
+for transparent ORM use. 
+ 
+.. versionchanged:: 2.0.32 added support for two phase transactions 
+ 
+.. versionadded:: 2.0.0 added support for oracledb driver. 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">collections</span>
+<span class="s3">import </span><span class="s1">re</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">cx_oracle </span><span class="s3">as </span><span class="s1">_cx_oracle</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">pool</span>
+<span class="s3">from </span><span class="s1">...connectors.asyncio </span><span class="s3">import </span><span class="s1">AsyncAdapt_dbapi_connection</span>
+<span class="s3">from </span><span class="s1">...connectors.asyncio </span><span class="s3">import </span><span class="s1">AsyncAdapt_dbapi_cursor</span>
+<span class="s3">from </span><span class="s1">...connectors.asyncio </span><span class="s3">import </span><span class="s1">AsyncAdapt_dbapi_ss_cursor</span>
+<span class="s3">from </span><span class="s1">...connectors.asyncio </span><span class="s3">import </span><span class="s1">AsyncAdaptFallback_dbapi_connection</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">default</span>
+<span class="s3">from </span><span class="s1">...util </span><span class="s3">import </span><span class="s1">asbool</span>
+<span class="s3">from </span><span class="s1">...util </span><span class="s3">import </span><span class="s1">await_fallback</span>
+<span class="s3">from </span><span class="s1">...util </span><span class="s3">import </span><span class="s1">await_only</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">oracledb </span><span class="s3">import </span><span class="s1">AsyncConnection</span>
+    <span class="s3">from </span><span class="s1">oracledb </span><span class="s3">import </span><span class="s1">AsyncCursor</span>
+
+
+<span class="s3">class </span><span class="s1">OracleExecutionContext_oracledb(</span>
+    <span class="s1">_cx_oracle.OracleExecutionContext_cx_oracle</span>
+<span class="s1">):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">OracleDialect_oracledb(_cx_oracle.OracleDialect_cx_oracle):</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+    <span class="s1">execution_ctx_cls = OracleExecutionContext_oracledb</span>
+
+    <span class="s1">driver = </span><span class="s2">&quot;oracledb&quot;</span>
+    <span class="s1">_min_version = (</span><span class="s4">1</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">auto_convert_lobs=</span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">coerce_to_decimal=</span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">arraysize=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">encoding_errors=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">thick_mode=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kwargs</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">super().__init__(</span>
+            <span class="s1">auto_convert_lobs</span><span class="s5">,</span>
+            <span class="s1">coerce_to_decimal</span><span class="s5">,</span>
+            <span class="s1">arraysize</span><span class="s5">,</span>
+            <span class="s1">encoding_errors</span><span class="s5">,</span>
+            <span class="s1">**kwargs</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self.dbapi </span><span class="s3">is not None and </span><span class="s1">(</span>
+            <span class="s1">thick_mode </span><span class="s3">or </span><span class="s1">isinstance(thick_mode</span><span class="s5">, </span><span class="s1">dict)</span>
+        <span class="s1">):</span>
+            <span class="s1">kw = thick_mode </span><span class="s3">if </span><span class="s1">isinstance(thick_mode</span><span class="s5">, </span><span class="s1">dict) </span><span class="s3">else </span><span class="s1">{}</span>
+            <span class="s1">self.dbapi.init_oracle_client(**kw)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">import </span><span class="s1">oracledb</span>
+
+        <span class="s3">return </span><span class="s1">oracledb</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">is_thin_mode(cls</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection.connection.dbapi_connection.thin</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_async_dialect_cls(cls</span><span class="s5">, </span><span class="s1">url):</span>
+        <span class="s3">return </span><span class="s1">OracleDialectAsync_oracledb</span>
+
+    <span class="s3">def </span><span class="s1">_load_version(self</span><span class="s5">, </span><span class="s1">dbapi_module):</span>
+        <span class="s1">version = (</span><span class="s4">0</span><span class="s5">, </span><span class="s4">0</span><span class="s5">, </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">dbapi_module </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">m = re.match(</span><span class="s2">r&quot;(\d+)\.(\d+)(?:\.(\d+))?&quot;</span><span class="s5">, </span><span class="s1">dbapi_module.version)</span>
+            <span class="s3">if </span><span class="s1">m:</span>
+                <span class="s1">version = tuple(</span>
+                    <span class="s1">int(x) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">m.group(</span><span class="s4">1</span><span class="s5">, </span><span class="s4">2</span><span class="s5">, </span><span class="s4">3</span><span class="s1">) </span><span class="s3">if </span><span class="s1">x </span><span class="s3">is not None</span>
+                <span class="s1">)</span>
+        <span class="s1">self.oracledb_ver = version</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">self.oracledb_ver &gt; (</span><span class="s4">0</span><span class="s5">, </span><span class="s4">0</span><span class="s5">, </span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s3">and </span><span class="s1">self.oracledb_ver &lt; self._min_version</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s2">f&quot;oracledb version </span><span class="s6">{</span><span class="s1">self._min_version</span><span class="s6">} </span><span class="s2">and above are supported&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">do_begin_twophase(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">xid):</span>
+        <span class="s1">conn_xis = connection.connection.xid(*xid)</span>
+        <span class="s1">connection.connection.tpc_begin(conn_xis)</span>
+        <span class="s1">connection.connection.info[</span><span class="s2">&quot;oracledb_xid&quot;</span><span class="s1">] = conn_xis</span>
+
+    <span class="s3">def </span><span class="s1">do_prepare_twophase(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">xid):</span>
+        <span class="s1">should_commit = connection.connection.tpc_prepare()</span>
+        <span class="s1">connection.info[</span><span class="s2">&quot;oracledb_should_commit&quot;</span><span class="s1">] = should_commit</span>
+
+    <span class="s3">def </span><span class="s1">do_rollback_twophase(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">xid</span><span class="s5">, </span><span class="s1">is_prepared=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">recover=</span><span class="s3">False</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">recover:</span>
+            <span class="s1">conn_xid = connection.connection.xid(*xid)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">conn_xid = </span><span class="s3">None</span>
+        <span class="s1">connection.connection.tpc_rollback(conn_xid)</span>
+
+    <span class="s3">def </span><span class="s1">do_commit_twophase(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">xid</span><span class="s5">, </span><span class="s1">is_prepared=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">recover=</span><span class="s3">False</span>
+    <span class="s1">):</span>
+        <span class="s1">conn_xid = </span><span class="s3">None</span>
+        <span class="s3">if not </span><span class="s1">is_prepared:</span>
+            <span class="s1">should_commit = connection.connection.tpc_prepare()</span>
+        <span class="s3">elif </span><span class="s1">recover:</span>
+            <span class="s1">conn_xid = connection.connection.xid(*xid)</span>
+            <span class="s1">should_commit = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">should_commit = connection.info[</span><span class="s2">&quot;oracledb_should_commit&quot;</span><span class="s1">]</span>
+        <span class="s3">if </span><span class="s1">should_commit:</span>
+            <span class="s1">connection.connection.tpc_commit(conn_xid)</span>
+
+    <span class="s3">def </span><span class="s1">do_recover_twophase(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">[</span>
+            <span class="s0"># oracledb seems to return bytes</span>
+            <span class="s1">(</span>
+                <span class="s1">fi</span><span class="s5">,</span>
+                <span class="s1">gti.decode() </span><span class="s3">if </span><span class="s1">isinstance(gti</span><span class="s5">, </span><span class="s1">bytes) </span><span class="s3">else </span><span class="s1">gti</span><span class="s5">,</span>
+                <span class="s1">bq.decode() </span><span class="s3">if </span><span class="s1">isinstance(bq</span><span class="s5">, </span><span class="s1">bytes) </span><span class="s3">else </span><span class="s1">bq</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">for </span><span class="s1">fi</span><span class="s5">, </span><span class="s1">gti</span><span class="s5">, </span><span class="s1">bq </span><span class="s3">in </span><span class="s1">connection.connection.tpc_recover()</span>
+        <span class="s1">]</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_oracledb_cursor(AsyncAdapt_dbapi_cursor):</span>
+    <span class="s1">_cursor: AsyncCursor</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">outputtypehandler(self):</span>
+        <span class="s3">return </span><span class="s1">self._cursor.outputtypehandler</span>
+
+    <span class="s1">@outputtypehandler.setter</span>
+    <span class="s3">def </span><span class="s1">outputtypehandler(self</span><span class="s5">, </span><span class="s1">value):</span>
+        <span class="s1">self._cursor.outputtypehandler = value</span>
+
+    <span class="s3">def </span><span class="s1">var(self</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kwargs):</span>
+        <span class="s3">return </span><span class="s1">self._cursor.var(*args</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s1">self._rows.clear()</span>
+        <span class="s1">self._cursor.close()</span>
+
+    <span class="s3">def </span><span class="s1">setinputsizes(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self._cursor.setinputsizes(*args</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">_aenter_cursor(self</span><span class="s5">, </span><span class="s1">cursor: AsyncCursor) -&gt; AsyncCursor:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">cursor.__enter__()</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._adapt_connection._handle_exception(error)</span>
+
+    <span class="s3">async def </span><span class="s1">_execute_async(self</span><span class="s5">, </span><span class="s1">operation</span><span class="s5">, </span><span class="s1">parameters):</span>
+        <span class="s0"># override to not use mutex, oracledb already has mutex</span>
+
+        <span class="s3">if </span><span class="s1">parameters </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">result = </span><span class="s3">await </span><span class="s1">self._cursor.execute(operation)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">result = </span><span class="s3">await </span><span class="s1">self._cursor.execute(operation</span><span class="s5">, </span><span class="s1">parameters)</span>
+
+        <span class="s3">if </span><span class="s1">self._cursor.description </span><span class="s3">and not </span><span class="s1">self.server_side:</span>
+            <span class="s1">self._rows = collections.deque(</span><span class="s3">await </span><span class="s1">self._cursor.fetchall())</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">async def </span><span class="s1">_executemany_async(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">operation</span><span class="s5">,</span>
+        <span class="s1">seq_of_parameters</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s0"># override to not use mutex, oracledb already has mutex</span>
+        <span class="s3">return await </span><span class="s1">self._cursor.executemany(operation</span><span class="s5">, </span><span class="s1">seq_of_parameters)</span>
+
+    <span class="s3">def </span><span class="s1">__enter__(self):</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__exit__(self</span><span class="s5">, </span><span class="s1">type_: Any</span><span class="s5">, </span><span class="s1">value: Any</span><span class="s5">, </span><span class="s1">traceback: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.close()</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_oracledb_ss_cursor(</span>
+    <span class="s1">AsyncAdapt_dbapi_ss_cursor</span><span class="s5">, </span><span class="s1">AsyncAdapt_oracledb_cursor</span>
+<span class="s1">):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">close(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">self._cursor </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self._cursor.close()</span>
+            <span class="s1">self._cursor = </span><span class="s3">None  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_oracledb_connection(AsyncAdapt_dbapi_connection):</span>
+    <span class="s1">_connection: AsyncConnection</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">thin = </span><span class="s3">True</span>
+
+    <span class="s1">_cursor_cls = AsyncAdapt_oracledb_cursor</span>
+    <span class="s1">_ss_cursor_cls = </span><span class="s3">None</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">autocommit(self):</span>
+        <span class="s3">return </span><span class="s1">self._connection.autocommit</span>
+
+    <span class="s1">@autocommit.setter</span>
+    <span class="s3">def </span><span class="s1">autocommit(self</span><span class="s5">, </span><span class="s1">value):</span>
+        <span class="s1">self._connection.autocommit = value</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">outputtypehandler(self):</span>
+        <span class="s3">return </span><span class="s1">self._connection.outputtypehandler</span>
+
+    <span class="s1">@outputtypehandler.setter</span>
+    <span class="s3">def </span><span class="s1">outputtypehandler(self</span><span class="s5">, </span><span class="s1">value):</span>
+        <span class="s1">self._connection.outputtypehandler = value</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">version(self):</span>
+        <span class="s3">return </span><span class="s1">self._connection.version</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">stmtcachesize(self):</span>
+        <span class="s3">return </span><span class="s1">self._connection.stmtcachesize</span>
+
+    <span class="s1">@stmtcachesize.setter</span>
+    <span class="s3">def </span><span class="s1">stmtcachesize(self</span><span class="s5">, </span><span class="s1">value):</span>
+        <span class="s1">self._connection.stmtcachesize = value</span>
+
+    <span class="s3">def </span><span class="s1">cursor(self):</span>
+        <span class="s3">return </span><span class="s1">AsyncAdapt_oracledb_cursor(self)</span>
+
+    <span class="s3">def </span><span class="s1">ss_cursor(self):</span>
+        <span class="s3">return </span><span class="s1">AsyncAdapt_oracledb_ss_cursor(self)</span>
+
+    <span class="s3">def </span><span class="s1">xid(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self._connection.xid(*args</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">tpc_begin(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._connection.tpc_begin(*args</span><span class="s5">, </span><span class="s1">**kwargs))</span>
+
+    <span class="s3">def </span><span class="s1">tpc_commit(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._connection.tpc_commit(*args</span><span class="s5">, </span><span class="s1">**kwargs))</span>
+
+    <span class="s3">def </span><span class="s1">tpc_prepare(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._connection.tpc_prepare(*args</span><span class="s5">, </span><span class="s1">**kwargs))</span>
+
+    <span class="s3">def </span><span class="s1">tpc_recover(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._connection.tpc_recover(*args</span><span class="s5">, </span><span class="s1">**kwargs))</span>
+
+    <span class="s3">def </span><span class="s1">tpc_rollback(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._connection.tpc_rollback(*args</span><span class="s5">, </span><span class="s1">**kwargs))</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdaptFallback_oracledb_connection(</span>
+    <span class="s1">AsyncAdaptFallback_dbapi_connection</span><span class="s5">, </span><span class="s1">AsyncAdapt_oracledb_connection</span>
+<span class="s1">):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s3">class </span><span class="s1">OracledbAdaptDBAPI:</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">oracledb) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.oracledb = oracledb</span>
+
+        <span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">self.oracledb.__dict__.items():</span>
+            <span class="s3">if </span><span class="s1">k != </span><span class="s2">&quot;connect&quot;</span><span class="s1">:</span>
+                <span class="s1">self.__dict__[k] = v</span>
+
+    <span class="s3">def </span><span class="s1">connect(self</span><span class="s5">, </span><span class="s1">*arg</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s1">async_fallback = kw.pop(</span><span class="s2">&quot;async_fallback&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">creator_fn = kw.pop(</span><span class="s2">&quot;async_creator_fn&quot;</span><span class="s5">, </span><span class="s1">self.oracledb.connect_async)</span>
+
+        <span class="s3">if </span><span class="s1">asbool(async_fallback):</span>
+            <span class="s3">return </span><span class="s1">AsyncAdaptFallback_oracledb_connection(</span>
+                <span class="s1">self</span><span class="s5">, </span><span class="s1">await_fallback(creator_fn(*arg</span><span class="s5">, </span><span class="s1">**kw))</span>
+            <span class="s1">)</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_oracledb_connection(</span>
+                <span class="s1">self</span><span class="s5">, </span><span class="s1">await_only(creator_fn(*arg</span><span class="s5">, </span><span class="s1">**kw))</span>
+            <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">OracleExecutionContextAsync_oracledb(OracleExecutionContext_oracledb):</span>
+    <span class="s0"># restore default create cursor</span>
+    <span class="s1">create_cursor = default.DefaultExecutionContext.create_cursor</span>
+
+    <span class="s3">def </span><span class="s1">create_default_cursor(self):</span>
+        <span class="s0"># copy of OracleExecutionContext_cx_oracle.create_cursor</span>
+        <span class="s1">c = self._dbapi_connection.cursor()</span>
+        <span class="s3">if </span><span class="s1">self.dialect.arraysize:</span>
+            <span class="s1">c.arraysize = self.dialect.arraysize</span>
+
+        <span class="s3">return </span><span class="s1">c</span>
+
+    <span class="s3">def </span><span class="s1">create_server_side_cursor(self):</span>
+        <span class="s1">c = self._dbapi_connection.ss_cursor()</span>
+        <span class="s3">if </span><span class="s1">self.dialect.arraysize:</span>
+            <span class="s1">c.arraysize = self.dialect.arraysize</span>
+
+        <span class="s3">return </span><span class="s1">c</span>
+
+
+<span class="s3">class </span><span class="s1">OracleDialectAsync_oracledb(OracleDialect_oracledb):</span>
+    <span class="s1">is_async = </span><span class="s3">True</span>
+    <span class="s1">supports_server_side_cursors = </span><span class="s3">True</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+    <span class="s1">execution_ctx_cls = OracleExecutionContextAsync_oracledb</span>
+
+    <span class="s1">_min_version = (</span><span class="s4">2</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s0"># thick_mode mode is not supported by asyncio, oracledb will raise</span>
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">import </span><span class="s1">oracledb</span>
+
+        <span class="s3">return </span><span class="s1">OracledbAdaptDBAPI(oracledb)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_pool_class(cls</span><span class="s5">, </span><span class="s1">url):</span>
+        <span class="s1">async_fallback = url.query.get(</span><span class="s2">&quot;async_fallback&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">asbool(async_fallback):</span>
+            <span class="s3">return </span><span class="s1">pool.FallbackAsyncAdaptedQueuePool</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">pool.AsyncAdaptedQueuePool</span>
+
+    <span class="s3">def </span><span class="s1">get_driver_connection(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection._connection</span>
+
+
+<span class="s1">dialect = OracleDialect_oracledb</span>
+<span class="s1">dialect_async = OracleDialectAsync_oracledb</span>
+</pre>
+</body>
+</html>

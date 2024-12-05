@@ -1,0 +1,355 @@
+<html>
+<head>
+<title>json.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+json.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/json.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">from </span><span class="s1">.array </span><span class="s2">import </span><span class="s1">ARRAY</span>
+<span class="s2">from </span><span class="s1">.array </span><span class="s2">import </span><span class="s1">array </span><span class="s2">as </span><span class="s1">_pg_array</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">ASTEXT</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">CONTAINED_BY</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">CONTAINS</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">DELETE_PATH</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">HAS_ALL</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">HAS_ANY</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">HAS_KEY</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">JSONPATH_ASTEXT</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">PATH_EXISTS</span>
+<span class="s2">from </span><span class="s1">.operators </span><span class="s2">import </span><span class="s1">PATH_MATCH</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">types </span><span class="s2">as </span><span class="s1">sqltypes</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">cast</span>
+
+<span class="s1">__all__ = (</span><span class="s3">&quot;JSON&quot;</span><span class="s4">, </span><span class="s3">&quot;JSONB&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">JSONPathType(sqltypes.JSON.JSONPathType):</span>
+    <span class="s2">def </span><span class="s1">_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">super_proc):</span>
+        <span class="s2">def </span><span class="s1">process(value):</span>
+            <span class="s2">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">str):</span>
+                <span class="s0"># If it's already a string assume that it's in json path</span>
+                <span class="s0"># format. This allows using cast with json paths literals</span>
+                <span class="s2">return </span><span class="s1">value</span>
+            <span class="s2">elif </span><span class="s1">value:</span>
+                <span class="s0"># If it's already a string assume that it's in json path</span>
+                <span class="s0"># format. This allows using cast with json paths literals</span>
+                <span class="s1">value = </span><span class="s3">&quot;{%s}&quot; </span><span class="s1">% (</span><span class="s3">&quot;, &quot;</span><span class="s1">.join(map(str</span><span class="s4">, </span><span class="s1">value)))</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">value = </span><span class="s3">&quot;{}&quot;</span>
+            <span class="s2">if </span><span class="s1">super_proc:</span>
+                <span class="s1">value = super_proc(value)</span>
+            <span class="s2">return </span><span class="s1">value</span>
+
+        <span class="s2">return </span><span class="s1">process</span>
+
+    <span class="s2">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s2">return </span><span class="s1">self._processor(dialect</span><span class="s4">, </span><span class="s1">self.string_bind_processor(dialect))</span>
+
+    <span class="s2">def </span><span class="s1">literal_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s2">return </span><span class="s1">self._processor(dialect</span><span class="s4">, </span><span class="s1">self.string_literal_processor(dialect))</span>
+
+
+<span class="s2">class </span><span class="s1">JSONPATH(JSONPathType):</span>
+    <span class="s5">&quot;&quot;&quot;JSON Path Type. 
+ 
+    This is usually required to cast literal values to json path when using 
+    json search like function, such as ``jsonb_path_query_array`` or 
+    ``jsonb_path_exists``:: 
+ 
+        stmt = sa.select( 
+            sa.func.jsonb_path_query_array( 
+                table.c.jsonb_col, cast(&quot;$.address.id&quot;, JSONPATH) 
+            ) 
+        ) 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s3">&quot;JSONPATH&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">JSON(sqltypes.JSON):</span>
+    <span class="s3">&quot;&quot;&quot;Represent the PostgreSQL JSON type. 
+ 
+    :class:`_postgresql.JSON` is used automatically whenever the base 
+    :class:`_types.JSON` datatype is used against a PostgreSQL backend, 
+    however base :class:`_types.JSON` datatype does not provide Python 
+    accessors for PostgreSQL-specific comparison methods such as 
+    :meth:`_postgresql.JSON.Comparator.astext`; additionally, to use 
+    PostgreSQL ``JSONB``, the :class:`_postgresql.JSONB` datatype should 
+    be used explicitly. 
+ 
+    .. seealso:: 
+ 
+        :class:`_types.JSON` - main documentation for the generic 
+        cross-platform JSON datatype. 
+ 
+    The operators provided by the PostgreSQL version of :class:`_types.JSON` 
+    include: 
+ 
+    * Index operations (the ``-&gt;`` operator):: 
+ 
+        data_table.c.data['some key'] 
+ 
+        data_table.c.data[5] 
+ 
+ 
+    * Index operations returning text (the ``-&gt;&gt;`` operator):: 
+ 
+        data_table.c.data['some key'].astext == 'some value' 
+ 
+      Note that equivalent functionality is available via the 
+      :attr:`.JSON.Comparator.as_string` accessor. 
+ 
+    * Index operations with CAST 
+      (equivalent to ``CAST(col -&gt;&gt; ['some key'] AS &lt;type&gt;)``):: 
+ 
+        data_table.c.data['some key'].astext.cast(Integer) == 5 
+ 
+      Note that equivalent functionality is available via the 
+      :attr:`.JSON.Comparator.as_integer` and similar accessors. 
+ 
+    * Path index operations (the ``#&gt;`` operator):: 
+ 
+        data_table.c.data[('key_1', 'key_2', 5, ..., 'key_n')] 
+ 
+    * Path index operations returning text (the ``#&gt;&gt;`` operator):: 
+ 
+        data_table.c.data[('key_1', 'key_2', 5, ..., 'key_n')].astext == 'some value' 
+ 
+    Index operations return an expression object whose type defaults to 
+    :class:`_types.JSON` by default, 
+    so that further JSON-oriented instructions 
+    may be called upon the result type. 
+ 
+    Custom serializers and deserializers are specified at the dialect level, 
+    that is using :func:`_sa.create_engine`.  The reason for this is that when 
+    using psycopg2, the DBAPI only allows serializers at the per-cursor 
+    or per-connection level.   E.g.:: 
+ 
+        engine = create_engine(&quot;postgresql+psycopg2://scott:tiger@localhost/test&quot;, 
+                                json_serializer=my_serialize_fn, 
+                                json_deserializer=my_deserialize_fn 
+                        ) 
+ 
+    When using the psycopg2 dialect, the json_deserializer is registered 
+    against the database using ``psycopg2.extras.register_default_json``. 
+ 
+    .. seealso:: 
+ 
+        :class:`_types.JSON` - Core level JSON type 
+ 
+        :class:`_postgresql.JSONB` 
+ 
+    &quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+
+    <span class="s1">render_bind_cast = </span><span class="s2">True</span>
+    <span class="s1">astext_type = sqltypes.Text()</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">none_as_null=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">astext_type=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot;Construct a :class:`_types.JSON` type. 
+ 
+        :param none_as_null: if True, persist the value ``None`` as a 
+         SQL NULL value, not the JSON encoding of ``null``.   Note that 
+         when this flag is False, the :func:`.null` construct can still 
+         be used to persist a NULL value:: 
+ 
+             from sqlalchemy import null 
+             conn.execute(table.insert(), {&quot;data&quot;: null()}) 
+ 
+         .. seealso:: 
+ 
+              :attr:`_types.JSON.NULL` 
+ 
+        :param astext_type: the type to use for the 
+         :attr:`.JSON.Comparator.astext` 
+         accessor on indexed attributes.  Defaults to :class:`_types.Text`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">super().__init__(none_as_null=none_as_null)</span>
+        <span class="s2">if </span><span class="s1">astext_type </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.astext_type = astext_type</span>
+
+    <span class="s2">class </span><span class="s1">Comparator(sqltypes.JSON.Comparator):</span>
+        <span class="s5">&quot;&quot;&quot;Define comparison operations for :class:`_types.JSON`.&quot;&quot;&quot;</span>
+
+        <span class="s1">@property</span>
+        <span class="s2">def </span><span class="s1">astext(self):</span>
+            <span class="s5">&quot;&quot;&quot;On an indexed expression, use the &quot;astext&quot; (e.g. &quot;-&gt;&gt;&quot;) 
+            conversion when rendered in SQL. 
+ 
+            E.g.:: 
+ 
+                select(data_table.c.data['some key'].astext) 
+ 
+            .. seealso:: 
+ 
+                :meth:`_expression.ColumnElement.cast` 
+ 
+            &quot;&quot;&quot;</span>
+            <span class="s2">if </span><span class="s1">isinstance(self.expr.right.type</span><span class="s4">, </span><span class="s1">sqltypes.JSON.JSONPathType):</span>
+                <span class="s2">return </span><span class="s1">self.expr.left.operate(</span>
+                    <span class="s1">JSONPATH_ASTEXT</span><span class="s4">,</span>
+                    <span class="s1">self.expr.right</span><span class="s4">,</span>
+                    <span class="s1">result_type=self.type.astext_type</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">self.expr.left.operate(</span>
+                    <span class="s1">ASTEXT</span><span class="s4">, </span><span class="s1">self.expr.right</span><span class="s4">, </span><span class="s1">result_type=self.type.astext_type</span>
+                <span class="s1">)</span>
+
+    <span class="s1">comparator_factory = Comparator</span>
+
+
+<span class="s2">class </span><span class="s1">JSONB(JSON):</span>
+    <span class="s5">&quot;&quot;&quot;Represent the PostgreSQL JSONB type. 
+ 
+    The :class:`_postgresql.JSONB` type stores arbitrary JSONB format data, 
+    e.g.:: 
+ 
+        data_table = Table('data_table', metadata, 
+            Column('id', Integer, primary_key=True), 
+            Column('data', JSONB) 
+        ) 
+ 
+        with engine.connect() as conn: 
+            conn.execute( 
+                data_table.insert(), 
+                data = {&quot;key1&quot;: &quot;value1&quot;, &quot;key2&quot;: &quot;value2&quot;} 
+            ) 
+ 
+    The :class:`_postgresql.JSONB` type includes all operations provided by 
+    :class:`_types.JSON`, including the same behaviors for indexing 
+    operations. 
+    It also adds additional operators specific to JSONB, including 
+    :meth:`.JSONB.Comparator.has_key`, :meth:`.JSONB.Comparator.has_all`, 
+    :meth:`.JSONB.Comparator.has_any`, :meth:`.JSONB.Comparator.contains`, 
+    :meth:`.JSONB.Comparator.contained_by`, 
+    :meth:`.JSONB.Comparator.delete_path`, 
+    :meth:`.JSONB.Comparator.path_exists` and 
+    :meth:`.JSONB.Comparator.path_match`. 
+ 
+    Like the :class:`_types.JSON` type, the :class:`_postgresql.JSONB` 
+    type does not detect 
+    in-place changes when used with the ORM, unless the 
+    :mod:`sqlalchemy.ext.mutable` extension is used. 
+ 
+    Custom serializers and deserializers 
+    are shared with the :class:`_types.JSON` class, 
+    using the ``json_serializer`` 
+    and ``json_deserializer`` keyword arguments.  These must be specified 
+    at the dialect level using :func:`_sa.create_engine`.  When using 
+    psycopg2, the serializers are associated with the jsonb type using 
+    ``psycopg2.extras.register_default_jsonb`` on a per-connection basis, 
+    in the same way that ``psycopg2.extras.register_default_json`` is used 
+    to register these handlers with the json type. 
+ 
+    .. seealso:: 
+ 
+        :class:`_types.JSON` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s3">&quot;JSONB&quot;</span>
+
+    <span class="s2">class </span><span class="s1">Comparator(JSON.Comparator):</span>
+        <span class="s5">&quot;&quot;&quot;Define comparison operations for :class:`_types.JSON`.&quot;&quot;&quot;</span>
+
+        <span class="s2">def </span><span class="s1">has_key(self</span><span class="s4">, </span><span class="s1">other):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression.  Test for presence of a key (equivalent of 
+            the ``?`` operator).  Note that the key may be a SQLA expression. 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(HAS_KEY</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean)</span>
+
+        <span class="s2">def </span><span class="s1">has_all(self</span><span class="s4">, </span><span class="s1">other):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression.  Test for presence of all keys in jsonb 
+            (equivalent of the ``?&amp;`` operator) 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(HAS_ALL</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean)</span>
+
+        <span class="s2">def </span><span class="s1">has_any(self</span><span class="s4">, </span><span class="s1">other):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression.  Test for presence of any key in jsonb 
+            (equivalent of the ``?|`` operator) 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(HAS_ANY</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean)</span>
+
+        <span class="s2">def </span><span class="s1">contains(self</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression.  Test if keys (or array) are a superset 
+            of/contained the keys of the argument jsonb expression 
+            (equivalent of the ``@&gt;`` operator). 
+ 
+            kwargs may be ignored by this operator but are required for API 
+            conformance. 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(CONTAINS</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean)</span>
+
+        <span class="s2">def </span><span class="s1">contained_by(self</span><span class="s4">, </span><span class="s1">other):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression.  Test if keys are a proper subset of the 
+            keys of the argument jsonb expression 
+            (equivalent of the ``&lt;@`` operator). 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(</span>
+                <span class="s1">CONTAINED_BY</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean</span>
+            <span class="s1">)</span>
+
+        <span class="s2">def </span><span class="s1">delete_path(self</span><span class="s4">, </span><span class="s1">array):</span>
+            <span class="s5">&quot;&quot;&quot;JSONB expression. Deletes field or array element specified in 
+            the argument array (equivalent of the ``#-`` operator). 
+ 
+            The input may be a list of strings that will be coerced to an 
+            ``ARRAY`` or an instance of :meth:`_postgres.array`. 
+ 
+            .. versionadded:: 2.0 
+            &quot;&quot;&quot;</span>
+            <span class="s2">if not </span><span class="s1">isinstance(array</span><span class="s4">, </span><span class="s1">_pg_array):</span>
+                <span class="s1">array = _pg_array(array)</span>
+            <span class="s1">right_side = cast(array</span><span class="s4">, </span><span class="s1">ARRAY(sqltypes.TEXT))</span>
+            <span class="s2">return </span><span class="s1">self.operate(DELETE_PATH</span><span class="s4">, </span><span class="s1">right_side</span><span class="s4">, </span><span class="s1">result_type=JSONB)</span>
+
+        <span class="s2">def </span><span class="s1">path_exists(self</span><span class="s4">, </span><span class="s1">other):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression. Test for presence of item given by the 
+            argument JSONPath expression (equivalent of the ``@?`` operator). 
+ 
+            .. versionadded:: 2.0 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(</span>
+                <span class="s1">PATH_EXISTS</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean</span>
+            <span class="s1">)</span>
+
+        <span class="s2">def </span><span class="s1">path_match(self</span><span class="s4">, </span><span class="s1">other):</span>
+            <span class="s5">&quot;&quot;&quot;Boolean expression. Test if JSONPath predicate given by the 
+            argument JSONPath expression matches 
+            (equivalent of the ``@@`` operator). 
+ 
+            Only the first item of the result is taken into account. 
+ 
+            .. versionadded:: 2.0 
+            &quot;&quot;&quot;</span>
+            <span class="s2">return </span><span class="s1">self.operate(</span>
+                <span class="s1">PATH_MATCH</span><span class="s4">, </span><span class="s1">other</span><span class="s4">, </span><span class="s1">result_type=sqltypes.Boolean</span>
+            <span class="s1">)</span>
+
+    <span class="s1">comparator_factory = Comparator</span>
+</pre>
+</body>
+</html>

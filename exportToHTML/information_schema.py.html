@@ -1,0 +1,277 @@
+<html>
+<head>
+<title>information_schema.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+information_schema.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/mssql/information_schema.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">cast</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Column</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">MetaData</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Table</span>
+<span class="s2">from </span><span class="s1">...ext.compiler </span><span class="s2">import </span><span class="s1">compiles</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">expression</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">Boolean</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">Integer</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">Numeric</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">NVARCHAR</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">String</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">TypeDecorator</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">Unicode</span>
+
+
+<span class="s1">ischema = MetaData()</span>
+
+
+<span class="s2">class </span><span class="s1">CoerceUnicode(TypeDecorator):</span>
+    <span class="s1">impl = Unicode</span>
+    <span class="s1">cache_ok = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">bind_expression(self</span><span class="s3">, </span><span class="s1">bindvalue):</span>
+        <span class="s2">return </span><span class="s1">_cast_on_2005(bindvalue)</span>
+
+
+<span class="s2">class </span><span class="s1">_cast_on_2005(expression.ColumnElement):</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">bindvalue):</span>
+        <span class="s1">self.bindvalue = bindvalue</span>
+
+
+<span class="s1">@compiles(_cast_on_2005)</span>
+<span class="s2">def </span><span class="s1">_compile(element</span><span class="s3">, </span><span class="s1">compiler</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">base</span>
+
+    <span class="s2">if </span><span class="s1">(</span>
+        <span class="s1">compiler.dialect.server_version_info </span><span class="s2">is None</span>
+        <span class="s2">or </span><span class="s1">compiler.dialect.server_version_info &lt; base.MS_2005_VERSION</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">compiler.process(element.bindvalue</span><span class="s3">, </span><span class="s1">**kw)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">compiler.process(cast(element.bindvalue</span><span class="s3">, </span><span class="s1">Unicode)</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+
+<span class="s1">schemata = Table(</span>
+    <span class="s4">&quot;SCHEMATA&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CATALOG_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;catalog_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;SCHEMA_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;schema_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;SCHEMA_OWNER&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;schema_owner&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">tables = Table(</span>
+    <span class="s4">&quot;TABLES&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_CATALOG&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_catalog&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_TYPE&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_type&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">columns = Table(</span>
+    <span class="s4">&quot;COLUMNS&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;COLUMN_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;column_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;IS_NULLABLE&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;is_nullable&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;DATA_TYPE&quot;</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;data_type&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;ORDINAL_POSITION&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;ordinal_position&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span>
+        <span class="s4">&quot;CHARACTER_MAXIMUM_LENGTH&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;character_maximum_length&quot;</span>
+    <span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;NUMERIC_PRECISION&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;numeric_precision&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;NUMERIC_SCALE&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;numeric_scale&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;COLUMN_DEFAULT&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;column_default&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;COLLATION_NAME&quot;</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;collation_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">mssql_temp_table_columns = Table(</span>
+    <span class="s4">&quot;COLUMNS&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;COLUMN_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;column_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;IS_NULLABLE&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;is_nullable&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;DATA_TYPE&quot;</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;data_type&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;ORDINAL_POSITION&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;ordinal_position&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span>
+        <span class="s4">&quot;CHARACTER_MAXIMUM_LENGTH&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;character_maximum_length&quot;</span>
+    <span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;NUMERIC_PRECISION&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;numeric_precision&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;NUMERIC_SCALE&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;numeric_scale&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;COLUMN_DEFAULT&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;column_default&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;COLLATION_NAME&quot;</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;collation_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;tempdb.INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">constraints = Table(</span>
+    <span class="s4">&quot;TABLE_CONSTRAINTS&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CONSTRAINT_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;constraint_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CONSTRAINT_TYPE&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;constraint_type&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">column_constraints = Table(</span>
+    <span class="s4">&quot;CONSTRAINT_COLUMN_USAGE&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;COLUMN_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;column_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CONSTRAINT_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;constraint_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">key_constraints = Table(</span>
+    <span class="s4">&quot;KEY_COLUMN_USAGE&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;COLUMN_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;column_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CONSTRAINT_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;constraint_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CONSTRAINT_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;constraint_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;ORDINAL_POSITION&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;ordinal_position&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">ref_constraints = Table(</span>
+    <span class="s4">&quot;REFERENTIAL_CONSTRAINTS&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CONSTRAINT_CATALOG&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;constraint_catalog&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CONSTRAINT_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;constraint_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CONSTRAINT_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;constraint_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s0"># TODO: is CATLOG misspelled ?</span>
+    <span class="s1">Column(</span>
+        <span class="s4">&quot;UNIQUE_CONSTRAINT_CATLOG&quot;</span><span class="s3">,</span>
+        <span class="s1">CoerceUnicode</span><span class="s3">,</span>
+        <span class="s1">key=</span><span class="s4">&quot;unique_constraint_catalog&quot;</span><span class="s3">,</span>
+    <span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span>
+        <span class="s4">&quot;UNIQUE_CONSTRAINT_SCHEMA&quot;</span><span class="s3">,</span>
+        <span class="s1">CoerceUnicode</span><span class="s3">,</span>
+        <span class="s1">key=</span><span class="s4">&quot;unique_constraint_schema&quot;</span><span class="s3">,</span>
+    <span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span>
+        <span class="s4">&quot;UNIQUE_CONSTRAINT_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;unique_constraint_name&quot;</span>
+    <span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;MATCH_OPTION&quot;</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;match_option&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;UPDATE_RULE&quot;</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;update_rule&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;DELETE_RULE&quot;</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;delete_rule&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">views = Table(</span>
+    <span class="s4">&quot;VIEWS&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_CATALOG&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_catalog&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;TABLE_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;table_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;VIEW_DEFINITION&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;view_definition&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;CHECK_OPTION&quot;</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;check_option&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;IS_UPDATABLE&quot;</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;is_updatable&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">computed_columns = Table(</span>
+    <span class="s4">&quot;computed_columns&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;object_id&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;name&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;is_computed&quot;</span><span class="s3">, </span><span class="s1">Boolean)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;is_persisted&quot;</span><span class="s3">, </span><span class="s1">Boolean)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;definition&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;sys&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s1">sequences = Table(</span>
+    <span class="s4">&quot;SEQUENCES&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;SEQUENCE_CATALOG&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;sequence_catalog&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;SEQUENCE_SCHEMA&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;sequence_schema&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;SEQUENCE_NAME&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode</span><span class="s3">, </span><span class="s1">key=</span><span class="s4">&quot;sequence_name&quot;</span><span class="s1">)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;INFORMATION_SCHEMA&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">NumericSqlVariant(TypeDecorator):</span>
+    <span class="s5">r&quot;&quot;&quot;This type casts sql_variant columns in the identity_columns view 
+    to numeric. This is required because: 
+ 
+    * pyodbc does not support sql_variant 
+    * pymssql under python 2 return the byte representation of the number, 
+      int 1 is returned as &quot;\x01\x00\x00\x00&quot;. On python 3 it returns the 
+      correct value as string. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">impl = Unicode</span>
+    <span class="s1">cache_ok = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">column_expression(self</span><span class="s3">, </span><span class="s1">colexpr):</span>
+        <span class="s2">return </span><span class="s1">cast(colexpr</span><span class="s3">, </span><span class="s1">Numeric(</span><span class="s6">38</span><span class="s3">, </span><span class="s6">0</span><span class="s1">))</span>
+
+
+<span class="s1">identity_columns = Table(</span>
+    <span class="s4">&quot;identity_columns&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;object_id&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;name&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;is_identity&quot;</span><span class="s3">, </span><span class="s1">Boolean)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;seed_value&quot;</span><span class="s3">, </span><span class="s1">NumericSqlVariant)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;increment_value&quot;</span><span class="s3">, </span><span class="s1">NumericSqlVariant)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;last_value&quot;</span><span class="s3">, </span><span class="s1">NumericSqlVariant)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;is_not_for_replication&quot;</span><span class="s3">, </span><span class="s1">Boolean)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;sys&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">NVarcharSqlVariant(TypeDecorator):</span>
+    <span class="s5">&quot;&quot;&quot;This type casts sql_variant columns in the extended_properties view 
+    to nvarchar. This is required because pyodbc does not support sql_variant 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">impl = Unicode</span>
+    <span class="s1">cache_ok = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">column_expression(self</span><span class="s3">, </span><span class="s1">colexpr):</span>
+        <span class="s2">return </span><span class="s1">cast(colexpr</span><span class="s3">, </span><span class="s1">NVARCHAR)</span>
+
+
+<span class="s1">extended_properties = Table(</span>
+    <span class="s4">&quot;extended_properties&quot;</span><span class="s3">,</span>
+    <span class="s1">ischema</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;class&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,  </span><span class="s0"># TINYINT</span>
+    <span class="s1">Column(</span><span class="s4">&quot;class_desc&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;major_id&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;minor_id&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;name&quot;</span><span class="s3">, </span><span class="s1">CoerceUnicode)</span><span class="s3">,</span>
+    <span class="s1">Column(</span><span class="s4">&quot;value&quot;</span><span class="s3">, </span><span class="s1">NVarcharSqlVariant)</span><span class="s3">,</span>
+    <span class="s1">schema=</span><span class="s4">&quot;sys&quot;</span><span class="s3">,</span>
+<span class="s1">)</span>
+</pre>
+</body>
+</html>

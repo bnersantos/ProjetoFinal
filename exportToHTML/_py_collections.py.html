@@ -1,0 +1,564 @@
+<html>
+<head>
+<title>_py_collections.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_py_collections.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># util/_py_collections.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">itertools </span><span class="s2">import </span><span class="s1">filterfalse</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">AbstractSet</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">cast</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Collection</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterator</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">List</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Mapping</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">NoReturn</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Set</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Tuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TypeVar</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Self</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s3">&quot;_T&quot;</span><span class="s4">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_S = TypeVar(</span><span class="s3">&quot;_S&quot;</span><span class="s4">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_KT = TypeVar(</span><span class="s3">&quot;_KT&quot;</span><span class="s4">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_VT = TypeVar(</span><span class="s3">&quot;_VT&quot;</span><span class="s4">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s2">class </span><span class="s1">ReadOnlyContainer:</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_readonly(self</span><span class="s4">, </span><span class="s1">*arg: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s2">raise </span><span class="s1">TypeError(</span>
+            <span class="s3">&quot;%s object is immutable and/or readonly&quot; </span><span class="s1">% self.__class__.__name__</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_immutable(self</span><span class="s4">, </span><span class="s1">*arg: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;%s object is immutable&quot; </span><span class="s1">% self.__class__.__name__)</span>
+
+    <span class="s2">def </span><span class="s1">__delitem__(self</span><span class="s4">, </span><span class="s1">key: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._readonly()</span>
+
+    <span class="s2">def </span><span class="s1">__setitem__(self</span><span class="s4">, </span><span class="s1">key: Any</span><span class="s4">, </span><span class="s1">value: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._readonly()</span>
+
+    <span class="s2">def </span><span class="s1">__setattr__(self</span><span class="s4">, </span><span class="s1">key: str</span><span class="s4">, </span><span class="s1">value: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._readonly()</span>
+
+
+<span class="s2">class </span><span class="s1">ImmutableDictBase(ReadOnlyContainer</span><span class="s4">, </span><span class="s1">Dict[_KT</span><span class="s4">, </span><span class="s1">_VT]):</span>
+    <span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s2">def </span><span class="s1">__new__(cls</span><span class="s4">, </span><span class="s1">*args: Any) -&gt; Self: ...</span>
+
+        <span class="s2">def </span><span class="s1">__init__(cls</span><span class="s4">, </span><span class="s1">*args: Any): ...</span>
+
+    <span class="s2">def </span><span class="s1">_readonly(self</span><span class="s4">, </span><span class="s1">*arg: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._immutable()</span>
+
+    <span class="s2">def </span><span class="s1">clear(self) -&gt; NoReturn:</span>
+        <span class="s1">self._readonly()</span>
+
+    <span class="s2">def </span><span class="s1">pop(self</span><span class="s4">, </span><span class="s1">key: Any</span><span class="s4">, </span><span class="s1">default: Optional[Any] = </span><span class="s2">None</span><span class="s1">) -&gt; NoReturn:</span>
+        <span class="s1">self._readonly()</span>
+
+    <span class="s2">def </span><span class="s1">popitem(self) -&gt; NoReturn:</span>
+        <span class="s1">self._readonly()</span>
+
+    <span class="s2">def </span><span class="s1">setdefault(self</span><span class="s4">, </span><span class="s1">key: Any</span><span class="s4">, </span><span class="s1">default: Optional[Any] = </span><span class="s2">None</span><span class="s1">) -&gt; NoReturn:</span>
+        <span class="s1">self._readonly()</span>
+
+    <span class="s2">def </span><span class="s1">update(self</span><span class="s4">, </span><span class="s1">*arg: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; NoReturn:</span>
+        <span class="s1">self._readonly()</span>
+
+
+<span class="s2">class </span><span class="s1">immutabledict(ImmutableDictBase[_KT</span><span class="s4">, </span><span class="s1">_VT]):</span>
+    <span class="s2">def </span><span class="s1">__new__(cls</span><span class="s4">, </span><span class="s1">*args):</span>
+        <span class="s1">new = ImmutableDictBase.__new__(cls)</span>
+        <span class="s1">dict.__init__(new</span><span class="s4">, </span><span class="s1">*args)</span>
+        <span class="s2">return </span><span class="s1">new</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">*args: Union[Mapping[_KT</span><span class="s4">, </span><span class="s1">_VT]</span><span class="s4">, </span><span class="s1">Iterable[Tuple[_KT</span><span class="s4">, </span><span class="s1">_VT]]]</span>
+    <span class="s1">):</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">__reduce__(self):</span>
+        <span class="s2">return </span><span class="s1">immutabledict</span><span class="s4">, </span><span class="s1">(dict(self)</span><span class="s4">,</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">union(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">__d: Optional[Mapping[_KT</span><span class="s4">, </span><span class="s1">_VT]] = </span><span class="s2">None</span>
+    <span class="s1">) -&gt; immutabledict[_KT</span><span class="s4">, </span><span class="s1">_VT]:</span>
+        <span class="s2">if not </span><span class="s1">__d:</span>
+            <span class="s2">return </span><span class="s1">self</span>
+
+        <span class="s1">new = ImmutableDictBase.__new__(self.__class__)</span>
+        <span class="s1">dict.__init__(new</span><span class="s4">, </span><span class="s1">self)</span>
+        <span class="s1">dict.update(new</span><span class="s4">, </span><span class="s1">__d)  </span><span class="s0"># type: ignore</span>
+        <span class="s2">return </span><span class="s1">new</span>
+
+    <span class="s2">def </span><span class="s1">_union_w_kw(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">__d: Optional[Mapping[_KT</span><span class="s4">, </span><span class="s1">_VT]] = </span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw: _VT</span>
+    <span class="s1">) -&gt; immutabledict[_KT</span><span class="s4">, </span><span class="s1">_VT]:</span>
+        <span class="s0"># not sure if C version works correctly w/ this yet</span>
+        <span class="s2">if not </span><span class="s1">__d </span><span class="s2">and not </span><span class="s1">kw:</span>
+            <span class="s2">return </span><span class="s1">self</span>
+
+        <span class="s1">new = ImmutableDictBase.__new__(self.__class__)</span>
+        <span class="s1">dict.__init__(new</span><span class="s4">, </span><span class="s1">self)</span>
+        <span class="s2">if </span><span class="s1">__d:</span>
+            <span class="s1">dict.update(new</span><span class="s4">, </span><span class="s1">__d)  </span><span class="s0"># type: ignore</span>
+        <span class="s1">dict.update(new</span><span class="s4">, </span><span class="s1">kw)  </span><span class="s0"># type: ignore</span>
+        <span class="s2">return </span><span class="s1">new</span>
+
+    <span class="s2">def </span><span class="s1">merge_with(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">*dicts: Optional[Mapping[_KT</span><span class="s4">, </span><span class="s1">_VT]]</span>
+    <span class="s1">) -&gt; immutabledict[_KT</span><span class="s4">, </span><span class="s1">_VT]:</span>
+        <span class="s1">new = </span><span class="s2">None</span>
+        <span class="s2">for </span><span class="s1">d </span><span class="s2">in </span><span class="s1">dicts:</span>
+            <span class="s2">if </span><span class="s1">d:</span>
+                <span class="s2">if </span><span class="s1">new </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s1">new = ImmutableDictBase.__new__(self.__class__)</span>
+                    <span class="s1">dict.__init__(new</span><span class="s4">, </span><span class="s1">self)</span>
+                <span class="s1">dict.update(new</span><span class="s4">, </span><span class="s1">d)  </span><span class="s0"># type: ignore</span>
+        <span class="s2">if </span><span class="s1">new </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self</span>
+
+        <span class="s2">return </span><span class="s1">new</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s2">return </span><span class="s3">&quot;immutabledict(%s)&quot; </span><span class="s1">% dict.__repr__(self)</span>
+
+    <span class="s0"># PEP 584</span>
+    <span class="s2">def </span><span class="s1">__ior__(self</span><span class="s4">, </span><span class="s1">__value: Any) -&gt; NoReturn:  </span><span class="s0"># type: ignore</span>
+        <span class="s1">self._readonly()</span>
+
+    <span class="s2">def </span><span class="s1">__or__(  </span><span class="s0"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">__value: Mapping[_KT</span><span class="s4">, </span><span class="s1">_VT]</span>
+    <span class="s1">) -&gt; immutabledict[_KT</span><span class="s4">, </span><span class="s1">_VT]:</span>
+        <span class="s2">return </span><span class="s1">immutabledict(</span>
+            <span class="s1">super().__or__(__value)</span><span class="s4">,  </span><span class="s0"># type: ignore[call-overload]</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__ror__(  </span><span class="s0"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">__value: Mapping[_KT</span><span class="s4">, </span><span class="s1">_VT]</span>
+    <span class="s1">) -&gt; immutabledict[_KT</span><span class="s4">, </span><span class="s1">_VT]:</span>
+        <span class="s2">return </span><span class="s1">immutabledict(</span>
+            <span class="s1">super().__ror__(__value)</span><span class="s4">,  </span><span class="s0"># type: ignore[call-overload]</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">OrderedSet(Set[_T]):</span>
+    <span class="s1">__slots__ = (</span><span class="s3">&quot;_list&quot;</span><span class="s4">,</span><span class="s1">)</span>
+
+    <span class="s1">_list: List[_T]</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">d: Optional[Iterable[_T]] = </span><span class="s2">None</span><span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">d </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self._list = unique_list(d)</span>
+            <span class="s1">super().update(self._list)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._list = []</span>
+
+    <span class="s2">def </span><span class="s1">copy(self) -&gt; OrderedSet[_T]:</span>
+        <span class="s1">cp = self.__class__()</span>
+        <span class="s1">cp._list = self._list.copy()</span>
+        <span class="s1">set.update(cp</span><span class="s4">, </span><span class="s1">cp._list)</span>
+        <span class="s2">return </span><span class="s1">cp</span>
+
+    <span class="s2">def </span><span class="s1">add(self</span><span class="s4">, </span><span class="s1">element: _T) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">element </span><span class="s2">not in </span><span class="s1">self:</span>
+            <span class="s1">self._list.append(element)</span>
+        <span class="s1">super().add(element)</span>
+
+    <span class="s2">def </span><span class="s1">remove(self</span><span class="s4">, </span><span class="s1">element: _T) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">super().remove(element)</span>
+        <span class="s1">self._list.remove(element)</span>
+
+    <span class="s2">def </span><span class="s1">pop(self) -&gt; _T:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">value = self._list.pop()</span>
+        <span class="s2">except </span><span class="s1">IndexError:</span>
+            <span class="s2">raise </span><span class="s1">KeyError(</span><span class="s3">&quot;pop from an empty set&quot;</span><span class="s1">) </span><span class="s2">from None</span>
+        <span class="s1">super().remove(value)</span>
+        <span class="s2">return </span><span class="s1">value</span>
+
+    <span class="s2">def </span><span class="s1">insert(self</span><span class="s4">, </span><span class="s1">pos: int</span><span class="s4">, </span><span class="s1">element: _T) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">element </span><span class="s2">not in </span><span class="s1">self:</span>
+            <span class="s1">self._list.insert(pos</span><span class="s4">, </span><span class="s1">element)</span>
+        <span class="s1">super().add(element)</span>
+
+    <span class="s2">def </span><span class="s1">discard(self</span><span class="s4">, </span><span class="s1">element: _T) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">element </span><span class="s2">in </span><span class="s1">self:</span>
+            <span class="s1">self._list.remove(element)</span>
+            <span class="s1">super().remove(element)</span>
+
+    <span class="s2">def </span><span class="s1">clear(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">super().clear()</span>
+        <span class="s1">self._list = []</span>
+
+    <span class="s2">def </span><span class="s1">__getitem__(self</span><span class="s4">, </span><span class="s1">key: int) -&gt; _T:</span>
+        <span class="s2">return </span><span class="s1">self._list[key]</span>
+
+    <span class="s2">def </span><span class="s1">__iter__(self) -&gt; Iterator[_T]:</span>
+        <span class="s2">return </span><span class="s1">iter(self._list)</span>
+
+    <span class="s2">def </span><span class="s1">__add__(self</span><span class="s4">, </span><span class="s1">other: Iterator[_T]) -&gt; OrderedSet[_T]:</span>
+        <span class="s2">return </span><span class="s1">self.union(other)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s2">return </span><span class="s3">&quot;%s(%r)&quot; </span><span class="s1">% (self.__class__.__name__</span><span class="s4">, </span><span class="s1">self._list)</span>
+
+    <span class="s1">__str__ = __repr__</span>
+
+    <span class="s2">def </span><span class="s1">update(self</span><span class="s4">, </span><span class="s1">*iterables: Iterable[_T]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">for </span><span class="s1">iterable </span><span class="s2">in </span><span class="s1">iterables:</span>
+            <span class="s2">for </span><span class="s1">e </span><span class="s2">in </span><span class="s1">iterable:</span>
+                <span class="s2">if </span><span class="s1">e </span><span class="s2">not in </span><span class="s1">self:</span>
+                    <span class="s1">self._list.append(e)</span>
+                    <span class="s1">super().add(e)</span>
+
+    <span class="s2">def </span><span class="s1">__ior__(self</span><span class="s4">, </span><span class="s1">other: AbstractSet[_S]) -&gt; OrderedSet[Union[_T</span><span class="s4">, </span><span class="s1">_S]]:</span>
+        <span class="s1">self.update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">union(self</span><span class="s4">, </span><span class="s1">*other: Iterable[_S]) -&gt; OrderedSet[Union[_T</span><span class="s4">, </span><span class="s1">_S]]:</span>
+        <span class="s1">result: OrderedSet[Union[_T</span><span class="s4">, </span><span class="s1">_S]] = self.copy()</span>
+        <span class="s1">result.update(*other)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__or__(self</span><span class="s4">, </span><span class="s1">other: AbstractSet[_S]) -&gt; OrderedSet[Union[_T</span><span class="s4">, </span><span class="s1">_S]]:</span>
+        <span class="s2">return </span><span class="s1">self.union(other)</span>
+
+    <span class="s2">def </span><span class="s1">intersection(self</span><span class="s4">, </span><span class="s1">*other: Iterable[Any]) -&gt; OrderedSet[_T]:</span>
+        <span class="s1">other_set: Set[Any] = set()</span>
+        <span class="s1">other_set.update(*other)</span>
+        <span class="s2">return </span><span class="s1">self.__class__(a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">other_set)</span>
+
+    <span class="s2">def </span><span class="s1">__and__(self</span><span class="s4">, </span><span class="s1">other: AbstractSet[object]) -&gt; OrderedSet[_T]:</span>
+        <span class="s2">return </span><span class="s1">self.intersection(other)</span>
+
+    <span class="s2">def </span><span class="s1">symmetric_difference(self</span><span class="s4">, </span><span class="s1">other: Iterable[_T]) -&gt; OrderedSet[_T]:</span>
+        <span class="s1">collection: Collection[_T]</span>
+        <span class="s2">if </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">set):</span>
+            <span class="s1">collection = other_set = other</span>
+        <span class="s2">elif </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">Collection):</span>
+            <span class="s1">collection = other</span>
+            <span class="s1">other_set = set(other)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">collection = list(other)</span>
+            <span class="s1">other_set = set(collection)</span>
+        <span class="s1">result = self.__class__(a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self </span><span class="s2">if </span><span class="s1">a </span><span class="s2">not in </span><span class="s1">other_set)</span>
+        <span class="s1">result.update(a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">collection </span><span class="s2">if </span><span class="s1">a </span><span class="s2">not in </span><span class="s1">self)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__xor__(self</span><span class="s4">, </span><span class="s1">other: AbstractSet[_S]) -&gt; OrderedSet[Union[_T</span><span class="s4">, </span><span class="s1">_S]]:</span>
+        <span class="s2">return </span><span class="s1">cast(OrderedSet[Union[_T</span><span class="s4">, </span><span class="s1">_S]]</span><span class="s4">, </span><span class="s1">self).symmetric_difference(</span>
+            <span class="s1">other</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">difference(self</span><span class="s4">, </span><span class="s1">*other: Iterable[Any]) -&gt; OrderedSet[_T]:</span>
+        <span class="s1">other_set = super().difference(*other)</span>
+        <span class="s2">return </span><span class="s1">self.__class__(a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">other_set)</span>
+
+    <span class="s2">def </span><span class="s1">__sub__(self</span><span class="s4">, </span><span class="s1">other: AbstractSet[Optional[_T]]) -&gt; OrderedSet[_T]:</span>
+        <span class="s2">return </span><span class="s1">self.difference(other)</span>
+
+    <span class="s2">def </span><span class="s1">intersection_update(self</span><span class="s4">, </span><span class="s1">*other: Iterable[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">super().intersection_update(*other)</span>
+        <span class="s1">self._list = [a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self]</span>
+
+    <span class="s2">def </span><span class="s1">__iand__(self</span><span class="s4">, </span><span class="s1">other: AbstractSet[object]) -&gt; OrderedSet[_T]:</span>
+        <span class="s1">self.intersection_update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">symmetric_difference_update(self</span><span class="s4">, </span><span class="s1">other: Iterable[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">collection = other </span><span class="s2">if </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">Collection) </span><span class="s2">else </span><span class="s1">list(other)</span>
+        <span class="s1">super().symmetric_difference_update(collection)</span>
+        <span class="s1">self._list = [a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self]</span>
+        <span class="s1">self._list += [a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">collection </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self]</span>
+
+    <span class="s2">def </span><span class="s1">__ixor__(self</span><span class="s4">, </span><span class="s1">other: AbstractSet[_S]) -&gt; OrderedSet[Union[_T</span><span class="s4">, </span><span class="s1">_S]]:</span>
+        <span class="s1">self.symmetric_difference_update(other)</span>
+        <span class="s2">return </span><span class="s1">cast(OrderedSet[Union[_T</span><span class="s4">, </span><span class="s1">_S]]</span><span class="s4">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">difference_update(self</span><span class="s4">, </span><span class="s1">*other: Iterable[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">super().difference_update(*other)</span>
+        <span class="s1">self._list = [a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self]</span>
+
+    <span class="s2">def </span><span class="s1">__isub__(self</span><span class="s4">, </span><span class="s1">other: AbstractSet[Optional[_T]]) -&gt; OrderedSet[_T]:  </span><span class="s0"># type: ignore  # noqa: E501</span>
+        <span class="s1">self.difference_update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+
+<span class="s2">class </span><span class="s1">IdentitySet:</span>
+    <span class="s5">&quot;&quot;&quot;A set that considers only object id() for uniqueness. 
+ 
+    This strategy has edge cases for builtin types- it's possible to have 
+    two 'foo' strings in one of these sets, for example.  Use sparingly. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_members: Dict[int</span><span class="s4">, </span><span class="s1">Any]</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">iterable: Optional[Iterable[Any]] = </span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">self._members = dict()</span>
+        <span class="s2">if </span><span class="s1">iterable:</span>
+            <span class="s1">self.update(iterable)</span>
+
+    <span class="s2">def </span><span class="s1">add(self</span><span class="s4">, </span><span class="s1">value: Any) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._members[id(value)] = value</span>
+
+    <span class="s2">def </span><span class="s1">__contains__(self</span><span class="s4">, </span><span class="s1">value: Any) -&gt; bool:</span>
+        <span class="s2">return </span><span class="s1">id(value) </span><span class="s2">in </span><span class="s1">self._members</span>
+
+    <span class="s2">def </span><span class="s1">remove(self</span><span class="s4">, </span><span class="s1">value: Any) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">del </span><span class="s1">self._members[id(value)]</span>
+
+    <span class="s2">def </span><span class="s1">discard(self</span><span class="s4">, </span><span class="s1">value: Any) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.remove(value)</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">pop(self) -&gt; Any:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">pair = self._members.popitem()</span>
+            <span class="s2">return </span><span class="s1">pair[</span><span class="s6">1</span><span class="s1">]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">raise </span><span class="s1">KeyError(</span><span class="s3">&quot;pop from an empty set&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">clear(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._members.clear()</span>
+
+    <span class="s2">def </span><span class="s1">__eq__(self</span><span class="s4">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s2">if </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">self._members == other._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return False</span>
+
+    <span class="s2">def </span><span class="s1">__ne__(self</span><span class="s4">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s2">if </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">self._members != other._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">issubset(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; bool:</span>
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s4">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = iterable</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = self.__class__(iterable)</span>
+
+        <span class="s2">if </span><span class="s1">len(self) &gt; len(other):</span>
+            <span class="s2">return False</span>
+        <span class="s2">for </span><span class="s1">m </span><span class="s2">in </span><span class="s1">filterfalse(</span>
+            <span class="s1">other._members.__contains__</span><span class="s4">, </span><span class="s1">iter(self._members.keys())</span>
+        <span class="s1">):</span>
+            <span class="s2">return False</span>
+        <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">__le__(self</span><span class="s4">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.issubset(other)</span>
+
+    <span class="s2">def </span><span class="s1">__lt__(self</span><span class="s4">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">len(self) &lt; len(other) </span><span class="s2">and </span><span class="s1">self.issubset(other)</span>
+
+    <span class="s2">def </span><span class="s1">issuperset(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; bool:</span>
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s4">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = iterable</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = self.__class__(iterable)</span>
+
+        <span class="s2">if </span><span class="s1">len(self) &lt; len(other):</span>
+            <span class="s2">return False</span>
+
+        <span class="s2">for </span><span class="s1">m </span><span class="s2">in </span><span class="s1">filterfalse(</span>
+            <span class="s1">self._members.__contains__</span><span class="s4">, </span><span class="s1">iter(other._members.keys())</span>
+        <span class="s1">):</span>
+            <span class="s2">return False</span>
+        <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">__ge__(self</span><span class="s4">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.issuperset(other)</span>
+
+    <span class="s2">def </span><span class="s1">__gt__(self</span><span class="s4">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">len(self) &gt; len(other) </span><span class="s2">and </span><span class="s1">self.issuperset(other)</span>
+
+    <span class="s2">def </span><span class="s1">union(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; IdentitySet:</span>
+        <span class="s1">result = self.__class__()</span>
+        <span class="s1">members = self._members</span>
+        <span class="s1">result._members.update(members)</span>
+        <span class="s1">result._members.update((id(obj)</span><span class="s4">, </span><span class="s1">obj) </span><span class="s2">for </span><span class="s1">obj </span><span class="s2">in </span><span class="s1">iterable)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__or__(self</span><span class="s4">, </span><span class="s1">other: Any) -&gt; IdentitySet:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.union(other)</span>
+
+    <span class="s2">def </span><span class="s1">update(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._members.update((id(obj)</span><span class="s4">, </span><span class="s1">obj) </span><span class="s2">for </span><span class="s1">obj </span><span class="s2">in </span><span class="s1">iterable)</span>
+
+    <span class="s2">def </span><span class="s1">__ior__(self</span><span class="s4">, </span><span class="s1">other: Any) -&gt; IdentitySet:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s1">self.update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">difference(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; IdentitySet:</span>
+        <span class="s1">result = self.__new__(self.__class__)</span>
+        <span class="s1">other: Collection[Any]</span>
+
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s4">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = iterable._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = {id(obj) </span><span class="s2">for </span><span class="s1">obj </span><span class="s2">in </span><span class="s1">iterable}</span>
+        <span class="s1">result._members = {</span>
+            <span class="s1">k: v </span><span class="s2">for </span><span class="s1">k</span><span class="s4">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self._members.items() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">other</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__sub__(self</span><span class="s4">, </span><span class="s1">other: IdentitySet) -&gt; IdentitySet:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.difference(other)</span>
+
+    <span class="s2">def </span><span class="s1">difference_update(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._members = self.difference(iterable)._members</span>
+
+    <span class="s2">def </span><span class="s1">__isub__(self</span><span class="s4">, </span><span class="s1">other: IdentitySet) -&gt; IdentitySet:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s1">self.difference_update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">intersection(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; IdentitySet:</span>
+        <span class="s1">result = self.__new__(self.__class__)</span>
+
+        <span class="s1">other: Collection[Any]</span>
+
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s4">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = iterable._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = {id(obj) </span><span class="s2">for </span><span class="s1">obj </span><span class="s2">in </span><span class="s1">iterable}</span>
+        <span class="s1">result._members = {</span>
+            <span class="s1">k: v </span><span class="s2">for </span><span class="s1">k</span><span class="s4">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self._members.items() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">other</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__and__(self</span><span class="s4">, </span><span class="s1">other: IdentitySet) -&gt; IdentitySet:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.intersection(other)</span>
+
+    <span class="s2">def </span><span class="s1">intersection_update(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._members = self.intersection(iterable)._members</span>
+
+    <span class="s2">def </span><span class="s1">__iand__(self</span><span class="s4">, </span><span class="s1">other: IdentitySet) -&gt; IdentitySet:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s1">self.intersection_update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">symmetric_difference(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; IdentitySet:</span>
+        <span class="s1">result = self.__new__(self.__class__)</span>
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s4">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = iterable._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = {id(obj): obj </span><span class="s2">for </span><span class="s1">obj </span><span class="s2">in </span><span class="s1">iterable}</span>
+        <span class="s1">result._members = {</span>
+            <span class="s1">k: v </span><span class="s2">for </span><span class="s1">k</span><span class="s4">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self._members.items() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">other</span>
+        <span class="s1">}</span>
+        <span class="s1">result._members.update(</span>
+            <span class="s1">(k</span><span class="s4">, </span><span class="s1">v) </span><span class="s2">for </span><span class="s1">k</span><span class="s4">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">other.items() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">self._members</span>
+        <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__xor__(self</span><span class="s4">, </span><span class="s1">other: IdentitySet) -&gt; IdentitySet:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.symmetric_difference(other)</span>
+
+    <span class="s2">def </span><span class="s1">symmetric_difference_update(self</span><span class="s4">, </span><span class="s1">iterable: Iterable[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._members = self.symmetric_difference(iterable)._members</span>
+
+    <span class="s2">def </span><span class="s1">__ixor__(self</span><span class="s4">, </span><span class="s1">other: IdentitySet) -&gt; IdentitySet:</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s4">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s1">self.symmetric_difference(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">copy(self) -&gt; IdentitySet:</span>
+        <span class="s1">result = self.__new__(self.__class__)</span>
+        <span class="s1">result._members = self._members.copy()</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s1">__copy__ = copy</span>
+
+    <span class="s2">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s2">return </span><span class="s1">len(self._members)</span>
+
+    <span class="s2">def </span><span class="s1">__iter__(self) -&gt; Iterator[Any]:</span>
+        <span class="s2">return </span><span class="s1">iter(self._members.values())</span>
+
+    <span class="s2">def </span><span class="s1">__hash__(self) -&gt; NoReturn:</span>
+        <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;set objects are unhashable&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s2">return </span><span class="s3">&quot;%s(%r)&quot; </span><span class="s1">% (type(self).__name__</span><span class="s4">, </span><span class="s1">list(self._members.values()))</span>
+
+
+<span class="s2">def </span><span class="s1">unique_list(</span>
+    <span class="s1">seq: Iterable[_T]</span><span class="s4">, </span><span class="s1">hashfunc: Optional[Callable[[_T]</span><span class="s4">, </span><span class="s1">int]] = </span><span class="s2">None</span>
+<span class="s1">) -&gt; List[_T]:</span>
+    <span class="s1">seen: Set[Any] = set()</span>
+    <span class="s1">seen_add = seen.add</span>
+    <span class="s2">if not </span><span class="s1">hashfunc:</span>
+        <span class="s2">return </span><span class="s1">[x </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">seq </span><span class="s2">if </span><span class="s1">x </span><span class="s2">not in </span><span class="s1">seen </span><span class="s2">and not </span><span class="s1">seen_add(x)]</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">[</span>
+            <span class="s1">x</span>
+            <span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">seq</span>
+            <span class="s2">if </span><span class="s1">hashfunc(x) </span><span class="s2">not in </span><span class="s1">seen </span><span class="s2">and not </span><span class="s1">seen_add(hashfunc(x))</span>
+        <span class="s1">]</span>
+</pre>
+</body>
+</html>

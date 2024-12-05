@@ -1,0 +1,32 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+    <h2>Lista de Fornecedores</h2>
+
+    <table class="tabela-fornecedores">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Nome</th>
+                <th>Email</th>
+                <th>Telefone</th>
+                <th>Ações</th> <!-- Coluna extra para ações -->
+            </tr>
+        </thead>
+        <tbody>
+            {% for fornecedor in fornecedores %}
+                <tr>
+                    <td>{{ fornecedor.id }}</td>  <!-- Corrigido para 'id' -->
+                    <td>{{ fornecedor.nome_fornecedor }}</td>
+                    <td>{{ fornecedor.email_fornecedor }}</td>
+                    <td>{{ fornecedor.telefone_fornecedor }}</td>
+                    <td>
+                        <a href="{{ url_for('editar_fornecedor', id=fornecedor.id) }}" class="btn2 editar">Editar</a>  <!-- Corrigido para 'id' -->
+                        <a href="{{ url_for('deletar_fornecedor', id=fornecedor.id) }}" class="btn2 deletar" onclick="return confirm('Tem certeza que deseja deletar?')">Deletar</a>  <!-- Corrigido para 'id' -->
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <a href="{{ url_for('gerenciar_fornecedores') }}" class="btn3 voltar">Voltar</a>
+{% endblock %}

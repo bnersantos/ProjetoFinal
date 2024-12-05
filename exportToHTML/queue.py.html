@@ -1,0 +1,345 @@
+<html>
+<head>
+<title>queue.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+queue.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># util/queue.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">&quot;&quot;&quot;An adaptation of Py2.3/2.4's Queue module which supports reentrant 
+behavior, using RLock instead of Lock for its mutex object.  The 
+Queue object is used exclusively by the sqlalchemy.pool.QueuePool 
+class. 
+ 
+This is to support the connection pool's usage of weakref callbacks to return 
+connections to the underlying Queue, which can in extremely 
+rare cases be invoked within the ``get()`` method of the Queue itself, 
+producing a ``put()`` inside the ``get()`` and therefore a reentrant 
+condition. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">asyncio</span>
+<span class="s3">from </span><span class="s1">collections </span><span class="s3">import </span><span class="s1">deque</span>
+<span class="s3">import </span><span class="s1">threading</span>
+<span class="s3">from </span><span class="s1">time </span><span class="s3">import </span><span class="s1">time </span><span class="s3">as </span><span class="s1">_time</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Awaitable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Deque</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generic</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+
+<span class="s3">from </span><span class="s1">.concurrency </span><span class="s3">import </span><span class="s1">await_fallback</span>
+<span class="s3">from </span><span class="s1">.concurrency </span><span class="s3">import </span><span class="s1">await_only</span>
+<span class="s3">from </span><span class="s1">.langhelpers </span><span class="s3">import </span><span class="s1">memoized_property</span>
+
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+<span class="s1">__all__ = [</span><span class="s4">&quot;Empty&quot;</span><span class="s5">, </span><span class="s4">&quot;Full&quot;</span><span class="s5">, </span><span class="s4">&quot;Queue&quot;</span><span class="s1">]</span>
+
+
+<span class="s3">class </span><span class="s1">Empty(Exception):</span>
+    <span class="s2">&quot;Exception raised by Queue.get(block=0)/get_nowait().&quot;</span>
+
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">Full(Exception):</span>
+    <span class="s2">&quot;Exception raised by Queue.put(block=0)/put_nowait().&quot;</span>
+
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">QueueCommon(Generic[_T]):</span>
+    <span class="s1">maxsize: int</span>
+    <span class="s1">use_lifo: bool</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">maxsize: int = </span><span class="s6">0</span><span class="s5">, </span><span class="s1">use_lifo: bool = </span><span class="s3">False</span><span class="s1">): ...</span>
+
+    <span class="s3">def </span><span class="s1">empty(self) -&gt; bool:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">full(self) -&gt; bool:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">qsize(self) -&gt; int:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">put_nowait(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">put(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">item: _T</span><span class="s5">, </span><span class="s1">block: bool = </span><span class="s3">True</span><span class="s5">, </span><span class="s1">timeout: Optional[float] = </span><span class="s3">None</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">get_nowait(self) -&gt; _T:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">get(self</span><span class="s5">, </span><span class="s1">block: bool = </span><span class="s3">True</span><span class="s5">, </span><span class="s1">timeout: Optional[float] = </span><span class="s3">None</span><span class="s1">) -&gt; _T:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s3">class </span><span class="s1">Queue(QueueCommon[_T]):</span>
+    <span class="s1">queue: Deque[_T]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">maxsize: int = </span><span class="s6">0</span><span class="s5">, </span><span class="s1">use_lifo: bool = </span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Initialize a queue object with a given maximum size. 
+ 
+        If `maxsize` is &lt;= 0, the queue size is infinite. 
+ 
+        If `use_lifo` is True, this Queue acts like a Stack (LIFO). 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">self._init(maxsize)</span>
+        <span class="s0"># mutex must be held whenever the queue is mutating.  All methods</span>
+        <span class="s0"># that acquire mutex must release it before returning.  mutex</span>
+        <span class="s0"># is shared between the two conditions, so acquiring and</span>
+        <span class="s0"># releasing the conditions also acquires and releases mutex.</span>
+        <span class="s1">self.mutex = threading.RLock()</span>
+        <span class="s0"># Notify not_empty whenever an item is added to the queue; a</span>
+        <span class="s0"># thread waiting to get is notified then.</span>
+        <span class="s1">self.not_empty = threading.Condition(self.mutex)</span>
+        <span class="s0"># Notify not_full whenever an item is removed from the queue;</span>
+        <span class="s0"># a thread waiting to put is notified then.</span>
+        <span class="s1">self.not_full = threading.Condition(self.mutex)</span>
+        <span class="s0"># If this queue uses LIFO or FIFO</span>
+        <span class="s1">self.use_lifo = use_lifo</span>
+
+    <span class="s3">def </span><span class="s1">qsize(self) -&gt; int:</span>
+        <span class="s2">&quot;&quot;&quot;Return the approximate size of the queue (not reliable!).&quot;&quot;&quot;</span>
+
+        <span class="s3">with </span><span class="s1">self.mutex:</span>
+            <span class="s3">return </span><span class="s1">self._qsize()</span>
+
+    <span class="s3">def </span><span class="s1">empty(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return True if the queue is empty, False otherwise (not 
+        reliable!).&quot;&quot;&quot;</span>
+
+        <span class="s3">with </span><span class="s1">self.mutex:</span>
+            <span class="s3">return </span><span class="s1">self._empty()</span>
+
+    <span class="s3">def </span><span class="s1">full(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return True if the queue is full, False otherwise (not 
+        reliable!).&quot;&quot;&quot;</span>
+
+        <span class="s3">with </span><span class="s1">self.mutex:</span>
+            <span class="s3">return </span><span class="s1">self._full()</span>
+
+    <span class="s3">def </span><span class="s1">put(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">item: _T</span><span class="s5">, </span><span class="s1">block: bool = </span><span class="s3">True</span><span class="s5">, </span><span class="s1">timeout: Optional[float] = </span><span class="s3">None</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Put an item into the queue. 
+ 
+        If optional args `block` is True and `timeout` is None (the 
+        default), block if necessary until a free slot is 
+        available. If `timeout` is a positive number, it blocks at 
+        most `timeout` seconds and raises the ``Full`` exception if no 
+        free slot was available within that time.  Otherwise (`block` 
+        is false), put an item on the queue if a free slot is 
+        immediately available, else raise the ``Full`` exception 
+        (`timeout` is ignored in that case). 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">with </span><span class="s1">self.not_full:</span>
+            <span class="s3">if not </span><span class="s1">block:</span>
+                <span class="s3">if </span><span class="s1">self._full():</span>
+                    <span class="s3">raise </span><span class="s1">Full</span>
+            <span class="s3">elif </span><span class="s1">timeout </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">while </span><span class="s1">self._full():</span>
+                    <span class="s1">self.not_full.wait()</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">timeout &lt; </span><span class="s6">0</span><span class="s1">:</span>
+                    <span class="s3">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;'timeout' must be a positive number&quot;</span><span class="s1">)</span>
+                <span class="s1">endtime = _time() + timeout</span>
+                <span class="s3">while </span><span class="s1">self._full():</span>
+                    <span class="s1">remaining = endtime - _time()</span>
+                    <span class="s3">if </span><span class="s1">remaining &lt;= </span><span class="s6">0.0</span><span class="s1">:</span>
+                        <span class="s3">raise </span><span class="s1">Full</span>
+                    <span class="s1">self.not_full.wait(remaining)</span>
+            <span class="s1">self._put(item)</span>
+            <span class="s1">self.not_empty.notify()</span>
+
+    <span class="s3">def </span><span class="s1">put_nowait(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Put an item into the queue without blocking. 
+ 
+        Only enqueue the item if a free slot is immediately available. 
+        Otherwise raise the ``Full`` exception. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.put(item</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get(self</span><span class="s5">, </span><span class="s1">block: bool = </span><span class="s3">True</span><span class="s5">, </span><span class="s1">timeout: Optional[float] = </span><span class="s3">None</span><span class="s1">) -&gt; _T:</span>
+        <span class="s2">&quot;&quot;&quot;Remove and return an item from the queue. 
+ 
+        If optional args `block` is True and `timeout` is None (the 
+        default), block if necessary until an item is available. If 
+        `timeout` is a positive number, it blocks at most `timeout` 
+        seconds and raises the ``Empty`` exception if no item was 
+        available within that time.  Otherwise (`block` is false), 
+        return an item if one is immediately available, else raise the 
+        ``Empty`` exception (`timeout` is ignored in that case). 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">with </span><span class="s1">self.not_empty:</span>
+            <span class="s3">if not </span><span class="s1">block:</span>
+                <span class="s3">if </span><span class="s1">self._empty():</span>
+                    <span class="s3">raise </span><span class="s1">Empty</span>
+            <span class="s3">elif </span><span class="s1">timeout </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">while </span><span class="s1">self._empty():</span>
+                    <span class="s1">self.not_empty.wait()</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">timeout &lt; </span><span class="s6">0</span><span class="s1">:</span>
+                    <span class="s3">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;'timeout' must be a positive number&quot;</span><span class="s1">)</span>
+                <span class="s1">endtime = _time() + timeout</span>
+                <span class="s3">while </span><span class="s1">self._empty():</span>
+                    <span class="s1">remaining = endtime - _time()</span>
+                    <span class="s3">if </span><span class="s1">remaining &lt;= </span><span class="s6">0.0</span><span class="s1">:</span>
+                        <span class="s3">raise </span><span class="s1">Empty</span>
+                    <span class="s1">self.not_empty.wait(remaining)</span>
+            <span class="s1">item = self._get()</span>
+            <span class="s1">self.not_full.notify()</span>
+            <span class="s3">return </span><span class="s1">item</span>
+
+    <span class="s3">def </span><span class="s1">get_nowait(self) -&gt; _T:</span>
+        <span class="s2">&quot;&quot;&quot;Remove and return an item from the queue without blocking. 
+ 
+        Only get an item if one is immediately available. Otherwise 
+        raise the ``Empty`` exception. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">self.get(</span><span class="s3">False</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_init(self</span><span class="s5">, </span><span class="s1">maxsize: int) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.maxsize = maxsize</span>
+        <span class="s1">self.queue = deque()</span>
+
+    <span class="s3">def </span><span class="s1">_qsize(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self.queue)</span>
+
+    <span class="s3">def </span><span class="s1">_empty(self) -&gt; bool:</span>
+        <span class="s3">return not </span><span class="s1">self.queue</span>
+
+    <span class="s3">def </span><span class="s1">_full(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self.maxsize &gt; </span><span class="s6">0 </span><span class="s3">and </span><span class="s1">len(self.queue) == self.maxsize</span>
+
+    <span class="s3">def </span><span class="s1">_put(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.queue.append(item)</span>
+
+    <span class="s3">def </span><span class="s1">_get(self) -&gt; _T:</span>
+        <span class="s3">if </span><span class="s1">self.use_lifo:</span>
+            <span class="s0"># LIFO</span>
+            <span class="s3">return </span><span class="s1">self.queue.pop()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># FIFO</span>
+            <span class="s3">return </span><span class="s1">self.queue.popleft()</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdaptedQueue(QueueCommon[_T]):</span>
+    <span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+
+        <span class="s1">@staticmethod</span>
+        <span class="s3">def </span><span class="s1">await_(coroutine: Awaitable[Any]) -&gt; _T: ...</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">await_ = staticmethod(await_only)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">maxsize: int = </span><span class="s6">0</span><span class="s5">, </span><span class="s1">use_lifo: bool = </span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s1">self.use_lifo = use_lifo</span>
+        <span class="s1">self.maxsize = maxsize</span>
+
+    <span class="s3">def </span><span class="s1">empty(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">self._queue.empty()</span>
+
+    <span class="s3">def </span><span class="s1">full(self):</span>
+        <span class="s3">return </span><span class="s1">self._queue.full()</span>
+
+    <span class="s3">def </span><span class="s1">qsize(self):</span>
+        <span class="s3">return </span><span class="s1">self._queue.qsize()</span>
+
+    <span class="s1">@memoized_property</span>
+    <span class="s3">def </span><span class="s1">_queue(self) -&gt; asyncio.Queue[_T]:</span>
+        <span class="s0"># Delay creation of the queue until it is first used, to avoid</span>
+        <span class="s0"># binding it to a possibly wrong event loop.</span>
+        <span class="s0"># By delaying the creation of the pool we accommodate the common</span>
+        <span class="s0"># usage pattern of instantiating the engine at module level, where a</span>
+        <span class="s0"># different event loop is in present compared to when the application</span>
+        <span class="s0"># is actually run.</span>
+
+        <span class="s1">queue: asyncio.Queue[_T]</span>
+
+        <span class="s3">if </span><span class="s1">self.use_lifo:</span>
+            <span class="s1">queue = asyncio.LifoQueue(maxsize=self.maxsize)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">queue = asyncio.Queue(maxsize=self.maxsize)</span>
+        <span class="s3">return </span><span class="s1">queue</span>
+
+    <span class="s3">def </span><span class="s1">put_nowait(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self._queue.put_nowait(item)</span>
+        <span class="s3">except </span><span class="s1">asyncio.QueueFull </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s3">raise </span><span class="s1">Full() </span><span class="s3">from </span><span class="s1">err</span>
+
+    <span class="s3">def </span><span class="s1">put(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">item: _T</span><span class="s5">, </span><span class="s1">block: bool = </span><span class="s3">True</span><span class="s5">, </span><span class="s1">timeout: Optional[float] = </span><span class="s3">None</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if not </span><span class="s1">block:</span>
+            <span class="s3">return </span><span class="s1">self.put_nowait(item)</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">timeout </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">self.await_(asyncio.wait_for(self._queue.put(item)</span><span class="s5">, </span><span class="s1">timeout))</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self.await_(self._queue.put(item))</span>
+        <span class="s3">except </span><span class="s1">(asyncio.QueueFull</span><span class="s5">, </span><span class="s1">asyncio.TimeoutError) </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s3">raise </span><span class="s1">Full() </span><span class="s3">from </span><span class="s1">err</span>
+
+    <span class="s3">def </span><span class="s1">get_nowait(self) -&gt; _T:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._queue.get_nowait()</span>
+        <span class="s3">except </span><span class="s1">asyncio.QueueEmpty </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s3">raise </span><span class="s1">Empty() </span><span class="s3">from </span><span class="s1">err</span>
+
+    <span class="s3">def </span><span class="s1">get(self</span><span class="s5">, </span><span class="s1">block: bool = </span><span class="s3">True</span><span class="s5">, </span><span class="s1">timeout: Optional[float] = </span><span class="s3">None</span><span class="s1">) -&gt; _T:</span>
+        <span class="s3">if not </span><span class="s1">block:</span>
+            <span class="s3">return </span><span class="s1">self.get_nowait()</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">timeout </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">self.await_(</span>
+                    <span class="s1">asyncio.wait_for(self._queue.get()</span><span class="s5">, </span><span class="s1">timeout)</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">self.await_(self._queue.get())</span>
+        <span class="s3">except </span><span class="s1">(asyncio.QueueEmpty</span><span class="s5">, </span><span class="s1">asyncio.TimeoutError) </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s3">raise </span><span class="s1">Empty() </span><span class="s3">from </span><span class="s1">err</span>
+
+
+<span class="s3">class </span><span class="s1">FallbackAsyncAdaptedQueue(AsyncAdaptedQueue[_T]):</span>
+    <span class="s3">if not </span><span class="s1">typing.TYPE_CHECKING:</span>
+        <span class="s1">await_ = staticmethod(await_fallback)</span>
+</pre>
+</body>
+</html>

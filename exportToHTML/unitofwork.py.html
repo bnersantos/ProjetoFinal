@@ -1,0 +1,819 @@
+<html>
+<head>
+<title>unitofwork.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+unitofwork.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/unitofwork.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">&quot;&quot;&quot;The internals for the unit of work system. 
+ 
+The session's flush() process passes objects to a contextual object 
+here, which assembles flush tasks based on mappers and their properties, 
+organizes them in order of dependency, and executes. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">orm_exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">orm_util</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">event</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">topological</span>
+
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.dependency </span><span class="s3">import </span><span class="s1">DependencyProcessor</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">MapperProperty</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">Session</span>
+    <span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">SessionTransaction</span>
+    <span class="s3">from </span><span class="s1">.state </span><span class="s3">import </span><span class="s1">InstanceState</span>
+
+
+<span class="s3">def </span><span class="s1">track_cascade_events(descriptor</span><span class="s4">, </span><span class="s1">prop):</span>
+    <span class="s2">&quot;&quot;&quot;Establish event listeners on object attributes which handle 
+    cascade-on-set/append. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">key = prop.key</span>
+
+    <span class="s3">def </span><span class="s1">append(state</span><span class="s4">, </span><span class="s1">item</span><span class="s4">, </span><span class="s1">initiator</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s0"># process &quot;save_update&quot; cascade rules for when</span>
+        <span class="s0"># an instance is appended to the list of another instance</span>
+
+        <span class="s3">if </span><span class="s1">item </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">sess = state.session</span>
+        <span class="s3">if </span><span class="s1">sess:</span>
+            <span class="s3">if </span><span class="s1">sess._warn_on_events:</span>
+                <span class="s1">sess._flush_warning(</span><span class="s5">&quot;collection append&quot;</span><span class="s1">)</span>
+
+            <span class="s1">prop = state.manager.mapper._props[key]</span>
+            <span class="s1">item_state = attributes.instance_state(item)</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">prop._cascade.save_update</span>
+                <span class="s3">and </span><span class="s1">(key == initiator.key)</span>
+                <span class="s3">and not </span><span class="s1">sess._contains_state(item_state)</span>
+            <span class="s1">):</span>
+                <span class="s1">sess._save_or_update_state(item_state)</span>
+        <span class="s3">return </span><span class="s1">item</span>
+
+    <span class="s3">def </span><span class="s1">remove(state</span><span class="s4">, </span><span class="s1">item</span><span class="s4">, </span><span class="s1">initiator</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s3">if </span><span class="s1">item </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">sess = state.session</span>
+
+        <span class="s1">prop = state.manager.mapper._props[key]</span>
+
+        <span class="s3">if </span><span class="s1">sess </span><span class="s3">and </span><span class="s1">sess._warn_on_events:</span>
+            <span class="s1">sess._flush_warning(</span>
+                <span class="s5">&quot;collection remove&quot;</span>
+                <span class="s3">if </span><span class="s1">prop.uselist</span>
+                <span class="s3">else </span><span class="s5">&quot;related attribute delete&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">item </span><span class="s3">is not None</span>
+            <span class="s3">and </span><span class="s1">item </span><span class="s3">is not </span><span class="s1">attributes.NEVER_SET</span>
+            <span class="s3">and </span><span class="s1">item </span><span class="s3">is not </span><span class="s1">attributes.PASSIVE_NO_RESULT</span>
+            <span class="s3">and </span><span class="s1">prop._cascade.delete_orphan</span>
+        <span class="s1">):</span>
+            <span class="s0"># expunge pending orphans</span>
+            <span class="s1">item_state = attributes.instance_state(item)</span>
+
+            <span class="s3">if </span><span class="s1">prop.mapper._is_orphan(item_state):</span>
+                <span class="s3">if </span><span class="s1">sess </span><span class="s3">and </span><span class="s1">item_state </span><span class="s3">in </span><span class="s1">sess._new:</span>
+                    <span class="s1">sess.expunge(item)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s0"># the related item may or may not itself be in a</span>
+                    <span class="s0"># Session, however the parent for which we are catching</span>
+                    <span class="s0"># the event is not in a session, so memoize this on the</span>
+                    <span class="s0"># item</span>
+                    <span class="s1">item_state._orphaned_outside_of_session = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">set_(state</span><span class="s4">, </span><span class="s1">newvalue</span><span class="s4">, </span><span class="s1">oldvalue</span><span class="s4">, </span><span class="s1">initiator</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s0"># process &quot;save_update&quot; cascade rules for when an instance</span>
+        <span class="s0"># is attached to another instance</span>
+        <span class="s3">if </span><span class="s1">oldvalue </span><span class="s3">is </span><span class="s1">newvalue:</span>
+            <span class="s3">return </span><span class="s1">newvalue</span>
+
+        <span class="s1">sess = state.session</span>
+        <span class="s3">if </span><span class="s1">sess:</span>
+            <span class="s3">if </span><span class="s1">sess._warn_on_events:</span>
+                <span class="s1">sess._flush_warning(</span><span class="s5">&quot;related attribute set&quot;</span><span class="s1">)</span>
+
+            <span class="s1">prop = state.manager.mapper._props[key]</span>
+            <span class="s3">if </span><span class="s1">newvalue </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">newvalue_state = attributes.instance_state(newvalue)</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s1">prop._cascade.save_update</span>
+                    <span class="s3">and </span><span class="s1">(key == initiator.key)</span>
+                    <span class="s3">and not </span><span class="s1">sess._contains_state(newvalue_state)</span>
+                <span class="s1">):</span>
+                    <span class="s1">sess._save_or_update_state(newvalue_state)</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">oldvalue </span><span class="s3">is not None</span>
+                <span class="s3">and </span><span class="s1">oldvalue </span><span class="s3">is not </span><span class="s1">attributes.NEVER_SET</span>
+                <span class="s3">and </span><span class="s1">oldvalue </span><span class="s3">is not </span><span class="s1">attributes.PASSIVE_NO_RESULT</span>
+                <span class="s3">and </span><span class="s1">prop._cascade.delete_orphan</span>
+            <span class="s1">):</span>
+                <span class="s0"># possible to reach here with attributes.NEVER_SET ?</span>
+                <span class="s1">oldvalue_state = attributes.instance_state(oldvalue)</span>
+
+                <span class="s3">if </span><span class="s1">oldvalue_state </span><span class="s3">in </span><span class="s1">sess._new </span><span class="s3">and </span><span class="s1">prop.mapper._is_orphan(</span>
+                    <span class="s1">oldvalue_state</span>
+                <span class="s1">):</span>
+                    <span class="s1">sess.expunge(oldvalue)</span>
+        <span class="s3">return </span><span class="s1">newvalue</span>
+
+    <span class="s1">event.listen(</span>
+        <span class="s1">descriptor</span><span class="s4">, </span><span class="s5">&quot;append_wo_mutation&quot;</span><span class="s4">, </span><span class="s1">append</span><span class="s4">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">include_key=</span><span class="s3">True</span>
+    <span class="s1">)</span>
+    <span class="s1">event.listen(</span>
+        <span class="s1">descriptor</span><span class="s4">, </span><span class="s5">&quot;append&quot;</span><span class="s4">, </span><span class="s1">append</span><span class="s4">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">retval=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">include_key=</span><span class="s3">True</span>
+    <span class="s1">)</span>
+    <span class="s1">event.listen(</span>
+        <span class="s1">descriptor</span><span class="s4">, </span><span class="s5">&quot;remove&quot;</span><span class="s4">, </span><span class="s1">remove</span><span class="s4">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">retval=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">include_key=</span><span class="s3">True</span>
+    <span class="s1">)</span>
+    <span class="s1">event.listen(</span>
+        <span class="s1">descriptor</span><span class="s4">, </span><span class="s5">&quot;set&quot;</span><span class="s4">, </span><span class="s1">set_</span><span class="s4">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">retval=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">include_key=</span><span class="s3">True</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">UOWTransaction:</span>
+    <span class="s1">session: Session</span>
+    <span class="s1">transaction: SessionTransaction</span>
+    <span class="s1">attributes: Dict[str</span><span class="s4">, </span><span class="s1">Any]</span>
+    <span class="s1">deps: util.defaultdict[Mapper[Any]</span><span class="s4">, </span><span class="s1">Set[DependencyProcessor]]</span>
+    <span class="s1">mappers: util.defaultdict[Mapper[Any]</span><span class="s4">, </span><span class="s1">Set[InstanceState[Any]]]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">session: Session):</span>
+        <span class="s1">self.session = session</span>
+
+        <span class="s0"># dictionary used by external actors to</span>
+        <span class="s0"># store arbitrary state information.</span>
+        <span class="s1">self.attributes = {}</span>
+
+        <span class="s0"># dictionary of mappers to sets of</span>
+        <span class="s0"># DependencyProcessors, which are also</span>
+        <span class="s0"># set to be part of the sorted flush actions,</span>
+        <span class="s0"># which have that mapper as a parent.</span>
+        <span class="s1">self.deps = util.defaultdict(set)</span>
+
+        <span class="s0"># dictionary of mappers to sets of InstanceState</span>
+        <span class="s0"># items pending for flush which have that mapper</span>
+        <span class="s0"># as a parent.</span>
+        <span class="s1">self.mappers = util.defaultdict(set)</span>
+
+        <span class="s0"># a dictionary of Preprocess objects, which gather</span>
+        <span class="s0"># additional states impacted by the flush</span>
+        <span class="s0"># and determine if a flush action is needed</span>
+        <span class="s1">self.presort_actions = {}</span>
+
+        <span class="s0"># dictionary of PostSortRec objects, each</span>
+        <span class="s0"># one issues work during the flush within</span>
+        <span class="s0"># a certain ordering.</span>
+        <span class="s1">self.postsort_actions = {}</span>
+
+        <span class="s0"># a set of 2-tuples, each containing two</span>
+        <span class="s0"># PostSortRec objects where the second</span>
+        <span class="s0"># is dependent on the first being executed</span>
+        <span class="s0"># first</span>
+        <span class="s1">self.dependencies = set()</span>
+
+        <span class="s0"># dictionary of InstanceState-&gt; (isdelete, listonly)</span>
+        <span class="s0"># tuples, indicating if this state is to be deleted</span>
+        <span class="s0"># or insert/updated, or just refreshed</span>
+        <span class="s1">self.states = {}</span>
+
+        <span class="s0"># tracks InstanceStates which will be receiving</span>
+        <span class="s0"># a &quot;post update&quot; call.  Keys are mappers,</span>
+        <span class="s0"># values are a set of states and a set of the</span>
+        <span class="s0"># columns which should be included in the update.</span>
+        <span class="s1">self.post_update_states = util.defaultdict(</span><span class="s3">lambda</span><span class="s1">: (set()</span><span class="s4">, </span><span class="s1">set()))</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">has_work(self):</span>
+        <span class="s3">return </span><span class="s1">bool(self.states)</span>
+
+    <span class="s3">def </span><span class="s1">was_already_deleted(self</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s2">&quot;&quot;&quot;Return ``True`` if the given state is expired and was deleted 
+        previously. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">state.expired:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">state._load_expired(state</span><span class="s4">, </span><span class="s1">attributes.PASSIVE_OFF)</span>
+            <span class="s3">except </span><span class="s1">orm_exc.ObjectDeletedError:</span>
+                <span class="s1">self.session._remove_newly_deleted([state])</span>
+                <span class="s3">return True</span>
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">is_deleted(self</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s2">&quot;&quot;&quot;Return ``True`` if the given state is marked as deleted 
+        within this uowtransaction.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">state </span><span class="s3">in </span><span class="s1">self.states </span><span class="s3">and </span><span class="s1">self.states[state][</span><span class="s6">0</span><span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">memo(self</span><span class="s4">, </span><span class="s1">key</span><span class="s4">, </span><span class="s1">callable_):</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.attributes:</span>
+            <span class="s3">return </span><span class="s1">self.attributes[key]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.attributes[key] = ret = callable_()</span>
+            <span class="s3">return </span><span class="s1">ret</span>
+
+    <span class="s3">def </span><span class="s1">remove_state_actions(self</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s2">&quot;&quot;&quot;Remove pending actions for a state from the uowtransaction.&quot;&quot;&quot;</span>
+
+        <span class="s1">isdelete = self.states[state][</span><span class="s6">0</span><span class="s1">]</span>
+
+        <span class="s1">self.states[state] = (isdelete</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get_attribute_history(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">key</span><span class="s4">, </span><span class="s1">passive=attributes.PASSIVE_NO_INITIALIZE</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Facade to attributes.get_state_history(), including 
+        caching of results.&quot;&quot;&quot;</span>
+
+        <span class="s1">hashkey = (</span><span class="s5">&quot;history&quot;</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">key)</span>
+
+        <span class="s0"># cache the objects, not the states; the strong reference here</span>
+        <span class="s0"># prevents newly loaded objects from being dereferenced during the</span>
+        <span class="s0"># flush process</span>
+
+        <span class="s3">if </span><span class="s1">hashkey </span><span class="s3">in </span><span class="s1">self.attributes:</span>
+            <span class="s1">history</span><span class="s4">, </span><span class="s1">state_history</span><span class="s4">, </span><span class="s1">cached_passive = self.attributes[hashkey]</span>
+            <span class="s0"># if the cached lookup was &quot;passive&quot; and now</span>
+            <span class="s0"># we want non-passive, do a non-passive lookup and re-cache</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s3">not </span><span class="s1">cached_passive &amp; attributes.SQL_OK</span>
+                <span class="s3">and </span><span class="s1">passive &amp; attributes.SQL_OK</span>
+            <span class="s1">):</span>
+                <span class="s1">impl = state.manager[key].impl</span>
+                <span class="s1">history = impl.get_history(</span>
+                    <span class="s1">state</span><span class="s4">,</span>
+                    <span class="s1">state.dict</span><span class="s4">,</span>
+                    <span class="s1">attributes.PASSIVE_OFF</span>
+                    <span class="s1">| attributes.LOAD_AGAINST_COMMITTED</span>
+                    <span class="s1">| attributes.NO_RAISE</span><span class="s4">,</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">history </span><span class="s3">and </span><span class="s1">impl.uses_objects:</span>
+                    <span class="s1">state_history = history.as_state()</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">state_history = history</span>
+                <span class="s1">self.attributes[hashkey] = (history</span><span class="s4">, </span><span class="s1">state_history</span><span class="s4">, </span><span class="s1">passive)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">impl = state.manager[key].impl</span>
+            <span class="s0"># TODO: store the history as (state, object) tuples</span>
+            <span class="s0"># so we don't have to keep converting here</span>
+            <span class="s1">history = impl.get_history(</span>
+                <span class="s1">state</span><span class="s4">,</span>
+                <span class="s1">state.dict</span><span class="s4">,</span>
+                <span class="s1">passive</span>
+                <span class="s1">| attributes.LOAD_AGAINST_COMMITTED</span>
+                <span class="s1">| attributes.NO_RAISE</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">history </span><span class="s3">and </span><span class="s1">impl.uses_objects:</span>
+                <span class="s1">state_history = history.as_state()</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">state_history = history</span>
+            <span class="s1">self.attributes[hashkey] = (history</span><span class="s4">, </span><span class="s1">state_history</span><span class="s4">, </span><span class="s1">passive)</span>
+
+        <span class="s3">return </span><span class="s1">state_history</span>
+
+    <span class="s3">def </span><span class="s1">has_dep(self</span><span class="s4">, </span><span class="s1">processor):</span>
+        <span class="s3">return </span><span class="s1">(processor</span><span class="s4">, </span><span class="s3">True</span><span class="s1">) </span><span class="s3">in </span><span class="s1">self.presort_actions</span>
+
+    <span class="s3">def </span><span class="s1">register_preprocessor(self</span><span class="s4">, </span><span class="s1">processor</span><span class="s4">, </span><span class="s1">fromparent):</span>
+        <span class="s1">key = (processor</span><span class="s4">, </span><span class="s1">fromparent)</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">self.presort_actions:</span>
+            <span class="s1">self.presort_actions[key] = Preprocess(processor</span><span class="s4">, </span><span class="s1">fromparent)</span>
+
+    <span class="s3">def </span><span class="s1">register_object(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s4">,</span>
+        <span class="s1">isdelete: bool = </span><span class="s3">False</span><span class="s4">,</span>
+        <span class="s1">listonly: bool = </span><span class="s3">False</span><span class="s4">,</span>
+        <span class="s1">cancel_delete: bool = </span><span class="s3">False</span><span class="s4">,</span>
+        <span class="s1">operation: Optional[str] = </span><span class="s3">None</span><span class="s4">,</span>
+        <span class="s1">prop: Optional[MapperProperty] = </span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s3">if not </span><span class="s1">self.session._contains_state(state):</span>
+            <span class="s0"># this condition is normal when objects are registered</span>
+            <span class="s0"># as part of a relationship cascade operation.  it should</span>
+            <span class="s0"># not occur for the top-level register from Session.flush().</span>
+            <span class="s3">if not </span><span class="s1">state.deleted </span><span class="s3">and </span><span class="s1">operation </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">util.warn(</span>
+                    <span class="s5">&quot;Object of type %s not in session, %s operation &quot;</span>
+                    <span class="s5">&quot;along '%s' will not proceed&quot;</span>
+                    <span class="s1">% (orm_util.state_class_str(state)</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">prop)</span>
+                <span class="s1">)</span>
+            <span class="s3">return False</span>
+
+        <span class="s3">if </span><span class="s1">state </span><span class="s3">not in </span><span class="s1">self.states:</span>
+            <span class="s1">mapper = state.manager.mapper</span>
+
+            <span class="s3">if </span><span class="s1">mapper </span><span class="s3">not in </span><span class="s1">self.mappers:</span>
+                <span class="s1">self._per_mapper_flush_actions(mapper)</span>
+
+            <span class="s1">self.mappers[mapper].add(state)</span>
+            <span class="s1">self.states[state] = (isdelete</span><span class="s4">, </span><span class="s1">listonly)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if not </span><span class="s1">listonly </span><span class="s3">and </span><span class="s1">(isdelete </span><span class="s3">or </span><span class="s1">cancel_delete):</span>
+                <span class="s1">self.states[state] = (isdelete</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s3">return True</span>
+
+    <span class="s3">def </span><span class="s1">register_post_update(self</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">post_update_cols):</span>
+        <span class="s1">mapper = state.manager.mapper.base_mapper</span>
+        <span class="s1">states</span><span class="s4">, </span><span class="s1">cols = self.post_update_states[mapper]</span>
+        <span class="s1">states.add(state)</span>
+        <span class="s1">cols.update(post_update_cols)</span>
+
+    <span class="s3">def </span><span class="s1">_per_mapper_flush_actions(self</span><span class="s4">, </span><span class="s1">mapper):</span>
+        <span class="s1">saves = SaveUpdateAll(self</span><span class="s4">, </span><span class="s1">mapper.base_mapper)</span>
+        <span class="s1">deletes = DeleteAll(self</span><span class="s4">, </span><span class="s1">mapper.base_mapper)</span>
+        <span class="s1">self.dependencies.add((saves</span><span class="s4">, </span><span class="s1">deletes))</span>
+
+        <span class="s3">for </span><span class="s1">dep </span><span class="s3">in </span><span class="s1">mapper._dependency_processors:</span>
+            <span class="s1">dep.per_property_preprocessors(self)</span>
+
+        <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">mapper.relationships:</span>
+            <span class="s3">if </span><span class="s1">prop.viewonly:</span>
+                <span class="s3">continue</span>
+            <span class="s1">dep = prop._dependency_processor</span>
+            <span class="s1">dep.per_property_preprocessors(self)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_mapper_for_dep(self):</span>
+        <span class="s2">&quot;&quot;&quot;return a dynamic mapping of (Mapper, DependencyProcessor) to 
+        True or False, indicating if the DependencyProcessor operates 
+        on objects of that Mapper. 
+ 
+        The result is stored in the dictionary persistently once 
+        calculated. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">util.PopulateDict(</span>
+            <span class="s3">lambda </span><span class="s1">tup: tup[</span><span class="s6">0</span><span class="s1">]._props.get(tup[</span><span class="s6">1</span><span class="s1">].key) </span><span class="s3">is </span><span class="s1">tup[</span><span class="s6">1</span><span class="s1">].prop</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">filter_states_for_dep(self</span><span class="s4">, </span><span class="s1">dep</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s2">&quot;&quot;&quot;Filter the given list of InstanceStates to those relevant to the 
+        given DependencyProcessor. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">mapper_for_dep = self._mapper_for_dep</span>
+        <span class="s3">return </span><span class="s1">[s </span><span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">states </span><span class="s3">if </span><span class="s1">mapper_for_dep[(s.manager.mapper</span><span class="s4">, </span><span class="s1">dep)]]</span>
+
+    <span class="s3">def </span><span class="s1">states_for_mapper_hierarchy(self</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">isdelete</span><span class="s4">, </span><span class="s1">listonly):</span>
+        <span class="s1">checktup = (isdelete</span><span class="s4">, </span><span class="s1">listonly)</span>
+        <span class="s3">for </span><span class="s1">mapper </span><span class="s3">in </span><span class="s1">mapper.base_mapper.self_and_descendants:</span>
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">self.mappers[mapper]:</span>
+                <span class="s3">if </span><span class="s1">self.states[state] == checktup:</span>
+                    <span class="s3">yield </span><span class="s1">state</span>
+
+    <span class="s3">def </span><span class="s1">_generate_actions(self):</span>
+        <span class="s2">&quot;&quot;&quot;Generate the full, unsorted collection of PostSortRecs as 
+        well as dependency pairs for this UOWTransaction. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s0"># execute presort_actions, until all states</span>
+        <span class="s0"># have been processed.   a presort_action might</span>
+        <span class="s0"># add new states to the uow.</span>
+        <span class="s3">while True</span><span class="s1">:</span>
+            <span class="s1">ret = </span><span class="s3">False</span>
+            <span class="s3">for </span><span class="s1">action </span><span class="s3">in </span><span class="s1">list(self.presort_actions.values()):</span>
+                <span class="s3">if </span><span class="s1">action.execute(self):</span>
+                    <span class="s1">ret = </span><span class="s3">True</span>
+            <span class="s3">if not </span><span class="s1">ret:</span>
+                <span class="s3">break</span>
+
+        <span class="s0"># see if the graph of mapper dependencies has cycles.</span>
+        <span class="s1">self.cycles = cycles = topological.find_cycles(</span>
+            <span class="s1">self.dependencies</span><span class="s4">, </span><span class="s1">list(self.postsort_actions.values())</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">cycles:</span>
+            <span class="s0"># if yes, break the per-mapper actions into</span>
+            <span class="s0"># per-state actions</span>
+            <span class="s1">convert = {</span>
+                <span class="s1">rec: set(rec.per_state_flush_actions(self)) </span><span class="s3">for </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">cycles</span>
+            <span class="s1">}</span>
+
+            <span class="s0"># rewrite the existing dependencies to point to</span>
+            <span class="s0"># the per-state actions for those per-mapper actions</span>
+            <span class="s0"># that were broken up.</span>
+            <span class="s3">for </span><span class="s1">edge </span><span class="s3">in </span><span class="s1">list(self.dependencies):</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s3">None in </span><span class="s1">edge</span>
+                    <span class="s3">or </span><span class="s1">edge[</span><span class="s6">0</span><span class="s1">].disabled</span>
+                    <span class="s3">or </span><span class="s1">edge[</span><span class="s6">1</span><span class="s1">].disabled</span>
+                    <span class="s3">or </span><span class="s1">cycles.issuperset(edge)</span>
+                <span class="s1">):</span>
+                    <span class="s1">self.dependencies.remove(edge)</span>
+                <span class="s3">elif </span><span class="s1">edge[</span><span class="s6">0</span><span class="s1">] </span><span class="s3">in </span><span class="s1">cycles:</span>
+                    <span class="s1">self.dependencies.remove(edge)</span>
+                    <span class="s3">for </span><span class="s1">dep </span><span class="s3">in </span><span class="s1">convert[edge[</span><span class="s6">0</span><span class="s1">]]:</span>
+                        <span class="s1">self.dependencies.add((dep</span><span class="s4">, </span><span class="s1">edge[</span><span class="s6">1</span><span class="s1">]))</span>
+                <span class="s3">elif </span><span class="s1">edge[</span><span class="s6">1</span><span class="s1">] </span><span class="s3">in </span><span class="s1">cycles:</span>
+                    <span class="s1">self.dependencies.remove(edge)</span>
+                    <span class="s3">for </span><span class="s1">dep </span><span class="s3">in </span><span class="s1">convert[edge[</span><span class="s6">1</span><span class="s1">]]:</span>
+                        <span class="s1">self.dependencies.add((edge[</span><span class="s6">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">dep))</span>
+
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s1">a </span><span class="s3">for </span><span class="s1">a </span><span class="s3">in </span><span class="s1">self.postsort_actions.values() </span><span class="s3">if not </span><span class="s1">a.disabled</span>
+        <span class="s1">}.difference(cycles)</span>
+
+    <span class="s3">def </span><span class="s1">execute(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">postsort_actions = self._generate_actions()</span>
+
+        <span class="s1">postsort_actions = sorted(</span>
+            <span class="s1">postsort_actions</span><span class="s4">,</span>
+            <span class="s1">key=</span><span class="s3">lambda </span><span class="s1">item: item.sort_key</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s0"># sort = topological.sort(self.dependencies, postsort_actions)</span>
+        <span class="s0"># print &quot;--------------&quot;</span>
+        <span class="s0"># print &quot;\ndependencies:&quot;, self.dependencies</span>
+        <span class="s0"># print &quot;\ncycles:&quot;, self.cycles</span>
+        <span class="s0"># print &quot;\nsort:&quot;, list(sort)</span>
+        <span class="s0"># print &quot;\nCOUNT OF POSTSORT ACTIONS&quot;, len(postsort_actions)</span>
+
+        <span class="s0"># execute</span>
+        <span class="s3">if </span><span class="s1">self.cycles:</span>
+            <span class="s3">for </span><span class="s1">subset </span><span class="s3">in </span><span class="s1">topological.sort_as_subsets(</span>
+                <span class="s1">self.dependencies</span><span class="s4">, </span><span class="s1">postsort_actions</span>
+            <span class="s1">):</span>
+                <span class="s1">set_ = set(subset)</span>
+                <span class="s3">while </span><span class="s1">set_:</span>
+                    <span class="s1">n = set_.pop()</span>
+                    <span class="s1">n.execute_aggregate(self</span><span class="s4">, </span><span class="s1">set_)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">for </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">topological.sort(self.dependencies</span><span class="s4">, </span><span class="s1">postsort_actions):</span>
+                <span class="s1">rec.execute(self)</span>
+
+    <span class="s3">def </span><span class="s1">finalize_flush_changes(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Mark processed objects as clean / deleted after a successful 
+        flush(). 
+ 
+        This method is called within the flush() method after the 
+        execute() method has succeeded and the transaction has been committed. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">self.states:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">states = set(self.states)</span>
+        <span class="s1">isdel = {</span>
+            <span class="s1">s </span><span class="s3">for </span><span class="s1">(s</span><span class="s4">, </span><span class="s1">(isdelete</span><span class="s4">, </span><span class="s1">listonly)) </span><span class="s3">in </span><span class="s1">self.states.items() </span><span class="s3">if </span><span class="s1">isdelete</span>
+        <span class="s1">}</span>
+        <span class="s1">other = states.difference(isdel)</span>
+        <span class="s3">if </span><span class="s1">isdel:</span>
+            <span class="s1">self.session._remove_newly_deleted(isdel)</span>
+        <span class="s3">if </span><span class="s1">other:</span>
+            <span class="s1">self.session._register_persistent(other)</span>
+
+
+<span class="s3">class </span><span class="s1">IterateMappersMixin:</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">_mappers(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s3">if </span><span class="s1">self.fromparent:</span>
+            <span class="s3">return </span><span class="s1">iter(</span>
+                <span class="s1">m</span>
+                <span class="s3">for </span><span class="s1">m </span><span class="s3">in </span><span class="s1">self.dependency_processor.parent.self_and_descendants</span>
+                <span class="s3">if </span><span class="s1">uow._mapper_for_dep[(m</span><span class="s4">, </span><span class="s1">self.dependency_processor)]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.dependency_processor.mapper.self_and_descendants</span>
+
+
+<span class="s3">class </span><span class="s1">Preprocess(IterateMappersMixin):</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s5">&quot;dependency_processor&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;fromparent&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;processed&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;setup_flush_actions&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">dependency_processor</span><span class="s4">, </span><span class="s1">fromparent):</span>
+        <span class="s1">self.dependency_processor = dependency_processor</span>
+        <span class="s1">self.fromparent = fromparent</span>
+        <span class="s1">self.processed = set()</span>
+        <span class="s1">self.setup_flush_actions = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s1">delete_states = set()</span>
+        <span class="s1">save_states = set()</span>
+
+        <span class="s3">for </span><span class="s1">mapper </span><span class="s3">in </span><span class="s1">self._mappers(uow):</span>
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">uow.mappers[mapper].difference(self.processed):</span>
+                <span class="s1">(isdelete</span><span class="s4">, </span><span class="s1">listonly) = uow.states[state]</span>
+                <span class="s3">if not </span><span class="s1">listonly:</span>
+                    <span class="s3">if </span><span class="s1">isdelete:</span>
+                        <span class="s1">delete_states.add(state)</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">save_states.add(state)</span>
+
+        <span class="s3">if </span><span class="s1">delete_states:</span>
+            <span class="s1">self.dependency_processor.presort_deletes(uow</span><span class="s4">, </span><span class="s1">delete_states)</span>
+            <span class="s1">self.processed.update(delete_states)</span>
+        <span class="s3">if </span><span class="s1">save_states:</span>
+            <span class="s1">self.dependency_processor.presort_saves(uow</span><span class="s4">, </span><span class="s1">save_states)</span>
+            <span class="s1">self.processed.update(save_states)</span>
+
+        <span class="s3">if </span><span class="s1">delete_states </span><span class="s3">or </span><span class="s1">save_states:</span>
+            <span class="s3">if not </span><span class="s1">self.setup_flush_actions </span><span class="s3">and </span><span class="s1">(</span>
+                <span class="s1">self.dependency_processor.prop_has_changes(</span>
+                    <span class="s1">uow</span><span class="s4">, </span><span class="s1">delete_states</span><span class="s4">, </span><span class="s3">True</span>
+                <span class="s1">)</span>
+                <span class="s3">or </span><span class="s1">self.dependency_processor.prop_has_changes(</span>
+                    <span class="s1">uow</span><span class="s4">, </span><span class="s1">save_states</span><span class="s4">, </span><span class="s3">False</span>
+                <span class="s1">)</span>
+            <span class="s1">):</span>
+                <span class="s1">self.dependency_processor.per_property_flush_actions(uow)</span>
+                <span class="s1">self.setup_flush_actions = </span><span class="s3">True</span>
+            <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+
+
+<span class="s3">class </span><span class="s1">PostSortRec:</span>
+    <span class="s1">__slots__ = (</span><span class="s5">&quot;disabled&quot;</span><span class="s4">,</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__new__(cls</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">*args):</span>
+        <span class="s1">key = (cls</span><span class="s4">,</span><span class="s1">) + args</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">uow.postsort_actions:</span>
+            <span class="s3">return </span><span class="s1">uow.postsort_actions[key]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">uow.postsort_actions[key] = ret = object.__new__(cls)</span>
+            <span class="s1">ret.disabled = </span><span class="s3">False</span>
+            <span class="s3">return </span><span class="s1">ret</span>
+
+    <span class="s3">def </span><span class="s1">execute_aggregate(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">recs):</span>
+        <span class="s1">self.execute(uow)</span>
+
+
+<span class="s3">class </span><span class="s1">ProcessAll(IterateMappersMixin</span><span class="s4">, </span><span class="s1">PostSortRec):</span>
+    <span class="s1">__slots__ = </span><span class="s5">&quot;dependency_processor&quot;</span><span class="s4">, </span><span class="s5">&quot;isdelete&quot;</span><span class="s4">, </span><span class="s5">&quot;fromparent&quot;</span><span class="s4">, </span><span class="s5">&quot;sort_key&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">dependency_processor</span><span class="s4">, </span><span class="s1">isdelete</span><span class="s4">, </span><span class="s1">fromparent):</span>
+        <span class="s1">self.dependency_processor = dependency_processor</span>
+        <span class="s1">self.sort_key = (</span>
+            <span class="s5">&quot;ProcessAll&quot;</span><span class="s4">,</span>
+            <span class="s1">self.dependency_processor.sort_key</span><span class="s4">,</span>
+            <span class="s1">isdelete</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self.isdelete = isdelete</span>
+        <span class="s1">self.fromparent = fromparent</span>
+        <span class="s1">uow.deps[dependency_processor.parent.base_mapper].add(</span>
+            <span class="s1">dependency_processor</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s1">states = self._elements(uow)</span>
+        <span class="s3">if </span><span class="s1">self.isdelete:</span>
+            <span class="s1">self.dependency_processor.process_deletes(uow</span><span class="s4">, </span><span class="s1">states)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.dependency_processor.process_saves(uow</span><span class="s4">, </span><span class="s1">states)</span>
+
+    <span class="s3">def </span><span class="s1">per_state_flush_actions(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s0"># this is handled by SaveUpdateAll and DeleteAll,</span>
+        <span class="s0"># since a ProcessAll should unconditionally be pulled</span>
+        <span class="s0"># into per-state if either the parent/child mappers</span>
+        <span class="s0"># are part of a cycle</span>
+        <span class="s3">return </span><span class="s1">iter([])</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self):</span>
+        <span class="s3">return </span><span class="s5">&quot;%s(%s, isdelete=%s)&quot; </span><span class="s1">% (</span>
+            <span class="s1">self.__class__.__name__</span><span class="s4">,</span>
+            <span class="s1">self.dependency_processor</span><span class="s4">,</span>
+            <span class="s1">self.isdelete</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_elements(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s3">for </span><span class="s1">mapper </span><span class="s3">in </span><span class="s1">self._mappers(uow):</span>
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">uow.mappers[mapper]:</span>
+                <span class="s1">(isdelete</span><span class="s4">, </span><span class="s1">listonly) = uow.states[state]</span>
+                <span class="s3">if </span><span class="s1">isdelete == self.isdelete </span><span class="s3">and not </span><span class="s1">listonly:</span>
+                    <span class="s3">yield </span><span class="s1">state</span>
+
+
+<span class="s3">class </span><span class="s1">PostUpdateAll(PostSortRec):</span>
+    <span class="s1">__slots__ = </span><span class="s5">&quot;mapper&quot;</span><span class="s4">, </span><span class="s5">&quot;isdelete&quot;</span><span class="s4">, </span><span class="s5">&quot;sort_key&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">mapper</span><span class="s4">, </span><span class="s1">isdelete):</span>
+        <span class="s1">self.mapper = mapper</span>
+        <span class="s1">self.isdelete = isdelete</span>
+        <span class="s1">self.sort_key = (</span><span class="s5">&quot;PostUpdateAll&quot;</span><span class="s4">, </span><span class="s1">mapper._sort_key</span><span class="s4">, </span><span class="s1">isdelete)</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s5">&quot;sqlalchemy.orm.persistence&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s1">persistence = util.preloaded.orm_persistence</span>
+        <span class="s1">states</span><span class="s4">, </span><span class="s1">cols = uow.post_update_states[self.mapper]</span>
+        <span class="s1">states = [s </span><span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">states </span><span class="s3">if </span><span class="s1">uow.states[s][</span><span class="s6">0</span><span class="s1">] == self.isdelete]</span>
+
+        <span class="s1">persistence.post_update(self.mapper</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">cols)</span>
+
+
+<span class="s3">class </span><span class="s1">SaveUpdateAll(PostSortRec):</span>
+    <span class="s1">__slots__ = (</span><span class="s5">&quot;mapper&quot;</span><span class="s4">, </span><span class="s5">&quot;sort_key&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">mapper):</span>
+        <span class="s1">self.mapper = mapper</span>
+        <span class="s1">self.sort_key = (</span><span class="s5">&quot;SaveUpdateAll&quot;</span><span class="s4">, </span><span class="s1">mapper._sort_key)</span>
+        <span class="s3">assert </span><span class="s1">mapper </span><span class="s3">is </span><span class="s1">mapper.base_mapper</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s5">&quot;sqlalchemy.orm.persistence&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s1">util.preloaded.orm_persistence.save_obj(</span>
+            <span class="s1">self.mapper</span><span class="s4">,</span>
+            <span class="s1">uow.states_for_mapper_hierarchy(self.mapper</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">uow</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">per_state_flush_actions(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s1">states = list(</span>
+            <span class="s1">uow.states_for_mapper_hierarchy(self.mapper</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">base_mapper = self.mapper.base_mapper</span>
+        <span class="s1">delete_all = DeleteAll(uow</span><span class="s4">, </span><span class="s1">base_mapper)</span>
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s0"># keep saves before deletes -</span>
+            <span class="s0"># this ensures 'row switch' operations work</span>
+            <span class="s1">action = SaveUpdateState(uow</span><span class="s4">, </span><span class="s1">state)</span>
+            <span class="s1">uow.dependencies.add((action</span><span class="s4">, </span><span class="s1">delete_all))</span>
+            <span class="s3">yield </span><span class="s1">action</span>
+
+        <span class="s3">for </span><span class="s1">dep </span><span class="s3">in </span><span class="s1">uow.deps[self.mapper]:</span>
+            <span class="s1">states_for_prop = uow.filter_states_for_dep(dep</span><span class="s4">, </span><span class="s1">states)</span>
+            <span class="s1">dep.per_state_flush_actions(uow</span><span class="s4">, </span><span class="s1">states_for_prop</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self):</span>
+        <span class="s3">return </span><span class="s5">&quot;%s(%s)&quot; </span><span class="s1">% (self.__class__.__name__</span><span class="s4">, </span><span class="s1">self.mapper)</span>
+
+
+<span class="s3">class </span><span class="s1">DeleteAll(PostSortRec):</span>
+    <span class="s1">__slots__ = (</span><span class="s5">&quot;mapper&quot;</span><span class="s4">, </span><span class="s5">&quot;sort_key&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">mapper):</span>
+        <span class="s1">self.mapper = mapper</span>
+        <span class="s1">self.sort_key = (</span><span class="s5">&quot;DeleteAll&quot;</span><span class="s4">, </span><span class="s1">mapper._sort_key)</span>
+        <span class="s3">assert </span><span class="s1">mapper </span><span class="s3">is </span><span class="s1">mapper.base_mapper</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s5">&quot;sqlalchemy.orm.persistence&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s1">util.preloaded.orm_persistence.delete_obj(</span>
+            <span class="s1">self.mapper</span><span class="s4">,</span>
+            <span class="s1">uow.states_for_mapper_hierarchy(self.mapper</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">uow</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">per_state_flush_actions(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s1">states = list(</span>
+            <span class="s1">uow.states_for_mapper_hierarchy(self.mapper</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">base_mapper = self.mapper.base_mapper</span>
+        <span class="s1">save_all = SaveUpdateAll(uow</span><span class="s4">, </span><span class="s1">base_mapper)</span>
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s0"># keep saves before deletes -</span>
+            <span class="s0"># this ensures 'row switch' operations work</span>
+            <span class="s1">action = DeleteState(uow</span><span class="s4">, </span><span class="s1">state)</span>
+            <span class="s1">uow.dependencies.add((save_all</span><span class="s4">, </span><span class="s1">action))</span>
+            <span class="s3">yield </span><span class="s1">action</span>
+
+        <span class="s3">for </span><span class="s1">dep </span><span class="s3">in </span><span class="s1">uow.deps[self.mapper]:</span>
+            <span class="s1">states_for_prop = uow.filter_states_for_dep(dep</span><span class="s4">, </span><span class="s1">states)</span>
+            <span class="s1">dep.per_state_flush_actions(uow</span><span class="s4">, </span><span class="s1">states_for_prop</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self):</span>
+        <span class="s3">return </span><span class="s5">&quot;%s(%s)&quot; </span><span class="s1">% (self.__class__.__name__</span><span class="s4">, </span><span class="s1">self.mapper)</span>
+
+
+<span class="s3">class </span><span class="s1">ProcessState(PostSortRec):</span>
+    <span class="s1">__slots__ = </span><span class="s5">&quot;dependency_processor&quot;</span><span class="s4">, </span><span class="s5">&quot;isdelete&quot;</span><span class="s4">, </span><span class="s5">&quot;state&quot;</span><span class="s4">, </span><span class="s5">&quot;sort_key&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">dependency_processor</span><span class="s4">, </span><span class="s1">isdelete</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s1">self.dependency_processor = dependency_processor</span>
+        <span class="s1">self.sort_key = (</span><span class="s5">&quot;ProcessState&quot;</span><span class="s4">, </span><span class="s1">dependency_processor.sort_key)</span>
+        <span class="s1">self.isdelete = isdelete</span>
+        <span class="s1">self.state = state</span>
+
+    <span class="s3">def </span><span class="s1">execute_aggregate(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">recs):</span>
+        <span class="s1">cls_ = self.__class__</span>
+        <span class="s1">dependency_processor = self.dependency_processor</span>
+        <span class="s1">isdelete = self.isdelete</span>
+        <span class="s1">our_recs = [</span>
+            <span class="s1">r</span>
+            <span class="s3">for </span><span class="s1">r </span><span class="s3">in </span><span class="s1">recs</span>
+            <span class="s3">if </span><span class="s1">r.__class__ </span><span class="s3">is </span><span class="s1">cls_</span>
+            <span class="s3">and </span><span class="s1">r.dependency_processor </span><span class="s3">is </span><span class="s1">dependency_processor</span>
+            <span class="s3">and </span><span class="s1">r.isdelete </span><span class="s3">is </span><span class="s1">isdelete</span>
+        <span class="s1">]</span>
+        <span class="s1">recs.difference_update(our_recs)</span>
+        <span class="s1">states = [self.state] + [r.state </span><span class="s3">for </span><span class="s1">r </span><span class="s3">in </span><span class="s1">our_recs]</span>
+        <span class="s3">if </span><span class="s1">isdelete:</span>
+            <span class="s1">dependency_processor.process_deletes(uow</span><span class="s4">, </span><span class="s1">states)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">dependency_processor.process_saves(uow</span><span class="s4">, </span><span class="s1">states)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self):</span>
+        <span class="s3">return </span><span class="s5">&quot;%s(%s, %s, delete=%s)&quot; </span><span class="s1">% (</span>
+            <span class="s1">self.__class__.__name__</span><span class="s4">,</span>
+            <span class="s1">self.dependency_processor</span><span class="s4">,</span>
+            <span class="s1">orm_util.state_str(self.state)</span><span class="s4">,</span>
+            <span class="s1">self.isdelete</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">SaveUpdateState(PostSortRec):</span>
+    <span class="s1">__slots__ = </span><span class="s5">&quot;state&quot;</span><span class="s4">, </span><span class="s5">&quot;mapper&quot;</span><span class="s4">, </span><span class="s5">&quot;sort_key&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s1">self.state = state</span>
+        <span class="s1">self.mapper = state.mapper.base_mapper</span>
+        <span class="s1">self.sort_key = (</span><span class="s5">&quot;ProcessState&quot;</span><span class="s4">, </span><span class="s1">self.mapper._sort_key)</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s5">&quot;sqlalchemy.orm.persistence&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">execute_aggregate(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">recs):</span>
+        <span class="s1">persistence = util.preloaded.orm_persistence</span>
+        <span class="s1">cls_ = self.__class__</span>
+        <span class="s1">mapper = self.mapper</span>
+        <span class="s1">our_recs = [</span>
+            <span class="s1">r </span><span class="s3">for </span><span class="s1">r </span><span class="s3">in </span><span class="s1">recs </span><span class="s3">if </span><span class="s1">r.__class__ </span><span class="s3">is </span><span class="s1">cls_ </span><span class="s3">and </span><span class="s1">r.mapper </span><span class="s3">is </span><span class="s1">mapper</span>
+        <span class="s1">]</span>
+        <span class="s1">recs.difference_update(our_recs)</span>
+        <span class="s1">persistence.save_obj(</span>
+            <span class="s1">mapper</span><span class="s4">, </span><span class="s1">[self.state] + [r.state </span><span class="s3">for </span><span class="s1">r </span><span class="s3">in </span><span class="s1">our_recs]</span><span class="s4">, </span><span class="s1">uow</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self):</span>
+        <span class="s3">return </span><span class="s5">&quot;%s(%s)&quot; </span><span class="s1">% (</span>
+            <span class="s1">self.__class__.__name__</span><span class="s4">,</span>
+            <span class="s1">orm_util.state_str(self.state)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">DeleteState(PostSortRec):</span>
+    <span class="s1">__slots__ = </span><span class="s5">&quot;state&quot;</span><span class="s4">, </span><span class="s5">&quot;mapper&quot;</span><span class="s4">, </span><span class="s5">&quot;sort_key&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s1">self.state = state</span>
+        <span class="s1">self.mapper = state.mapper.base_mapper</span>
+        <span class="s1">self.sort_key = (</span><span class="s5">&quot;DeleteState&quot;</span><span class="s4">, </span><span class="s1">self.mapper._sort_key)</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s5">&quot;sqlalchemy.orm.persistence&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">execute_aggregate(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">recs):</span>
+        <span class="s1">persistence = util.preloaded.orm_persistence</span>
+        <span class="s1">cls_ = self.__class__</span>
+        <span class="s1">mapper = self.mapper</span>
+        <span class="s1">our_recs = [</span>
+            <span class="s1">r </span><span class="s3">for </span><span class="s1">r </span><span class="s3">in </span><span class="s1">recs </span><span class="s3">if </span><span class="s1">r.__class__ </span><span class="s3">is </span><span class="s1">cls_ </span><span class="s3">and </span><span class="s1">r.mapper </span><span class="s3">is </span><span class="s1">mapper</span>
+        <span class="s1">]</span>
+        <span class="s1">recs.difference_update(our_recs)</span>
+        <span class="s1">states = [self.state] + [r.state </span><span class="s3">for </span><span class="s1">r </span><span class="s3">in </span><span class="s1">our_recs]</span>
+        <span class="s1">persistence.delete_obj(</span>
+            <span class="s1">mapper</span><span class="s4">, </span><span class="s1">[s </span><span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">states </span><span class="s3">if </span><span class="s1">uow.states[s][</span><span class="s6">0</span><span class="s1">]]</span><span class="s4">, </span><span class="s1">uow</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self):</span>
+        <span class="s3">return </span><span class="s5">&quot;%s(%s)&quot; </span><span class="s1">% (</span>
+            <span class="s1">self.__class__.__name__</span><span class="s4">,</span>
+            <span class="s1">orm_util.state_str(self.state)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+</pre>
+</body>
+</html>

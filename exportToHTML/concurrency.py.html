@@ -1,0 +1,130 @@
+<html>
+<head>
+<title>concurrency.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #717ed3; font-style: italic;}
+.s5 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+concurrency.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># util/concurrency.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">asyncio  </span><span class="s0"># noqa</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Coroutine</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TypeVar</span>
+
+<span class="s1">have_greenlet = </span><span class="s2">False</span>
+<span class="s1">greenlet_error = </span><span class="s2">None</span>
+<span class="s2">try</span><span class="s1">:</span>
+    <span class="s2">import </span><span class="s1">greenlet  </span><span class="s0"># type: ignore[import-untyped,unused-ignore]  # noqa: F401,E501</span>
+<span class="s2">except </span><span class="s1">ImportError </span><span class="s2">as </span><span class="s1">e:</span>
+    <span class="s1">greenlet_error = str(e)</span>
+    <span class="s2">pass</span>
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s1">have_greenlet = </span><span class="s2">True</span>
+    <span class="s2">from </span><span class="s1">._concurrency_py3k </span><span class="s2">import </span><span class="s1">await_only </span><span class="s2">as </span><span class="s1">await_only</span>
+    <span class="s2">from </span><span class="s1">._concurrency_py3k </span><span class="s2">import </span><span class="s1">await_fallback </span><span class="s2">as </span><span class="s1">await_fallback</span>
+    <span class="s2">from </span><span class="s1">._concurrency_py3k </span><span class="s2">import </span><span class="s1">in_greenlet </span><span class="s2">as </span><span class="s1">in_greenlet</span>
+    <span class="s2">from </span><span class="s1">._concurrency_py3k </span><span class="s2">import </span><span class="s1">greenlet_spawn </span><span class="s2">as </span><span class="s1">greenlet_spawn</span>
+    <span class="s2">from </span><span class="s1">._concurrency_py3k </span><span class="s2">import </span><span class="s1">is_exit_exception </span><span class="s2">as </span><span class="s1">is_exit_exception</span>
+    <span class="s2">from </span><span class="s1">._concurrency_py3k </span><span class="s2">import </span><span class="s1">AsyncAdaptedLock </span><span class="s2">as </span><span class="s1">AsyncAdaptedLock</span>
+    <span class="s2">from </span><span class="s1">._concurrency_py3k </span><span class="s2">import </span><span class="s1">_Runner</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s3">&quot;_T&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">_AsyncUtil:</span>
+    <span class="s4">&quot;&quot;&quot;Asyncio util for test suite/ util only&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">have_greenlet:</span>
+            <span class="s1">self.runner = _Runner()</span>
+
+    <span class="s2">def </span><span class="s1">run(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">fn: Callable[...</span><span class="s5">, </span><span class="s1">Coroutine[Any</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">_T]]</span><span class="s5">,</span>
+        <span class="s1">*args: Any</span><span class="s5">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; _T:</span>
+        <span class="s4">&quot;&quot;&quot;Run coroutine on the loop&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.runner.run(fn(*args</span><span class="s5">, </span><span class="s1">**kwargs))</span>
+
+    <span class="s2">def </span><span class="s1">run_in_greenlet(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">fn: Callable[...</span><span class="s5">, </span><span class="s1">_T]</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any</span>
+    <span class="s1">) -&gt; _T:</span>
+        <span class="s4">&quot;&quot;&quot;Run sync function in greenlet. Support nested calls&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">have_greenlet:</span>
+            <span class="s2">if </span><span class="s1">self.runner.get_loop().is_running():</span>
+                <span class="s2">return </span><span class="s1">fn(*args</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">self.runner.run(greenlet_spawn(fn</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kwargs))</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">fn(*args</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s2">def </span><span class="s1">close(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">have_greenlet:</span>
+            <span class="s1">self.runner.close()</span>
+
+
+<span class="s2">if not </span><span class="s1">typing.TYPE_CHECKING </span><span class="s2">and not </span><span class="s1">have_greenlet:</span>
+
+    <span class="s2">def </span><span class="s1">_not_implemented():</span>
+        <span class="s0"># this conditional is to prevent pylance from considering</span>
+        <span class="s0"># greenlet_spawn() etc as &quot;no return&quot; and dimming out code below it</span>
+        <span class="s2">if </span><span class="s1">have_greenlet:</span>
+            <span class="s2">return None</span>
+
+        <span class="s2">raise </span><span class="s1">ValueError(</span>
+            <span class="s3">&quot;the greenlet library is required to use this function.&quot;</span>
+            <span class="s3">&quot; %s&quot; </span><span class="s1">% greenlet_error</span>
+            <span class="s2">if </span><span class="s1">greenlet_error</span>
+            <span class="s2">else </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">is_exit_exception(e):  </span><span class="s0"># noqa: F811</span>
+        <span class="s2">return not </span><span class="s1">isinstance(e</span><span class="s5">, </span><span class="s1">Exception)</span>
+
+    <span class="s2">def </span><span class="s1">await_only(thing):  </span><span class="s0"># type: ignore  # noqa: F811</span>
+        <span class="s1">_not_implemented()</span>
+
+    <span class="s2">def </span><span class="s1">await_fallback(thing):  </span><span class="s0"># type: ignore  # noqa: F811</span>
+        <span class="s2">return </span><span class="s1">thing</span>
+
+    <span class="s2">def </span><span class="s1">in_greenlet():  </span><span class="s0"># type: ignore  # noqa: F811</span>
+        <span class="s1">_not_implemented()</span>
+
+    <span class="s2">def </span><span class="s1">greenlet_spawn(fn</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kw):  </span><span class="s0"># type: ignore  # noqa: F811</span>
+        <span class="s1">_not_implemented()</span>
+
+    <span class="s2">def </span><span class="s1">AsyncAdaptedLock(*args</span><span class="s5">, </span><span class="s1">**kw):  </span><span class="s0"># type: ignore  # noqa: F811</span>
+        <span class="s1">_not_implemented()</span>
+
+    <span class="s2">def </span><span class="s1">_util_async_run(fn</span><span class="s5">, </span><span class="s1">*arg</span><span class="s5">, </span><span class="s1">**kw):  </span><span class="s0"># type: ignore  # noqa: F811</span>
+        <span class="s2">return </span><span class="s1">fn(*arg</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">_util_async_run_coroutine_function(fn</span><span class="s5">, </span><span class="s1">*arg</span><span class="s5">, </span><span class="s1">**kw):  </span><span class="s0"># type: ignore  # noqa: F811,E501</span>
+        <span class="s1">_not_implemented()</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<html>
+<head>
+<title>movimentacao.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+.s1 { color: #e8bf6a;}
+.s2 { color: #bababa;}
+.s3 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+movimentacao.html</font>
+</center></td></tr></table>
+<pre><span class="s0">{% extends 'modelo_base2.html' %}</span>
+
+<span class="s0">{% block conteudo %}</span>
+<span class="s1">&lt;h2&gt;</span><span class="s0">Registrar Movimentação de Produto</span><span class="s1">&lt;/h2&gt;</span>
+<span class="s1">&lt;form </span><span class="s2">action</span><span class="s3">=&quot;{{ url_for('movimentacao_produto') }}&quot; </span><span class="s2">method</span><span class="s3">=&quot;POST&quot;</span><span class="s1">&gt;</span>
+    <span class="s1">&lt;label </span><span class="s2">for</span><span class="s3">=&quot;tipo&quot;</span><span class="s1">&gt;</span><span class="s0">Tipo de Movimentação:</span><span class="s1">&lt;/label&gt;</span>
+    <span class="s1">&lt;select </span><span class="s2">name</span><span class="s3">=&quot;tipo&quot; </span><span class="s2">id</span><span class="s3">=&quot;tipo&quot; </span><span class="s2">required</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;entrada&quot;</span><span class="s1">&gt;</span><span class="s0">Entrada</span><span class="s1">&lt;/option&gt;</span>
+        <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;saida&quot;</span><span class="s1">&gt;</span><span class="s0">Saída</span><span class="s1">&lt;/option&gt;</span>
+    <span class="s1">&lt;/select&gt;&lt;br&gt;&lt;br&gt;</span>
+
+    <span class="s1">&lt;label </span><span class="s2">for</span><span class="s3">=&quot;id_produto&quot;</span><span class="s1">&gt;</span><span class="s0">Produto:</span><span class="s1">&lt;/label&gt;</span>
+    <span class="s1">&lt;select </span><span class="s2">name</span><span class="s3">=&quot;id_produto&quot; </span><span class="s2">id</span><span class="s3">=&quot;id_produto&quot; </span><span class="s2">required</span><span class="s1">&gt;</span>
+        <span class="s0">{% for produto in produtos %}</span>
+        <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;{{ produto.id }}&quot;</span><span class="s1">&gt;</span><span class="s0">{{ produto.nome }}</span><span class="s1">&lt;/option&gt;</span>
+        <span class="s0">{% endfor %}</span>
+    <span class="s1">&lt;/select&gt;&lt;br&gt;&lt;br&gt;</span>
+
+    <span class="s1">&lt;label </span><span class="s2">for</span><span class="s3">=&quot;id_funcionario&quot;</span><span class="s1">&gt;</span><span class="s0">Funcionário:</span><span class="s1">&lt;/label&gt;</span>
+    <span class="s1">&lt;select </span><span class="s2">name</span><span class="s3">=&quot;id_funcionario&quot; </span><span class="s2">id</span><span class="s3">=&quot;id_funcionario&quot; </span><span class="s2">required</span><span class="s1">&gt;</span>
+        <span class="s0">{% for funcionario in funcionarios %}</span>
+        <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;{{ funcionario.id_funcionario }}&quot;</span><span class="s1">&gt;</span><span class="s0">{{ funcionario.nome_funcionario }}</span><span class="s1">&lt;/option&gt;</span>
+        <span class="s0">{% endfor %}</span>
+    <span class="s1">&lt;/select&gt;&lt;br&gt;&lt;br&gt;</span>
+
+    <span class="s1">&lt;label </span><span class="s2">for</span><span class="s3">=&quot;quantidade&quot;</span><span class="s1">&gt;</span><span class="s0">Quantidade:</span><span class="s1">&lt;/label&gt;</span>
+    <span class="s1">&lt;input </span><span class="s2">type</span><span class="s3">=&quot;number&quot; </span><span class="s2">name</span><span class="s3">=&quot;quantidade&quot; </span><span class="s2">id</span><span class="s3">=&quot;quantidade&quot; </span><span class="s2">min</span><span class="s3">=&quot;1&quot; </span><span class="s2">required</span><span class="s1">&gt;&lt;br&gt;&lt;br&gt;</span>
+
+    <span class="s1">&lt;label </span><span class="s2">for</span><span class="s3">=&quot;data&quot;</span><span class="s1">&gt;</span><span class="s0">Data:</span><span class="s1">&lt;/label&gt;</span>
+    <span class="s1">&lt;input </span><span class="s2">type</span><span class="s3">=&quot;date&quot; </span><span class="s2">name</span><span class="s3">=&quot;data&quot; </span><span class="s2">id</span><span class="s3">=&quot;data&quot; </span><span class="s2">required</span><span class="s1">&gt;&lt;br&gt;&lt;br&gt;</span>
+
+    <span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('grafico_movimentacoes') }}&quot; </span><span class="s1">&gt;&lt;button </span><span class="s2">type</span><span class="s3">=&quot;submit&quot;</span><span class="s1">&gt;</span><span class="s0">Registrar Movimentação</span><span class="s1">&lt;/button&gt;&lt;/a&gt;</span>
+<span class="s1">&lt;/form&gt;</span>
+<span class="s0">{% endblock %}</span>
+</pre>
+</body>
+</html>

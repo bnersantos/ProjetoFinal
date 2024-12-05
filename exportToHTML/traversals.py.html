@@ -1,0 +1,1048 @@
+<html>
+<head>
+<title>traversals.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+traversals.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/traversals.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">collections </span><span class="s2">import </span><span class="s1">deque</span>
+<span class="s2">import </span><span class="s1">collections.abc </span><span class="s2">as </span><span class="s1">collections_abc</span>
+<span class="s2">import </span><span class="s1">itertools</span>
+<span class="s2">from </span><span class="s1">itertools </span><span class="s2">import </span><span class="s1">zip_longest</span>
+<span class="s2">import </span><span class="s1">operator</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Deque</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Set</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Tuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Type</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">operators</span>
+<span class="s2">from </span><span class="s1">.cache_key </span><span class="s2">import </span><span class="s1">HasCacheKey</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">_TraverseInternalsType</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">anon_map</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">ExternallyTraversible</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">HasTraversalDispatch</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">HasTraverseInternals</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">..util </span><span class="s2">import </span><span class="s1">langhelpers</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Self</span>
+
+
+<span class="s1">SKIP_TRAVERSE = util.symbol(</span><span class="s3">&quot;skip_traverse&quot;</span><span class="s1">)</span>
+<span class="s1">COMPARE_FAILED = </span><span class="s2">False</span>
+<span class="s1">COMPARE_SUCCEEDED = </span><span class="s2">True</span>
+
+
+<span class="s2">def </span><span class="s1">compare(obj1: Any</span><span class="s4">, </span><span class="s1">obj2: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; bool:</span>
+    <span class="s1">strategy: TraversalComparatorStrategy</span>
+    <span class="s2">if </span><span class="s1">kw.get(</span><span class="s3">&quot;use_proxies&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">):</span>
+        <span class="s1">strategy = ColIdentityComparatorStrategy()</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">strategy = TraversalComparatorStrategy()</span>
+
+    <span class="s2">return </span><span class="s1">strategy.compare(obj1</span><span class="s4">, </span><span class="s1">obj2</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+
+<span class="s2">def </span><span class="s1">_preconfigure_traversals(target_hierarchy: Type[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+    <span class="s2">for </span><span class="s1">cls </span><span class="s2">in </span><span class="s1">util.walk_subclasses(target_hierarchy):</span>
+        <span class="s2">if </span><span class="s1">hasattr(cls</span><span class="s4">, </span><span class="s3">&quot;_generate_cache_attrs&quot;</span><span class="s1">) </span><span class="s2">and </span><span class="s1">hasattr(</span>
+            <span class="s1">cls</span><span class="s4">, </span><span class="s3">&quot;_traverse_internals&quot;</span>
+        <span class="s1">):</span>
+            <span class="s1">cls._generate_cache_attrs()</span>
+            <span class="s1">_copy_internals.generate_dispatch(</span>
+                <span class="s1">cls</span><span class="s4">,</span>
+                <span class="s1">cls._traverse_internals</span><span class="s4">,</span>
+                <span class="s3">&quot;_generated_copy_internals_traversal&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s1">_get_children.generate_dispatch(</span>
+                <span class="s1">cls</span><span class="s4">,</span>
+                <span class="s1">cls._traverse_internals</span><span class="s4">,</span>
+                <span class="s3">&quot;_generated_get_children_traversal&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">HasShallowCopy(HasTraverseInternals):</span>
+    <span class="s5">&quot;&quot;&quot;attribute-wide operations that are useful for classes that use 
+    __slots__ and therefore can't operate on their attributes in a dictionary. 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+
+        <span class="s2">def </span><span class="s1">_generated_shallow_copy_traversal(self</span><span class="s4">, </span><span class="s1">other: Self) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+        <span class="s2">def </span><span class="s1">_generated_shallow_from_dict_traversal(</span>
+            <span class="s1">self</span><span class="s4">, </span><span class="s1">d: Dict[str</span><span class="s4">, </span><span class="s1">Any]</span>
+        <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+        <span class="s2">def </span><span class="s1">_generated_shallow_to_dict_traversal(self) -&gt; Dict[str</span><span class="s4">, </span><span class="s1">Any]: ...</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_generate_shallow_copy(</span>
+        <span class="s1">cls</span><span class="s4">,</span>
+        <span class="s1">internal_dispatch: _TraverseInternalsType</span><span class="s4">,</span>
+        <span class="s1">method_name: str</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Callable[[Self</span><span class="s4">, </span><span class="s1">Self]</span><span class="s4">, </span><span class="s2">None</span><span class="s1">]:</span>
+        <span class="s1">code = </span><span class="s3">&quot;</span><span class="s6">\n</span><span class="s3">&quot;</span><span class="s1">.join(</span>
+            <span class="s3">f&quot;    other.</span><span class="s6">{</span><span class="s1">attrname</span><span class="s6">} </span><span class="s3">= self.</span><span class="s6">{</span><span class="s1">attrname</span><span class="s6">}</span><span class="s3">&quot;</span>
+            <span class="s2">for </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">internal_dispatch</span>
+        <span class="s1">)</span>
+        <span class="s1">meth_text = </span><span class="s3">f&quot;def </span><span class="s6">{</span><span class="s1">method_name</span><span class="s6">}</span><span class="s3">(self, other):</span><span class="s6">\n{</span><span class="s1">code</span><span class="s6">}\n</span><span class="s3">&quot;</span>
+        <span class="s2">return </span><span class="s1">langhelpers._exec_code_in_env(meth_text</span><span class="s4">, </span><span class="s1">{}</span><span class="s4">, </span><span class="s1">method_name)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_generate_shallow_to_dict(</span>
+        <span class="s1">cls</span><span class="s4">,</span>
+        <span class="s1">internal_dispatch: _TraverseInternalsType</span><span class="s4">,</span>
+        <span class="s1">method_name: str</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Callable[[Self]</span><span class="s4">, </span><span class="s1">Dict[str</span><span class="s4">, </span><span class="s1">Any]]:</span>
+        <span class="s1">code = </span><span class="s3">&quot;,</span><span class="s6">\n</span><span class="s3">&quot;</span><span class="s1">.join(</span>
+            <span class="s3">f&quot;    '</span><span class="s6">{</span><span class="s1">attrname</span><span class="s6">}</span><span class="s3">': self.</span><span class="s6">{</span><span class="s1">attrname</span><span class="s6">}</span><span class="s3">&quot;</span>
+            <span class="s2">for </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">internal_dispatch</span>
+        <span class="s1">)</span>
+        <span class="s1">meth_text = </span><span class="s3">f&quot;def </span><span class="s6">{</span><span class="s1">method_name</span><span class="s6">}</span><span class="s3">(self):</span><span class="s6">\n    </span><span class="s3">return </span><span class="s6">{{{</span><span class="s1">code</span><span class="s6">}}}\n</span><span class="s3">&quot;</span>
+        <span class="s2">return </span><span class="s1">langhelpers._exec_code_in_env(meth_text</span><span class="s4">, </span><span class="s1">{}</span><span class="s4">, </span><span class="s1">method_name)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_generate_shallow_from_dict(</span>
+        <span class="s1">cls</span><span class="s4">,</span>
+        <span class="s1">internal_dispatch: _TraverseInternalsType</span><span class="s4">,</span>
+        <span class="s1">method_name: str</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Callable[[Self</span><span class="s4">, </span><span class="s1">Dict[str</span><span class="s4">, </span><span class="s1">Any]]</span><span class="s4">, </span><span class="s2">None</span><span class="s1">]:</span>
+        <span class="s1">code = </span><span class="s3">&quot;</span><span class="s6">\n</span><span class="s3">&quot;</span><span class="s1">.join(</span>
+            <span class="s3">f&quot;    self.</span><span class="s6">{</span><span class="s1">attrname</span><span class="s6">} </span><span class="s3">= d['</span><span class="s6">{</span><span class="s1">attrname</span><span class="s6">}</span><span class="s3">']&quot;</span>
+            <span class="s2">for </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">internal_dispatch</span>
+        <span class="s1">)</span>
+        <span class="s1">meth_text = </span><span class="s3">f&quot;def </span><span class="s6">{</span><span class="s1">method_name</span><span class="s6">}</span><span class="s3">(self, d):</span><span class="s6">\n{</span><span class="s1">code</span><span class="s6">}\n</span><span class="s3">&quot;</span>
+        <span class="s2">return </span><span class="s1">langhelpers._exec_code_in_env(meth_text</span><span class="s4">, </span><span class="s1">{}</span><span class="s4">, </span><span class="s1">method_name)</span>
+
+    <span class="s2">def </span><span class="s1">_shallow_from_dict(self</span><span class="s4">, </span><span class="s1">d: Dict[str</span><span class="s4">, </span><span class="s1">Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">cls = self.__class__</span>
+
+        <span class="s1">shallow_from_dict: Callable[[HasShallowCopy</span><span class="s4">, </span><span class="s1">Dict[str</span><span class="s4">, </span><span class="s1">Any]]</span><span class="s4">, </span><span class="s2">None</span><span class="s1">]</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">shallow_from_dict = cls.__dict__[</span>
+                <span class="s3">&quot;_generated_shallow_from_dict_traversal&quot;</span>
+            <span class="s1">]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s1">shallow_from_dict = self._generate_shallow_from_dict(</span>
+                <span class="s1">cls._traverse_internals</span><span class="s4">,</span>
+                <span class="s3">&quot;_generated_shallow_from_dict_traversal&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">cls._generated_shallow_from_dict_traversal = shallow_from_dict  </span><span class="s0"># type: ignore  # noqa: E501</span>
+
+        <span class="s1">shallow_from_dict(self</span><span class="s4">, </span><span class="s1">d)</span>
+
+    <span class="s2">def </span><span class="s1">_shallow_to_dict(self) -&gt; Dict[str</span><span class="s4">, </span><span class="s1">Any]:</span>
+        <span class="s1">cls = self.__class__</span>
+
+        <span class="s1">shallow_to_dict: Callable[[HasShallowCopy]</span><span class="s4">, </span><span class="s1">Dict[str</span><span class="s4">, </span><span class="s1">Any]]</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">shallow_to_dict = cls.__dict__[</span>
+                <span class="s3">&quot;_generated_shallow_to_dict_traversal&quot;</span>
+            <span class="s1">]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s1">shallow_to_dict = self._generate_shallow_to_dict(</span>
+                <span class="s1">cls._traverse_internals</span><span class="s4">, </span><span class="s3">&quot;_generated_shallow_to_dict_traversal&quot;</span>
+            <span class="s1">)</span>
+
+            <span class="s1">cls._generated_shallow_to_dict_traversal = shallow_to_dict  </span><span class="s0"># type: ignore  # noqa: E501</span>
+        <span class="s2">return </span><span class="s1">shallow_to_dict(self)</span>
+
+    <span class="s2">def </span><span class="s1">_shallow_copy_to(self</span><span class="s4">, </span><span class="s1">other: Self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">cls = self.__class__</span>
+
+        <span class="s1">shallow_copy: Callable[[Self</span><span class="s4">, </span><span class="s1">Self]</span><span class="s4">, </span><span class="s2">None</span><span class="s1">]</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">shallow_copy = cls.__dict__[</span><span class="s3">&quot;_generated_shallow_copy_traversal&quot;</span><span class="s1">]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s1">shallow_copy = self._generate_shallow_copy(</span>
+                <span class="s1">cls._traverse_internals</span><span class="s4">, </span><span class="s3">&quot;_generated_shallow_copy_traversal&quot;</span>
+            <span class="s1">)</span>
+
+            <span class="s1">cls._generated_shallow_copy_traversal = shallow_copy  </span><span class="s0"># type: ignore  # noqa: E501</span>
+        <span class="s1">shallow_copy(self</span><span class="s4">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">_clone(self</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; Self:</span>
+        <span class="s5">&quot;&quot;&quot;Create a shallow copy&quot;&quot;&quot;</span>
+        <span class="s1">c = self.__class__.__new__(self.__class__)</span>
+        <span class="s1">self._shallow_copy_to(c)</span>
+        <span class="s2">return </span><span class="s1">c</span>
+
+
+<span class="s2">class </span><span class="s1">GenerativeOnTraversal(HasShallowCopy):</span>
+    <span class="s5">&quot;&quot;&quot;Supplies Generative behavior but making use of traversals to shallow 
+    copy. 
+ 
+    .. seealso:: 
+ 
+        :class:`sqlalchemy.sql.base.Generative` 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_generate(self) -&gt; Self:</span>
+        <span class="s1">cls = self.__class__</span>
+        <span class="s1">s = cls.__new__(cls)</span>
+        <span class="s1">self._shallow_copy_to(s)</span>
+        <span class="s2">return </span><span class="s1">s</span>
+
+
+<span class="s2">def </span><span class="s1">_clone(element</span><span class="s4">, </span><span class="s1">**kw):</span>
+    <span class="s2">return </span><span class="s1">element._clone()</span>
+
+
+<span class="s2">class </span><span class="s1">HasCopyInternals(HasTraverseInternals):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_clone(self</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">_copy_internals(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">omit_attrs: Iterable[str] = ()</span><span class="s4">, </span><span class="s1">**kw: Any</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s5">&quot;&quot;&quot;Reassign internal elements to be clones of themselves. 
+ 
+        Called during a copy-and-traverse operation on newly 
+        shallow-copied elements to create a deep copy. 
+ 
+        The given clone function should be used, which may be applying 
+        additional transformations to the element (i.e. replacement 
+        traversal, cloned traversal, annotations). 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">traverse_internals = self._traverse_internals</span>
+        <span class="s2">except </span><span class="s1">AttributeError:</span>
+            <span class="s0"># user-defined classes may not have a _traverse_internals</span>
+            <span class="s2">return</span>
+
+        <span class="s2">for </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">obj</span><span class="s4">, </span><span class="s1">meth </span><span class="s2">in </span><span class="s1">_copy_internals.run_generated_dispatch(</span>
+            <span class="s1">self</span><span class="s4">, </span><span class="s1">traverse_internals</span><span class="s4">, </span><span class="s3">&quot;_generated_copy_internals_traversal&quot;</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">attrname </span><span class="s2">in </span><span class="s1">omit_attrs:</span>
+                <span class="s2">continue</span>
+
+            <span class="s2">if </span><span class="s1">obj </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">result = meth(attrname</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s1">obj</span><span class="s4">, </span><span class="s1">**kw)</span>
+                <span class="s2">if </span><span class="s1">result </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s1">setattr(self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">result)</span>
+
+
+<span class="s2">class </span><span class="s1">_CopyInternalsTraversal(HasTraversalDispatch):</span>
+    <span class="s5">&quot;&quot;&quot;Generate a _copy_internals internal traversal dispatch for classes 
+    with a _traverse_internals collection.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">clone(element</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_list(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">[clone(clause</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">for </span><span class="s1">clause </span><span class="s2">in </span><span class="s1">element]</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_tuple(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">tuple([clone(clause</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">for </span><span class="s1">clause </span><span class="s2">in </span><span class="s1">element])</span>
+
+    <span class="s2">def </span><span class="s1">visit_executable_options(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">tuple([clone(clause</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">for </span><span class="s1">clause </span><span class="s2">in </span><span class="s1">element])</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_unordered_set(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">{clone(clause</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">for </span><span class="s1">clause </span><span class="s2">in </span><span class="s1">element}</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_tuples(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">[</span>
+            <span class="s1">tuple(clone(tup_elem</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">for </span><span class="s1">tup_elem </span><span class="s2">in </span><span class="s1">elem)</span>
+            <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">element</span>
+        <span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">visit_string_clauseelement_dict(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">{key: clone(value</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">element.items()}</span>
+
+    <span class="s2">def </span><span class="s1">visit_setup_join_tuple(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">tuple(</span>
+            <span class="s1">(</span>
+                <span class="s1">clone(target</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">if </span><span class="s1">target </span><span class="s2">is not None else None</span><span class="s4">,</span>
+                <span class="s1">clone(onclause</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">if </span><span class="s1">onclause </span><span class="s2">is not None else None</span><span class="s4">,</span>
+                <span class="s1">clone(from_</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">if </span><span class="s1">from_ </span><span class="s2">is not None else None</span><span class="s4">,</span>
+                <span class="s1">flags</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">(target</span><span class="s4">, </span><span class="s1">onclause</span><span class="s4">, </span><span class="s1">from_</span><span class="s4">, </span><span class="s1">flags) </span><span class="s2">in </span><span class="s1">element</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_memoized_select_entities(self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">self.visit_clauseelement_tuple(attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_ordered_values(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s0"># sequence of 2-tuples</span>
+        <span class="s2">return </span><span class="s1">[</span>
+            <span class="s1">(</span>
+                <span class="s1">(</span>
+                    <span class="s1">clone(key</span><span class="s4">, </span><span class="s1">**kw)</span>
+                    <span class="s2">if </span><span class="s1">hasattr(key</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+                    <span class="s2">else </span><span class="s1">key</span>
+                <span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">clone(value</span><span class="s4">, </span><span class="s1">**kw)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">element</span>
+        <span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_values(self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">{</span>
+            <span class="s1">(</span>
+                <span class="s1">clone(key</span><span class="s4">, </span><span class="s1">**kw) </span><span class="s2">if </span><span class="s1">hasattr(key</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">) </span><span class="s2">else </span><span class="s1">key</span>
+            <span class="s1">): clone(value</span><span class="s4">, </span><span class="s1">**kw)</span>
+            <span class="s2">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">element.items()</span>
+        <span class="s1">}</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_multi_values(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s0"># sequence of sequences, each sequence contains a list/dict/tuple</span>
+
+        <span class="s2">def </span><span class="s1">copy(elem):</span>
+            <span class="s2">if </span><span class="s1">isinstance(elem</span><span class="s4">, </span><span class="s1">(list</span><span class="s4">, </span><span class="s1">tuple)):</span>
+                <span class="s2">return </span><span class="s1">[</span>
+                    <span class="s1">(</span>
+                        <span class="s1">clone(value</span><span class="s4">, </span><span class="s1">**kw)</span>
+                        <span class="s2">if </span><span class="s1">hasattr(value</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+                        <span class="s2">else </span><span class="s1">value</span>
+                    <span class="s1">)</span>
+                    <span class="s2">for </span><span class="s1">value </span><span class="s2">in </span><span class="s1">elem</span>
+                <span class="s1">]</span>
+            <span class="s2">elif </span><span class="s1">isinstance(elem</span><span class="s4">, </span><span class="s1">dict):</span>
+                <span class="s2">return </span><span class="s1">{</span>
+                    <span class="s1">(</span>
+                        <span class="s1">clone(key</span><span class="s4">, </span><span class="s1">**kw)</span>
+                        <span class="s2">if </span><span class="s1">hasattr(key</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+                        <span class="s2">else </span><span class="s1">key</span>
+                    <span class="s1">): (</span>
+                        <span class="s1">clone(value</span><span class="s4">, </span><span class="s1">**kw)</span>
+                        <span class="s2">if </span><span class="s1">hasattr(value</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+                        <span class="s2">else </span><span class="s1">value</span>
+                    <span class="s1">)</span>
+                    <span class="s2">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">elem.items()</span>
+                <span class="s1">}</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s0"># TODO: use abc classes</span>
+                <span class="s2">assert False</span>
+
+        <span class="s2">return </span><span class="s1">[</span>
+            <span class="s1">[copy(sub_element) </span><span class="s2">for </span><span class="s1">sub_element </span><span class="s2">in </span><span class="s1">sequence]</span>
+            <span class="s2">for </span><span class="s1">sequence </span><span class="s2">in </span><span class="s1">element</span>
+        <span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">visit_propagate_attrs(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">parent</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">clone=_clone</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s1">_copy_internals = _CopyInternalsTraversal()</span>
+
+
+<span class="s2">def </span><span class="s1">_flatten_clauseelement(element):</span>
+    <span class="s2">while </span><span class="s1">hasattr(element</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">) </span><span class="s2">and not </span><span class="s1">getattr(</span>
+        <span class="s1">element</span><span class="s4">, </span><span class="s3">&quot;is_clause_element&quot;</span><span class="s4">, </span><span class="s2">False</span>
+    <span class="s1">):</span>
+        <span class="s1">element = element.__clause_element__()</span>
+
+    <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s2">class </span><span class="s1">_GetChildrenTraversal(HasTraversalDispatch):</span>
+    <span class="s5">&quot;&quot;&quot;Generate a _children_traversal internal traversal dispatch for classes 
+    with a _traverse_internals collection.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">visit_has_cache_key(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s0"># the GetChildren traversal refers explicitly to ClauseElement</span>
+        <span class="s0"># structures.  Within these, a plain HasCacheKey is not a</span>
+        <span class="s0"># ClauseElement, so don't include these.</span>
+        <span class="s2">return </span><span class="s1">()</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">(element</span><span class="s4">,</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_list(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">element</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_tuple(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">element</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_tuples(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">itertools.chain.from_iterable(element)</span>
+
+    <span class="s2">def </span><span class="s1">visit_fromclause_canonical_column_collection(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">()</span>
+
+    <span class="s2">def </span><span class="s1">visit_string_clauseelement_dict(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">element.values()</span>
+
+    <span class="s2">def </span><span class="s1">visit_fromclause_ordered_set(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">element</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_unordered_set(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">element</span>
+
+    <span class="s2">def </span><span class="s1">visit_setup_join_tuple(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">for </span><span class="s1">target</span><span class="s4">, </span><span class="s1">onclause</span><span class="s4">, </span><span class="s1">from_</span><span class="s4">, </span><span class="s1">flags </span><span class="s2">in </span><span class="s1">element:</span>
+            <span class="s2">if </span><span class="s1">from_ </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s2">yield </span><span class="s1">from_</span>
+
+            <span class="s2">if not </span><span class="s1">isinstance(target</span><span class="s4">, </span><span class="s1">str):</span>
+                <span class="s2">yield </span><span class="s1">_flatten_clauseelement(target)</span>
+
+            <span class="s2">if </span><span class="s1">onclause </span><span class="s2">is not None and not </span><span class="s1">isinstance(onclause</span><span class="s4">, </span><span class="s1">str):</span>
+                <span class="s2">yield </span><span class="s1">_flatten_clauseelement(onclause)</span>
+
+    <span class="s2">def </span><span class="s1">visit_memoized_select_entities(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">self.visit_clauseelement_tuple(element</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_ordered_values(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">for </span><span class="s1">k</span><span class="s4">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">element:</span>
+            <span class="s2">if </span><span class="s1">hasattr(k</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">):</span>
+                <span class="s2">yield </span><span class="s1">k</span>
+            <span class="s2">yield </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_values(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">expr_values = {k </span><span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">element </span><span class="s2">if </span><span class="s1">hasattr(k</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)}</span>
+        <span class="s1">str_values = expr_values.symmetric_difference(element)</span>
+
+        <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">sorted(str_values):</span>
+            <span class="s2">yield </span><span class="s1">element[k]</span>
+        <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">expr_values:</span>
+            <span class="s2">yield </span><span class="s1">k</span>
+            <span class="s2">yield </span><span class="s1">element[k]</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_multi_values(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">()</span>
+
+    <span class="s2">def </span><span class="s1">visit_propagate_attrs(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">()</span>
+
+
+<span class="s1">_get_children = _GetChildrenTraversal()</span>
+
+
+<span class="s1">@util.preload_module(</span><span class="s3">&quot;sqlalchemy.sql.elements&quot;</span><span class="s1">)</span>
+<span class="s2">def </span><span class="s1">_resolve_name_for_compare(element</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">anon_map</span><span class="s4">, </span><span class="s1">**kw):</span>
+    <span class="s2">if </span><span class="s1">isinstance(name</span><span class="s4">, </span><span class="s1">util.preloaded.sql_elements._anonymous_label):</span>
+        <span class="s1">name = name.apply_map(anon_map)</span>
+
+    <span class="s2">return </span><span class="s1">name</span>
+
+
+<span class="s2">class </span><span class="s1">TraversalComparatorStrategy(HasTraversalDispatch</span><span class="s4">, </span><span class="s1">util.MemoizedSlots):</span>
+    <span class="s1">__slots__ = </span><span class="s3">&quot;stack&quot;</span><span class="s4">, </span><span class="s3">&quot;cache&quot;</span><span class="s4">, </span><span class="s3">&quot;anon_map&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self):</span>
+        <span class="s1">self.stack: Deque[</span>
+            <span class="s1">Tuple[</span>
+                <span class="s1">Optional[ExternallyTraversible]</span><span class="s4">,</span>
+                <span class="s1">Optional[ExternallyTraversible]</span><span class="s4">,</span>
+            <span class="s1">]</span>
+        <span class="s1">] = deque()</span>
+        <span class="s1">self.cache = set()</span>
+
+    <span class="s2">def </span><span class="s1">_memoized_attr_anon_map(self):</span>
+        <span class="s2">return </span><span class="s1">(anon_map()</span><span class="s4">, </span><span class="s1">anon_map())</span>
+
+    <span class="s2">def </span><span class="s1">compare(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">obj1: ExternallyTraversible</span><span class="s4">,</span>
+        <span class="s1">obj2: ExternallyTraversible</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s1">stack = self.stack</span>
+        <span class="s1">cache = self.cache</span>
+
+        <span class="s1">compare_annotations = kw.get(</span><span class="s3">&quot;compare_annotations&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+
+        <span class="s1">stack.append((obj1</span><span class="s4">, </span><span class="s1">obj2))</span>
+
+        <span class="s2">while </span><span class="s1">stack:</span>
+            <span class="s1">left</span><span class="s4">, </span><span class="s1">right = stack.popleft()</span>
+
+            <span class="s2">if </span><span class="s1">left </span><span class="s2">is </span><span class="s1">right:</span>
+                <span class="s2">continue</span>
+            <span class="s2">elif </span><span class="s1">left </span><span class="s2">is None or </span><span class="s1">right </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s0"># we know they are different so no match</span>
+                <span class="s2">return False</span>
+            <span class="s2">elif </span><span class="s1">(left</span><span class="s4">, </span><span class="s1">right) </span><span class="s2">in </span><span class="s1">cache:</span>
+                <span class="s2">continue</span>
+            <span class="s1">cache.add((left</span><span class="s4">, </span><span class="s1">right))</span>
+
+            <span class="s1">visit_name = left.__visit_name__</span>
+            <span class="s2">if </span><span class="s1">visit_name != right.__visit_name__:</span>
+                <span class="s2">return False</span>
+
+            <span class="s1">meth = getattr(self</span><span class="s4">, </span><span class="s3">&quot;compare_%s&quot; </span><span class="s1">% visit_name</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+
+            <span class="s2">if </span><span class="s1">meth:</span>
+                <span class="s1">attributes_compared = meth(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw)</span>
+                <span class="s2">if </span><span class="s1">attributes_compared </span><span class="s2">is </span><span class="s1">COMPARE_FAILED:</span>
+                    <span class="s2">return False</span>
+                <span class="s2">elif </span><span class="s1">attributes_compared </span><span class="s2">is </span><span class="s1">SKIP_TRAVERSE:</span>
+                    <span class="s2">continue</span>
+
+                <span class="s0"># attributes_compared is returned as a list of attribute</span>
+                <span class="s0"># names that were &quot;handled&quot; by the comparison method above.</span>
+                <span class="s0"># remaining attribute names in the _traverse_internals</span>
+                <span class="s0"># will be compared.</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">attributes_compared = ()</span>
+
+            <span class="s2">for </span><span class="s1">(</span>
+                <span class="s1">(left_attrname</span><span class="s4">, </span><span class="s1">left_visit_sym)</span><span class="s4">,</span>
+                <span class="s1">(right_attrname</span><span class="s4">, </span><span class="s1">right_visit_sym)</span><span class="s4">,</span>
+            <span class="s1">) </span><span class="s2">in </span><span class="s1">zip_longest(</span>
+                <span class="s1">left._traverse_internals</span><span class="s4">,</span>
+                <span class="s1">right._traverse_internals</span><span class="s4">,</span>
+                <span class="s1">fillvalue=(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">):</span>
+                <span class="s2">if not </span><span class="s1">compare_annotations </span><span class="s2">and </span><span class="s1">(</span>
+                    <span class="s1">(left_attrname == </span><span class="s3">&quot;_annotations&quot;</span><span class="s1">)</span>
+                    <span class="s2">or </span><span class="s1">(right_attrname == </span><span class="s3">&quot;_annotations&quot;</span><span class="s1">)</span>
+                <span class="s1">):</span>
+                    <span class="s2">continue</span>
+
+                <span class="s2">if </span><span class="s1">(</span>
+                    <span class="s1">left_attrname != right_attrname</span>
+                    <span class="s2">or </span><span class="s1">left_visit_sym </span><span class="s2">is not </span><span class="s1">right_visit_sym</span>
+                <span class="s1">):</span>
+                    <span class="s2">return False</span>
+                <span class="s2">elif </span><span class="s1">left_attrname </span><span class="s2">in </span><span class="s1">attributes_compared:</span>
+                    <span class="s2">continue</span>
+
+                <span class="s2">assert </span><span class="s1">left_visit_sym </span><span class="s2">is not None</span>
+                <span class="s2">assert </span><span class="s1">left_attrname </span><span class="s2">is not None</span>
+                <span class="s2">assert </span><span class="s1">right_attrname </span><span class="s2">is not None</span>
+
+                <span class="s1">dispatch = self.dispatch(left_visit_sym)</span>
+                <span class="s2">assert </span><span class="s1">dispatch </span><span class="s2">is not None</span><span class="s4">, </span><span class="s1">(</span>
+                    <span class="s3">f&quot;</span><span class="s6">{</span><span class="s1">self.__class__</span><span class="s6">} </span><span class="s3">has no dispatch for &quot;</span>
+                    <span class="s3">f&quot;'</span><span class="s6">{</span><span class="s1">self._dispatch_lookup[left_visit_sym]</span><span class="s6">}</span><span class="s3">'&quot;</span>
+                <span class="s1">)</span>
+                <span class="s1">left_child = operator.attrgetter(left_attrname)(left)</span>
+                <span class="s1">right_child = operator.attrgetter(right_attrname)(right)</span>
+                <span class="s2">if </span><span class="s1">left_child </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">right_child </span><span class="s2">is not None</span><span class="s1">:</span>
+                        <span class="s2">return False</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s2">continue</span>
+                <span class="s2">elif </span><span class="s1">right_child </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s2">return False</span>
+
+                <span class="s1">comparison = dispatch(</span>
+                    <span class="s1">left_attrname</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">left_child</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">right_child</span><span class="s4">, </span><span class="s1">**kw</span>
+                <span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">comparison </span><span class="s2">is </span><span class="s1">COMPARE_FAILED:</span>
+                    <span class="s2">return False</span>
+
+        <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">compare_inner(self</span><span class="s4">, </span><span class="s1">obj1</span><span class="s4">, </span><span class="s1">obj2</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">comparator = self.__class__()</span>
+        <span class="s2">return </span><span class="s1">comparator.compare(obj1</span><span class="s4">, </span><span class="s1">obj2</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">visit_has_cache_key(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">left._gen_cache_key(self.anon_map[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[]) != right._gen_cache_key(</span>
+            <span class="s1">self.anon_map[</span><span class="s7">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[]</span>
+        <span class="s1">):</span>
+            <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">visit_propagate_attrs(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">self.compare_inner(</span>
+            <span class="s1">left.get(</span><span class="s3">&quot;plugin_subject&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span><span class="s4">, </span><span class="s1">right.get(</span><span class="s3">&quot;plugin_subject&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_has_cache_key_list(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s2">in </span><span class="s1">zip_longest(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">l </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">r </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">continue</span>
+            <span class="s2">elif </span><span class="s1">r </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+            <span class="s2">if </span><span class="s1">l._gen_cache_key(self.anon_map[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[]) != r._gen_cache_key(</span>
+                <span class="s1">self.anon_map[</span><span class="s7">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[]</span>
+            <span class="s1">):</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">visit_executable_options(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s2">in </span><span class="s1">zip_longest(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">l </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">r </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">continue</span>
+            <span class="s2">elif </span><span class="s1">r </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+            <span class="s2">if </span><span class="s1">(</span>
+                <span class="s1">l._gen_cache_key(self.anon_map[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[])</span>
+                <span class="s2">if </span><span class="s1">l._is_has_cache_key</span>
+                <span class="s2">else </span><span class="s1">l</span>
+            <span class="s1">) != (</span>
+                <span class="s1">r._gen_cache_key(self.anon_map[</span><span class="s7">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[])</span>
+                <span class="s2">if </span><span class="s1">r._is_has_cache_key</span>
+                <span class="s2">else </span><span class="s1">r</span>
+            <span class="s1">):</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s1">self.stack.append((left</span><span class="s4">, </span><span class="s1">right))</span>
+
+    <span class="s2">def </span><span class="s1">visit_fromclause_canonical_column_collection(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">lcol</span><span class="s4">, </span><span class="s1">rcol </span><span class="s2">in </span><span class="s1">zip_longest(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s1">self.stack.append((lcol</span><span class="s4">, </span><span class="s1">rcol))</span>
+
+    <span class="s2">def </span><span class="s1">visit_fromclause_derived_column_collection(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">visit_string_clauseelement_dict(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">lstr</span><span class="s4">, </span><span class="s1">rstr </span><span class="s2">in </span><span class="s1">zip_longest(</span>
+            <span class="s1">sorted(left)</span><span class="s4">, </span><span class="s1">sorted(right)</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">lstr != rstr:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+            <span class="s1">self.stack.append((left[lstr]</span><span class="s4">, </span><span class="s1">right[rstr]))</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_tuples(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">ltup</span><span class="s4">, </span><span class="s1">rtup </span><span class="s2">in </span><span class="s1">zip_longest(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">ltup </span><span class="s2">is None or </span><span class="s1">rtup </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+            <span class="s2">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s2">in </span><span class="s1">zip_longest(ltup</span><span class="s4">, </span><span class="s1">rtup</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+                <span class="s1">self.stack.append((l</span><span class="s4">, </span><span class="s1">r))</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_list(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s2">in </span><span class="s1">zip_longest(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s1">self.stack.append((l</span><span class="s4">, </span><span class="s1">r))</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_tuple(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s2">in </span><span class="s1">zip_longest(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s1">self.stack.append((l</span><span class="s4">, </span><span class="s1">r))</span>
+
+    <span class="s2">def </span><span class="s1">_compare_unordered_sequences(self</span><span class="s4">, </span><span class="s1">seq1</span><span class="s4">, </span><span class="s1">seq2</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">seq1 </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">seq2 </span><span class="s2">is None</span>
+
+        <span class="s1">completed: Set[object] = set()</span>
+        <span class="s2">for </span><span class="s1">clause </span><span class="s2">in </span><span class="s1">seq1:</span>
+            <span class="s2">for </span><span class="s1">other_clause </span><span class="s2">in </span><span class="s1">set(seq2).difference(completed):</span>
+                <span class="s2">if </span><span class="s1">self.compare_inner(clause</span><span class="s4">, </span><span class="s1">other_clause</span><span class="s4">, </span><span class="s1">**kw):</span>
+                    <span class="s1">completed.add(other_clause)</span>
+                    <span class="s2">break</span>
+        <span class="s2">return </span><span class="s1">len(completed) == len(seq1) == len(seq2)</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_unordered_set(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">self._compare_unordered_sequences(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">visit_fromclause_ordered_set(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s2">in </span><span class="s1">zip_longest(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s1">self.stack.append((l</span><span class="s4">, </span><span class="s1">r))</span>
+
+    <span class="s2">def </span><span class="s1">visit_string(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_string_list(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_string_multi_dict(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">lk</span><span class="s4">, </span><span class="s1">rk </span><span class="s2">in </span><span class="s1">zip_longest(</span>
+            <span class="s1">sorted(left.keys())</span><span class="s4">, </span><span class="s1">sorted(right.keys())</span><span class="s4">, </span><span class="s1">fillvalue=(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">lk != rk:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+            <span class="s1">lv</span><span class="s4">, </span><span class="s1">rv = left[lk]</span><span class="s4">, </span><span class="s1">right[rk]</span>
+
+            <span class="s1">lhc = isinstance(left</span><span class="s4">, </span><span class="s1">HasCacheKey)</span>
+            <span class="s1">rhc = isinstance(right</span><span class="s4">, </span><span class="s1">HasCacheKey)</span>
+            <span class="s2">if </span><span class="s1">lhc </span><span class="s2">and </span><span class="s1">rhc:</span>
+                <span class="s2">if </span><span class="s1">lv._gen_cache_key(</span>
+                    <span class="s1">self.anon_map[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[]</span>
+                <span class="s1">) != rv._gen_cache_key(self.anon_map[</span><span class="s7">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[]):</span>
+                    <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+            <span class="s2">elif </span><span class="s1">lhc != rhc:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+            <span class="s2">elif </span><span class="s1">lv != rv:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">visit_multi(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s1">lhc = isinstance(left</span><span class="s4">, </span><span class="s1">HasCacheKey)</span>
+        <span class="s1">rhc = isinstance(right</span><span class="s4">, </span><span class="s1">HasCacheKey)</span>
+        <span class="s2">if </span><span class="s1">lhc </span><span class="s2">and </span><span class="s1">rhc:</span>
+            <span class="s2">if </span><span class="s1">left._gen_cache_key(</span>
+                <span class="s1">self.anon_map[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[]</span>
+            <span class="s1">) != right._gen_cache_key(self.anon_map[</span><span class="s7">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">[]):</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+        <span class="s2">elif </span><span class="s1">lhc != rhc:</span>
+            <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_anon_name(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">_resolve_name_for_compare(</span>
+            <span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">self.anon_map[</span><span class="s7">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">**kw</span>
+        <span class="s1">) == _resolve_name_for_compare(</span>
+            <span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">self.anon_map[</span><span class="s7">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_boolean(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_operator(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_type(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">left._compare_type_affinity(right)</span>
+
+    <span class="s2">def </span><span class="s1">visit_plain_dict(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_dialect_options(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_annotations_key(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">left </span><span class="s2">and </span><span class="s1">right:</span>
+            <span class="s2">return </span><span class="s1">(</span>
+                <span class="s1">left_parent._annotations_cache_key</span>
+                <span class="s1">== right_parent._annotations_cache_key</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_with_context_options(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">tuple((fn.__code__</span><span class="s4">, </span><span class="s1">c_key) </span><span class="s2">for </span><span class="s1">fn</span><span class="s4">, </span><span class="s1">c_key </span><span class="s2">in </span><span class="s1">left) == tuple(</span>
+            <span class="s1">(fn.__code__</span><span class="s4">, </span><span class="s1">c_key) </span><span class="s2">for </span><span class="s1">fn</span><span class="s4">, </span><span class="s1">c_key </span><span class="s2">in </span><span class="s1">right</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_plain_obj(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_named_ddl_element(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">left </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">right </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+        <span class="s2">return </span><span class="s1">left.name == right.name</span>
+
+    <span class="s2">def </span><span class="s1">visit_prefix_sequence(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">(l_clause</span><span class="s4">, </span><span class="s1">l_str)</span><span class="s4">, </span><span class="s1">(r_clause</span><span class="s4">, </span><span class="s1">r_str) </span><span class="s2">in </span><span class="s1">zip_longest(</span>
+            <span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">l_str != r_str:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.stack.append((l_clause</span><span class="s4">, </span><span class="s1">r_clause))</span>
+
+    <span class="s2">def </span><span class="s1">visit_setup_join_tuple(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s0"># TODO: look at attrname for &quot;legacy_join&quot; and use different structure</span>
+        <span class="s2">for </span><span class="s1">(</span>
+            <span class="s1">(l_target</span><span class="s4">, </span><span class="s1">l_onclause</span><span class="s4">, </span><span class="s1">l_from</span><span class="s4">, </span><span class="s1">l_flags)</span><span class="s4">,</span>
+            <span class="s1">(r_target</span><span class="s4">, </span><span class="s1">r_onclause</span><span class="s4">, </span><span class="s1">r_from</span><span class="s4">, </span><span class="s1">r_flags)</span><span class="s4">,</span>
+        <span class="s1">) </span><span class="s2">in </span><span class="s1">zip_longest(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)):</span>
+            <span class="s2">if </span><span class="s1">l_flags != r_flags:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+            <span class="s1">self.stack.append((l_target</span><span class="s4">, </span><span class="s1">r_target))</span>
+            <span class="s1">self.stack.append((l_onclause</span><span class="s4">, </span><span class="s1">r_onclause))</span>
+            <span class="s1">self.stack.append((l_from</span><span class="s4">, </span><span class="s1">r_from))</span>
+
+    <span class="s2">def </span><span class="s1">visit_memoized_select_entities(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">self.visit_clauseelement_tuple(</span>
+            <span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_table_hint_list(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s1">left_keys = sorted(left</span><span class="s4">, </span><span class="s1">key=</span><span class="s2">lambda </span><span class="s1">elem: (elem[</span><span class="s7">0</span><span class="s1">].fullname</span><span class="s4">, </span><span class="s1">elem[</span><span class="s7">1</span><span class="s1">]))</span>
+        <span class="s1">right_keys = sorted(</span>
+            <span class="s1">right</span><span class="s4">, </span><span class="s1">key=</span><span class="s2">lambda </span><span class="s1">elem: (elem[</span><span class="s7">0</span><span class="s1">].fullname</span><span class="s4">, </span><span class="s1">elem[</span><span class="s7">1</span><span class="s1">])</span>
+        <span class="s1">)</span>
+        <span class="s2">for </span><span class="s1">(ltable</span><span class="s4">, </span><span class="s1">ldialect)</span><span class="s4">, </span><span class="s1">(rtable</span><span class="s4">, </span><span class="s1">rdialect) </span><span class="s2">in </span><span class="s1">zip_longest(</span>
+            <span class="s1">left_keys</span><span class="s4">, </span><span class="s1">right_keys</span><span class="s4">, </span><span class="s1">fillvalue=(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">ldialect != rdialect:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+            <span class="s2">elif </span><span class="s1">left[(ltable</span><span class="s4">, </span><span class="s1">ldialect)] != right[(rtable</span><span class="s4">, </span><span class="s1">rdialect)]:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.stack.append((ltable</span><span class="s4">, </span><span class="s1">rtable))</span>
+
+    <span class="s2">def </span><span class="s1">visit_statement_hint_list(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">left == right</span>
+
+    <span class="s2">def </span><span class="s1">visit_unknown_structure(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_ordered_values(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s0"># sequence of tuple pairs</span>
+
+        <span class="s2">for </span><span class="s1">(lk</span><span class="s4">, </span><span class="s1">lv)</span><span class="s4">, </span><span class="s1">(rk</span><span class="s4">, </span><span class="s1">rv) </span><span class="s2">in </span><span class="s1">zip_longest(</span>
+            <span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=(</span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s2">if not </span><span class="s1">self._compare_dml_values_or_ce(lk</span><span class="s4">, </span><span class="s1">rk</span><span class="s4">, </span><span class="s1">**kw):</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">_compare_dml_values_or_ce(self</span><span class="s4">, </span><span class="s1">lv</span><span class="s4">, </span><span class="s1">rv</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">lvce = hasattr(lv</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+        <span class="s1">rvce = hasattr(rv</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">lvce != rvce:</span>
+            <span class="s2">return False</span>
+        <span class="s2">elif </span><span class="s1">lvce </span><span class="s2">and not </span><span class="s1">self.compare_inner(lv</span><span class="s4">, </span><span class="s1">rv</span><span class="s4">, </span><span class="s1">**kw):</span>
+            <span class="s2">return False</span>
+        <span class="s2">elif not </span><span class="s1">lvce </span><span class="s2">and </span><span class="s1">lv != rv:</span>
+            <span class="s2">return False</span>
+        <span class="s2">elif not </span><span class="s1">self.compare_inner(lv</span><span class="s4">, </span><span class="s1">rv</span><span class="s4">, </span><span class="s1">**kw):</span>
+            <span class="s2">return False</span>
+
+        <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_values(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">left </span><span class="s2">is None or </span><span class="s1">right </span><span class="s2">is None or </span><span class="s1">len(left) != len(right):</span>
+            <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+        <span class="s2">if </span><span class="s1">isinstance(left</span><span class="s4">, </span><span class="s1">collections_abc.Sequence):</span>
+            <span class="s2">for </span><span class="s1">lv</span><span class="s4">, </span><span class="s1">rv </span><span class="s2">in </span><span class="s1">zip(left</span><span class="s4">, </span><span class="s1">right):</span>
+                <span class="s2">if not </span><span class="s1">self._compare_dml_values_or_ce(lv</span><span class="s4">, </span><span class="s1">rv</span><span class="s4">, </span><span class="s1">**kw):</span>
+                    <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+        <span class="s2">elif </span><span class="s1">isinstance(right</span><span class="s4">, </span><span class="s1">collections_abc.Sequence):</span>
+            <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># dictionaries guaranteed to support insert ordering in</span>
+            <span class="s0"># py37 so that we can compare the keys in order.  without</span>
+            <span class="s0"># this, we can't compare SQL expression keys because we don't</span>
+            <span class="s0"># know which key is which</span>
+            <span class="s2">for </span><span class="s1">(lk</span><span class="s4">, </span><span class="s1">lv)</span><span class="s4">, </span><span class="s1">(rk</span><span class="s4">, </span><span class="s1">rv) </span><span class="s2">in </span><span class="s1">zip(left.items()</span><span class="s4">, </span><span class="s1">right.items()):</span>
+                <span class="s2">if not </span><span class="s1">self._compare_dml_values_or_ce(lk</span><span class="s4">, </span><span class="s1">rk</span><span class="s4">, </span><span class="s1">**kw):</span>
+                    <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+                <span class="s2">if not </span><span class="s1">self._compare_dml_values_or_ce(lv</span><span class="s4">, </span><span class="s1">rv</span><span class="s4">, </span><span class="s1">**kw):</span>
+                    <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_multi_values(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">lseq</span><span class="s4">, </span><span class="s1">rseq </span><span class="s2">in </span><span class="s1">zip_longest(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">lseq </span><span class="s2">is None or </span><span class="s1">rseq </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+            <span class="s2">for </span><span class="s1">ld</span><span class="s4">, </span><span class="s1">rd </span><span class="s2">in </span><span class="s1">zip_longest(lseq</span><span class="s4">, </span><span class="s1">rseq</span><span class="s4">, </span><span class="s1">fillvalue=</span><span class="s2">None</span><span class="s1">):</span>
+                <span class="s2">if </span><span class="s1">(</span>
+                    <span class="s1">self.visit_dml_values(</span>
+                        <span class="s1">attrname</span><span class="s4">, </span><span class="s1">left_parent</span><span class="s4">, </span><span class="s1">ld</span><span class="s4">, </span><span class="s1">right_parent</span><span class="s4">, </span><span class="s1">rd</span><span class="s4">, </span><span class="s1">**kw</span>
+                    <span class="s1">)</span>
+                    <span class="s2">is </span><span class="s1">COMPARE_FAILED</span>
+                <span class="s1">):</span>
+                    <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">compare_expression_clauselist(self</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">left.operator </span><span class="s2">is </span><span class="s1">right.operator:</span>
+            <span class="s2">if </span><span class="s1">operators.is_associative(left.operator):</span>
+                <span class="s2">if </span><span class="s1">self._compare_unordered_sequences(</span>
+                    <span class="s1">left.clauses</span><span class="s4">, </span><span class="s1">right.clauses</span><span class="s4">, </span><span class="s1">**kw</span>
+                <span class="s1">):</span>
+                    <span class="s2">return </span><span class="s1">[</span><span class="s3">&quot;operator&quot;</span><span class="s4">, </span><span class="s3">&quot;clauses&quot;</span><span class="s1">]</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">[</span><span class="s3">&quot;operator&quot;</span><span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">compare_clauselist(self</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">self.compare_expression_clauselist(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">compare_binary(self</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">left.operator == right.operator:</span>
+            <span class="s2">if </span><span class="s1">operators.is_commutative(left.operator):</span>
+                <span class="s2">if </span><span class="s1">(</span>
+                    <span class="s1">self.compare_inner(left.left</span><span class="s4">, </span><span class="s1">right.left</span><span class="s4">, </span><span class="s1">**kw)</span>
+                    <span class="s2">and </span><span class="s1">self.compare_inner(left.right</span><span class="s4">, </span><span class="s1">right.right</span><span class="s4">, </span><span class="s1">**kw)</span>
+                <span class="s1">) </span><span class="s2">or </span><span class="s1">(</span>
+                    <span class="s1">self.compare_inner(left.left</span><span class="s4">, </span><span class="s1">right.right</span><span class="s4">, </span><span class="s1">**kw)</span>
+                    <span class="s2">and </span><span class="s1">self.compare_inner(left.right</span><span class="s4">, </span><span class="s1">right.left</span><span class="s4">, </span><span class="s1">**kw)</span>
+                <span class="s1">):</span>
+                    <span class="s2">return </span><span class="s1">[</span><span class="s3">&quot;operator&quot;</span><span class="s4">, </span><span class="s3">&quot;negate&quot;</span><span class="s4">, </span><span class="s3">&quot;left&quot;</span><span class="s4">, </span><span class="s3">&quot;right&quot;</span><span class="s1">]</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">[</span><span class="s3">&quot;operator&quot;</span><span class="s4">, </span><span class="s3">&quot;negate&quot;</span><span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">compare_bindparam(self</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">compare_keys = kw.pop(</span><span class="s3">&quot;compare_keys&quot;</span><span class="s4">, </span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s1">compare_values = kw.pop(</span><span class="s3">&quot;compare_values&quot;</span><span class="s4">, </span><span class="s2">True</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">compare_values:</span>
+            <span class="s1">omit = []</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># this means, &quot;skip these, we already compared&quot;</span>
+            <span class="s1">omit = [</span><span class="s3">&quot;callable&quot;</span><span class="s4">, </span><span class="s3">&quot;value&quot;</span><span class="s1">]</span>
+
+        <span class="s2">if not </span><span class="s1">compare_keys:</span>
+            <span class="s1">omit.append(</span><span class="s3">&quot;key&quot;</span><span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">omit</span>
+
+
+<span class="s2">class </span><span class="s1">ColIdentityComparatorStrategy(TraversalComparatorStrategy):</span>
+    <span class="s2">def </span><span class="s1">compare_column_element(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">use_proxies=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">equivalents=()</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot;Compare ColumnElements using proxies and equivalent collections. 
+ 
+        This is a comparison strategy specific to the ORM. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">to_compare = (right</span><span class="s4">,</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">equivalents </span><span class="s2">and </span><span class="s1">right </span><span class="s2">in </span><span class="s1">equivalents:</span>
+            <span class="s1">to_compare = equivalents[right].union(to_compare)</span>
+
+        <span class="s2">for </span><span class="s1">oth </span><span class="s2">in </span><span class="s1">to_compare:</span>
+            <span class="s2">if </span><span class="s1">use_proxies </span><span class="s2">and </span><span class="s1">left.shares_lineage(oth):</span>
+                <span class="s2">return </span><span class="s1">SKIP_TRAVERSE</span>
+            <span class="s2">elif </span><span class="s1">hash(left) == hash(right):</span>
+                <span class="s2">return </span><span class="s1">SKIP_TRAVERSE</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">COMPARE_FAILED</span>
+
+    <span class="s2">def </span><span class="s1">compare_column(self</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">self.compare_column_element(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">compare_label(self</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">self.compare_column_element(left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">compare_table(self</span><span class="s4">, </span><span class="s1">left</span><span class="s4">, </span><span class="s1">right</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s0"># tables compare on identity, since it's not really feasible to</span>
+        <span class="s0"># compare them column by column with the above rules</span>
+        <span class="s2">return </span><span class="s1">SKIP_TRAVERSE </span><span class="s2">if </span><span class="s1">left </span><span class="s2">is </span><span class="s1">right </span><span class="s2">else </span><span class="s1">COMPARE_FAILED</span>
+</pre>
+</body>
+</html>

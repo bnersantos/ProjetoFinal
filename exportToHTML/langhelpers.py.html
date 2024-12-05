@@ -1,0 +1,2242 @@
+<html>
+<head>
+<title>langhelpers.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+langhelpers.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># util/langhelpers.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">&quot;&quot;&quot;Routines to help with the creation, loading and introspection of 
+modules, classes, hierarchies, attributes, functions, and methods. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">collections</span>
+<span class="s3">import </span><span class="s1">enum</span>
+<span class="s3">from </span><span class="s1">functools </span><span class="s3">import </span><span class="s1">update_wrapper</span>
+<span class="s3">import </span><span class="s1">inspect</span>
+<span class="s3">import </span><span class="s1">itertools</span>
+<span class="s3">import </span><span class="s1">operator</span>
+<span class="s3">import </span><span class="s1">re</span>
+<span class="s3">import </span><span class="s1">sys</span>
+<span class="s3">import </span><span class="s1">textwrap</span>
+<span class="s3">import </span><span class="s1">threading</span>
+<span class="s3">import </span><span class="s1">types</span>
+<span class="s3">from </span><span class="s1">types </span><span class="s3">import </span><span class="s1">CodeType</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">FrozenSet</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generic</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">warnings</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">_collections</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">compat</span>
+<span class="s3">from </span><span class="s1">._has_cy </span><span class="s3">import </span><span class="s1">HAS_CYEXTENSION</span>
+<span class="s3">from </span><span class="s1">.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s1">)</span>
+<span class="s1">_T_co = TypeVar(</span><span class="s4">&quot;_T_co&quot;</span><span class="s5">, </span><span class="s1">covariant=</span><span class="s3">True</span><span class="s1">)</span>
+<span class="s1">_F = TypeVar(</span><span class="s4">&quot;_F&quot;</span><span class="s5">, </span><span class="s1">bound=Callable[...</span><span class="s5">, </span><span class="s1">Any])</span>
+<span class="s1">_MP = TypeVar(</span><span class="s4">&quot;_MP&quot;</span><span class="s5">, </span><span class="s1">bound=</span><span class="s4">&quot;memoized_property[Any]&quot;</span><span class="s1">)</span>
+<span class="s1">_MA = TypeVar(</span><span class="s4">&quot;_MA&quot;</span><span class="s5">, </span><span class="s1">bound=</span><span class="s4">&quot;HasMemoized.memoized_attribute[Any]&quot;</span><span class="s1">)</span>
+<span class="s1">_HP = TypeVar(</span><span class="s4">&quot;_HP&quot;</span><span class="s5">, </span><span class="s1">bound=</span><span class="s4">&quot;hybridproperty[Any]&quot;</span><span class="s1">)</span>
+<span class="s1">_HM = TypeVar(</span><span class="s4">&quot;_HM&quot;</span><span class="s5">, </span><span class="s1">bound=</span><span class="s4">&quot;hybridmethod[Any]&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">if </span><span class="s1">compat.py310:</span>
+
+    <span class="s3">def </span><span class="s1">get_annotations(obj: Any) -&gt; Mapping[str</span><span class="s5">, </span><span class="s1">Any]:</span>
+        <span class="s3">return </span><span class="s1">inspect.get_annotations(obj)</span>
+
+<span class="s3">else</span><span class="s1">:</span>
+
+    <span class="s3">def </span><span class="s1">get_annotations(obj: Any) -&gt; Mapping[str</span><span class="s5">, </span><span class="s1">Any]:</span>
+        <span class="s0"># it's been observed that cls.__annotations__ can be non present.</span>
+        <span class="s0"># it's not clear what causes this, running under tox py37/38 it</span>
+        <span class="s0"># happens, running straight pytest it doesnt</span>
+
+        <span class="s0"># https://docs.python.org/3/howto/annotations.html#annotations-howto</span>
+        <span class="s3">if </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">type):</span>
+            <span class="s1">ann = obj.__dict__.get(</span><span class="s4">&quot;__annotations__&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">ann = getattr(obj</span><span class="s5">, </span><span class="s4">&quot;__annotations__&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">ann </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">_collections.EMPTY_DICT</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">cast(</span><span class="s4">&quot;Mapping[str, Any]&quot;</span><span class="s5">, </span><span class="s1">ann)</span>
+
+
+<span class="s3">def </span><span class="s1">md5_hex(x: Any) -&gt; str:</span>
+    <span class="s1">x = x.encode(</span><span class="s4">&quot;utf-8&quot;</span><span class="s1">)</span>
+    <span class="s1">m = compat.md5_not_for_security()</span>
+    <span class="s1">m.update(x)</span>
+    <span class="s3">return </span><span class="s1">cast(str</span><span class="s5">, </span><span class="s1">m.hexdigest())</span>
+
+
+<span class="s3">class </span><span class="s1">safe_reraise:</span>
+    <span class="s2">&quot;&quot;&quot;Reraise an exception after invoking some 
+    handler code. 
+ 
+    Stores the existing exception info before 
+    invoking so that it is maintained across a potential 
+    coroutine context switch. 
+ 
+    e.g.:: 
+ 
+        try: 
+            sess.commit() 
+        except: 
+            with safe_reraise(): 
+                sess.rollback() 
+ 
+    TODO: we should at some point evaluate current behaviors in this regard 
+    based on current greenlet, gevent/eventlet implementations in Python 3, and 
+    also see the degree to which our own asyncio (based on greenlet also) is 
+    impacted by this. .rollback() will cause IO / context switch to occur in 
+    all these scenarios; what happens to the exception context from an 
+    &quot;except:&quot; block if we don't explicitly store it? Original issue was #2703. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;_exc_info&quot;</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s1">_exc_info: Union[</span>
+        <span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">Tuple[</span>
+            <span class="s1">Type[BaseException]</span><span class="s5">,</span>
+            <span class="s1">BaseException</span><span class="s5">,</span>
+            <span class="s1">types.TracebackType</span><span class="s5">,</span>
+        <span class="s1">]</span><span class="s5">,</span>
+        <span class="s1">Tuple[</span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]</span><span class="s5">,</span>
+    <span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">__enter__(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._exc_info = sys.exc_info()</span>
+
+    <span class="s3">def </span><span class="s1">__exit__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">type_: Optional[Type[BaseException]]</span><span class="s5">,</span>
+        <span class="s1">value: Optional[BaseException]</span><span class="s5">,</span>
+        <span class="s1">traceback: Optional[types.TracebackType]</span><span class="s5">,</span>
+    <span class="s1">) -&gt; NoReturn:</span>
+        <span class="s3">assert </span><span class="s1">self._exc_info </span><span class="s3">is not None</span>
+        <span class="s0"># see #2703 for notes</span>
+        <span class="s3">if </span><span class="s1">type_ </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">exc_type</span><span class="s5">, </span><span class="s1">exc_value</span><span class="s5">, </span><span class="s1">exc_tb = self._exc_info</span>
+            <span class="s3">assert </span><span class="s1">exc_value </span><span class="s3">is not None</span>
+            <span class="s1">self._exc_info = </span><span class="s3">None  </span><span class="s0"># remove potential circular references</span>
+            <span class="s3">raise </span><span class="s1">exc_value.with_traceback(exc_tb)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._exc_info = </span><span class="s3">None  </span><span class="s0"># remove potential circular references</span>
+            <span class="s3">assert </span><span class="s1">value </span><span class="s3">is not None</span>
+            <span class="s3">raise </span><span class="s1">value.with_traceback(traceback)</span>
+
+
+<span class="s3">def </span><span class="s1">walk_subclasses(cls: Type[_T]) -&gt; Iterator[Type[_T]]:</span>
+    <span class="s1">seen: Set[Any] = set()</span>
+
+    <span class="s1">stack = [cls]</span>
+    <span class="s3">while </span><span class="s1">stack:</span>
+        <span class="s1">cls = stack.pop()</span>
+        <span class="s3">if </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">seen:</span>
+            <span class="s3">continue</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">seen.add(cls)</span>
+        <span class="s1">stack.extend(cls.__subclasses__())</span>
+        <span class="s3">yield </span><span class="s1">cls</span>
+
+
+<span class="s3">def </span><span class="s1">string_or_unprintable(element: Any) -&gt; str:</span>
+    <span class="s3">if </span><span class="s1">isinstance(element</span><span class="s5">, </span><span class="s1">str):</span>
+        <span class="s3">return </span><span class="s1">element</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">str(element)</span>
+        <span class="s3">except </span><span class="s1">Exception:</span>
+            <span class="s3">return </span><span class="s4">&quot;unprintable element %r&quot; </span><span class="s1">% element</span>
+
+
+<span class="s3">def </span><span class="s1">clsname_as_plain_name(</span>
+    <span class="s1">cls: Type[Any]</span><span class="s5">, </span><span class="s1">use_name: Optional[str] = </span><span class="s3">None</span>
+<span class="s1">) -&gt; str:</span>
+    <span class="s1">name = use_name </span><span class="s3">or </span><span class="s1">cls.__name__</span>
+    <span class="s3">return </span><span class="s4">&quot; &quot;</span><span class="s1">.join(n.lower() </span><span class="s3">for </span><span class="s1">n </span><span class="s3">in </span><span class="s1">re.findall(</span><span class="s4">r&quot;([A-Z][a-z]+|SQL)&quot;</span><span class="s5">, </span><span class="s1">name))</span>
+
+
+<span class="s3">def </span><span class="s1">method_is_overridden(</span>
+    <span class="s1">instance_or_cls: Union[Type[Any]</span><span class="s5">, </span><span class="s1">object]</span><span class="s5">,</span>
+    <span class="s1">against_method: Callable[...</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">,</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s2">&quot;&quot;&quot;Return True if the two class methods don't match.&quot;&quot;&quot;</span>
+
+    <span class="s3">if not </span><span class="s1">isinstance(instance_or_cls</span><span class="s5">, </span><span class="s1">type):</span>
+        <span class="s1">current_cls = instance_or_cls.__class__</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">current_cls = instance_or_cls</span>
+
+    <span class="s1">method_name = against_method.__name__</span>
+
+    <span class="s1">current_method: types.MethodType = getattr(current_cls</span><span class="s5">, </span><span class="s1">method_name)</span>
+
+    <span class="s3">return </span><span class="s1">current_method != against_method</span>
+
+
+<span class="s3">def </span><span class="s1">decode_slice(slc: slice) -&gt; Tuple[Any</span><span class="s5">, </span><span class="s1">...]:</span>
+    <span class="s2">&quot;&quot;&quot;decode a slice object as sent to __getitem__. 
+ 
+    takes into account the 2.5 __index__() method, basically. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">ret: List[Any] = []</span>
+    <span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">slc.start</span><span class="s5">, </span><span class="s1">slc.stop</span><span class="s5">, </span><span class="s1">slc.step:</span>
+        <span class="s3">if </span><span class="s1">hasattr(x</span><span class="s5">, </span><span class="s4">&quot;__index__&quot;</span><span class="s1">):</span>
+            <span class="s1">x = x.__index__()</span>
+        <span class="s1">ret.append(x)</span>
+    <span class="s3">return </span><span class="s1">tuple(ret)</span>
+
+
+<span class="s3">def </span><span class="s1">_unique_symbols(used: Sequence[str]</span><span class="s5">, </span><span class="s1">*bases: str) -&gt; Iterator[str]:</span>
+    <span class="s1">used_set = set(used)</span>
+    <span class="s3">for </span><span class="s1">base </span><span class="s3">in </span><span class="s1">bases:</span>
+        <span class="s1">pool = itertools.chain(</span>
+            <span class="s1">(base</span><span class="s5">,</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">map(</span><span class="s3">lambda </span><span class="s1">i: base + str(i)</span><span class="s5">, </span><span class="s1">range(</span><span class="s6">1000</span><span class="s1">))</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">for </span><span class="s1">sym </span><span class="s3">in </span><span class="s1">pool:</span>
+            <span class="s3">if </span><span class="s1">sym </span><span class="s3">not in </span><span class="s1">used_set:</span>
+                <span class="s1">used_set.add(sym)</span>
+                <span class="s3">yield </span><span class="s1">sym</span>
+                <span class="s3">break</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">NameError(</span><span class="s4">&quot;exhausted namespace for symbol base %s&quot; </span><span class="s1">% base)</span>
+
+
+<span class="s3">def </span><span class="s1">map_bits(fn: Callable[[int]</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">n: int) -&gt; Iterator[Any]:</span>
+    <span class="s2">&quot;&quot;&quot;Call the given function given each nonzero bit from n.&quot;&quot;&quot;</span>
+
+    <span class="s3">while </span><span class="s1">n:</span>
+        <span class="s1">b = n &amp; (~n + </span><span class="s6">1</span><span class="s1">)</span>
+        <span class="s3">yield </span><span class="s1">fn(b)</span>
+        <span class="s1">n ^= b</span>
+
+
+<span class="s1">_Fn = TypeVar(</span><span class="s4">&quot;_Fn&quot;</span><span class="s5">, </span><span class="s1">bound=</span><span class="s4">&quot;Callable[..., Any]&quot;</span><span class="s1">)</span>
+
+<span class="s0"># this seems to be in flux in recent mypy versions</span>
+
+
+<span class="s3">def </span><span class="s1">decorator(target: Callable[...</span><span class="s5">, </span><span class="s1">Any]) -&gt; Callable[[_Fn]</span><span class="s5">, </span><span class="s1">_Fn]:</span>
+    <span class="s2">&quot;&quot;&quot;A signature-matching decorator factory.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">decorate(fn: _Fn) -&gt; _Fn:</span>
+        <span class="s3">if not </span><span class="s1">inspect.isfunction(fn) </span><span class="s3">and not </span><span class="s1">inspect.ismethod(fn):</span>
+            <span class="s3">raise </span><span class="s1">Exception(</span><span class="s4">&quot;not a decoratable function&quot;</span><span class="s1">)</span>
+
+        <span class="s1">spec = compat.inspect_getfullargspec(fn)</span>
+        <span class="s1">env: Dict[str</span><span class="s5">, </span><span class="s1">Any] = {}</span>
+
+        <span class="s1">spec = _update_argspec_defaults_into_env(spec</span><span class="s5">, </span><span class="s1">env)</span>
+
+        <span class="s1">names = (</span>
+            <span class="s1">tuple(cast(</span><span class="s4">&quot;Tuple[str, ...]&quot;</span><span class="s5">, </span><span class="s1">spec[</span><span class="s6">0</span><span class="s1">]))</span>
+            <span class="s1">+ cast(</span><span class="s4">&quot;Tuple[str, ...]&quot;</span><span class="s5">, </span><span class="s1">spec[</span><span class="s6">1</span><span class="s1">:</span><span class="s6">3</span><span class="s1">])</span>
+            <span class="s1">+ (fn.__name__</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">targ_name</span><span class="s5">, </span><span class="s1">fn_name = _unique_symbols(names</span><span class="s5">, </span><span class="s4">&quot;target&quot;</span><span class="s5">, </span><span class="s4">&quot;fn&quot;</span><span class="s1">)</span>
+
+        <span class="s1">metadata: Dict[str</span><span class="s5">, </span><span class="s1">Optional[str]] = dict(target=targ_name</span><span class="s5">, </span><span class="s1">fn=fn_name)</span>
+        <span class="s1">metadata.update(format_argspec_plus(spec</span><span class="s5">, </span><span class="s1">grouped=</span><span class="s3">False</span><span class="s1">))</span>
+        <span class="s1">metadata[</span><span class="s4">&quot;name&quot;</span><span class="s1">] = fn.__name__</span>
+
+        <span class="s3">if </span><span class="s1">inspect.iscoroutinefunction(fn):</span>
+            <span class="s1">metadata[</span><span class="s4">&quot;prefix&quot;</span><span class="s1">] = </span><span class="s4">&quot;async &quot;</span>
+            <span class="s1">metadata[</span><span class="s4">&quot;target_prefix&quot;</span><span class="s1">] = </span><span class="s4">&quot;await &quot;</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">metadata[</span><span class="s4">&quot;prefix&quot;</span><span class="s1">] = </span><span class="s4">&quot;&quot;</span>
+            <span class="s1">metadata[</span><span class="s4">&quot;target_prefix&quot;</span><span class="s1">] = </span><span class="s4">&quot;&quot;</span>
+
+        <span class="s0"># look for __ positional arguments.  This is a convention in</span>
+        <span class="s0"># SQLAlchemy that arguments should be passed positionally</span>
+        <span class="s0"># rather than as keyword</span>
+        <span class="s0"># arguments.  note that apply_pos doesn't currently work in all cases</span>
+        <span class="s0"># such as when a kw-only indicator &quot;*&quot; is present, which is why</span>
+        <span class="s0"># we limit the use of this to just that case we can detect.  As we add</span>
+        <span class="s0"># more kinds of methods that use @decorator, things may have to</span>
+        <span class="s0"># be further improved in this area</span>
+        <span class="s3">if </span><span class="s4">&quot;__&quot; </span><span class="s3">in </span><span class="s1">repr(spec[</span><span class="s6">0</span><span class="s1">]):</span>
+            <span class="s1">code = (</span>
+                <span class="s4">&quot;&quot;&quot;</span><span class="s7">\ 
+</span><span class="s4">%(prefix)sdef %(name)s%(grouped_args)s: 
+    return %(target_prefix)s%(target)s(%(fn)s, %(apply_pos)s) 
+&quot;&quot;&quot;</span>
+                <span class="s1">% metadata</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">code = (</span>
+                <span class="s4">&quot;&quot;&quot;</span><span class="s7">\ 
+</span><span class="s4">%(prefix)sdef %(name)s%(grouped_args)s: 
+    return %(target_prefix)s%(target)s(%(fn)s, %(apply_kw)s) 
+&quot;&quot;&quot;</span>
+                <span class="s1">% metadata</span>
+            <span class="s1">)</span>
+
+        <span class="s1">mod = sys.modules[fn.__module__]</span>
+        <span class="s1">env.update(vars(mod))</span>
+        <span class="s1">env.update({targ_name: target</span><span class="s5">, </span><span class="s1">fn_name: fn</span><span class="s5">, </span><span class="s4">&quot;__name__&quot;</span><span class="s1">: fn.__module__})</span>
+
+        <span class="s1">decorated = cast(</span>
+            <span class="s1">types.FunctionType</span><span class="s5">,</span>
+            <span class="s1">_exec_code_in_env(code</span><span class="s5">, </span><span class="s1">env</span><span class="s5">, </span><span class="s1">fn.__name__)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">decorated.__defaults__ = getattr(fn</span><span class="s5">, </span><span class="s4">&quot;__func__&quot;</span><span class="s5">, </span><span class="s1">fn).__defaults__</span>
+
+        <span class="s1">decorated.__wrapped__ = fn  </span><span class="s0"># type: ignore[attr-defined]</span>
+        <span class="s3">return </span><span class="s1">update_wrapper(decorated</span><span class="s5">, </span><span class="s1">fn)  </span><span class="s0"># type: ignore[return-value]</span>
+
+    <span class="s3">return </span><span class="s1">update_wrapper(decorate</span><span class="s5">, </span><span class="s1">target)  </span><span class="s0"># type: ignore[return-value]</span>
+
+
+<span class="s3">def </span><span class="s1">_update_argspec_defaults_into_env(spec</span><span class="s5">, </span><span class="s1">env):</span>
+    <span class="s2">&quot;&quot;&quot;given a FullArgSpec, convert defaults to be symbol names in an env.&quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">spec.defaults:</span>
+        <span class="s1">new_defaults = []</span>
+        <span class="s1">i = </span><span class="s6">0</span>
+        <span class="s3">for </span><span class="s1">arg </span><span class="s3">in </span><span class="s1">spec.defaults:</span>
+            <span class="s3">if </span><span class="s1">type(arg).__module__ </span><span class="s3">not in </span><span class="s1">(</span><span class="s4">&quot;builtins&quot;</span><span class="s5">, </span><span class="s4">&quot;__builtin__&quot;</span><span class="s1">):</span>
+                <span class="s1">name = </span><span class="s4">&quot;x%d&quot; </span><span class="s1">% i</span>
+                <span class="s1">env[name] = arg</span>
+                <span class="s1">new_defaults.append(name)</span>
+                <span class="s1">i += </span><span class="s6">1</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">new_defaults.append(arg)</span>
+        <span class="s1">elem = list(spec)</span>
+        <span class="s1">elem[</span><span class="s6">3</span><span class="s1">] = tuple(new_defaults)</span>
+        <span class="s3">return </span><span class="s1">compat.FullArgSpec(*elem)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">spec</span>
+
+
+<span class="s3">def </span><span class="s1">_exec_code_in_env(</span>
+    <span class="s1">code: Union[str</span><span class="s5">, </span><span class="s1">types.CodeType]</span><span class="s5">, </span><span class="s1">env: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">fn_name: str</span>
+<span class="s1">) -&gt; Callable[...</span><span class="s5">, </span><span class="s1">Any]:</span>
+    <span class="s1">exec(code</span><span class="s5">, </span><span class="s1">env)</span>
+    <span class="s3">return </span><span class="s1">env[fn_name]  </span><span class="s0"># type: ignore[no-any-return]</span>
+
+
+<span class="s1">_PF = TypeVar(</span><span class="s4">&quot;_PF&quot;</span><span class="s1">)</span>
+<span class="s1">_TE = TypeVar(</span><span class="s4">&quot;_TE&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">PluginLoader:</span>
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">group: str</span><span class="s5">, </span><span class="s1">auto_fn: Optional[Callable[...</span><span class="s5">, </span><span class="s1">Any]] = </span><span class="s3">None</span>
+    <span class="s1">):</span>
+        <span class="s1">self.group = group</span>
+        <span class="s1">self.impls: Dict[str</span><span class="s5">, </span><span class="s1">Any] = {}</span>
+        <span class="s1">self.auto_fn = auto_fn</span>
+
+    <span class="s3">def </span><span class="s1">clear(self):</span>
+        <span class="s1">self.impls.clear()</span>
+
+    <span class="s3">def </span><span class="s1">load(self</span><span class="s5">, </span><span class="s1">name: str) -&gt; Any:</span>
+        <span class="s3">if </span><span class="s1">name </span><span class="s3">in </span><span class="s1">self.impls:</span>
+            <span class="s3">return </span><span class="s1">self.impls[name]()</span>
+
+        <span class="s3">if </span><span class="s1">self.auto_fn:</span>
+            <span class="s1">loader = self.auto_fn(name)</span>
+            <span class="s3">if </span><span class="s1">loader:</span>
+                <span class="s1">self.impls[name] = loader</span>
+                <span class="s3">return </span><span class="s1">loader()</span>
+
+        <span class="s3">for </span><span class="s1">impl </span><span class="s3">in </span><span class="s1">compat.importlib_metadata_get(self.group):</span>
+            <span class="s3">if </span><span class="s1">impl.name == name:</span>
+                <span class="s1">self.impls[name] = impl.load</span>
+                <span class="s3">return </span><span class="s1">impl.load()</span>
+
+        <span class="s3">raise </span><span class="s1">exc.NoSuchModuleError(</span>
+            <span class="s4">&quot;Can't load plugin: %s:%s&quot; </span><span class="s1">% (self.group</span><span class="s5">, </span><span class="s1">name)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">register(self</span><span class="s5">, </span><span class="s1">name: str</span><span class="s5">, </span><span class="s1">modulepath: str</span><span class="s5">, </span><span class="s1">objname: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">def </span><span class="s1">load():</span>
+            <span class="s1">mod = __import__(modulepath)</span>
+            <span class="s3">for </span><span class="s1">token </span><span class="s3">in </span><span class="s1">modulepath.split(</span><span class="s4">&quot;.&quot;</span><span class="s1">)[</span><span class="s6">1</span><span class="s1">:]:</span>
+                <span class="s1">mod = getattr(mod</span><span class="s5">, </span><span class="s1">token)</span>
+            <span class="s3">return </span><span class="s1">getattr(mod</span><span class="s5">, </span><span class="s1">objname)</span>
+
+        <span class="s1">self.impls[name] = load</span>
+
+
+<span class="s3">def </span><span class="s1">_inspect_func_args(fn):</span>
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">co_varkeywords = inspect.CO_VARKEYWORDS</span>
+    <span class="s3">except </span><span class="s1">AttributeError:</span>
+        <span class="s0"># https://docs.python.org/3/library/inspect.html</span>
+        <span class="s0"># The flags are specific to CPython, and may not be defined in other</span>
+        <span class="s0"># Python implementations. Furthermore, the flags are an implementation</span>
+        <span class="s0"># detail, and can be removed or deprecated in future Python releases.</span>
+        <span class="s1">spec = compat.inspect_getfullargspec(fn)</span>
+        <span class="s3">return </span><span class="s1">spec[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">bool(spec[</span><span class="s6">2</span><span class="s1">])</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s0"># use fn.__code__ plus flags to reduce method call overhead</span>
+        <span class="s1">co = fn.__code__</span>
+        <span class="s1">nargs = co.co_argcount</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">list(co.co_varnames[:nargs])</span><span class="s5">,</span>
+            <span class="s1">bool(co.co_flags &amp; co_varkeywords)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">get_cls_kwargs(</span>
+    <span class="s1">cls: type</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">_set: Optional[Set[str]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">raiseerr: Literal[</span><span class="s3">True</span><span class="s1">] = ...</span><span class="s5">,</span>
+<span class="s1">) -&gt; Set[str]: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">get_cls_kwargs(</span>
+    <span class="s1">cls: type</span><span class="s5">, </span><span class="s1">*</span><span class="s5">, </span><span class="s1">_set: Optional[Set[str]] = </span><span class="s3">None</span><span class="s5">, </span><span class="s1">raiseerr: bool = </span><span class="s3">False</span>
+<span class="s1">) -&gt; Optional[Set[str]]: ...</span>
+
+
+<span class="s3">def </span><span class="s1">get_cls_kwargs(</span>
+    <span class="s1">cls: type</span><span class="s5">, </span><span class="s1">*</span><span class="s5">, </span><span class="s1">_set: Optional[Set[str]] = </span><span class="s3">None</span><span class="s5">, </span><span class="s1">raiseerr: bool = </span><span class="s3">False</span>
+<span class="s1">) -&gt; Optional[Set[str]]:</span>
+    <span class="s2">r&quot;&quot;&quot;Return the full set of inherited kwargs for the given `cls`. 
+ 
+    Probes a class's __init__ method, collecting all named arguments.  If the 
+    __init__ defines a \**kwargs catch-all, then the constructor is presumed 
+    to pass along unrecognized keywords to its base classes, and the 
+    collection process is repeated recursively on each of the bases. 
+ 
+    Uses a subset of inspect.getfullargspec() to cut down on method overhead, 
+    as this is used within the Core typing system to create copies of type 
+    objects which is a performance-sensitive operation. 
+ 
+    No anonymous tuple arguments please ! 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">toplevel = _set </span><span class="s3">is None</span>
+    <span class="s3">if </span><span class="s1">toplevel:</span>
+        <span class="s1">_set = set()</span>
+    <span class="s3">assert </span><span class="s1">_set </span><span class="s3">is not None</span>
+
+    <span class="s1">ctr = cls.__dict__.get(</span><span class="s4">&quot;__init__&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+
+    <span class="s1">has_init = (</span>
+        <span class="s1">ctr</span>
+        <span class="s3">and </span><span class="s1">isinstance(ctr</span><span class="s5">, </span><span class="s1">types.FunctionType)</span>
+        <span class="s3">and </span><span class="s1">isinstance(ctr.__code__</span><span class="s5">, </span><span class="s1">types.CodeType)</span>
+    <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">has_init:</span>
+        <span class="s1">names</span><span class="s5">, </span><span class="s1">has_kw = _inspect_func_args(ctr)</span>
+        <span class="s1">_set.update(names)</span>
+
+        <span class="s3">if not </span><span class="s1">has_kw </span><span class="s3">and not </span><span class="s1">toplevel:</span>
+            <span class="s3">if </span><span class="s1">raiseerr:</span>
+                <span class="s3">raise </span><span class="s1">TypeError(</span>
+                    <span class="s4">f&quot;given cls </span><span class="s7">{</span><span class="s1">cls</span><span class="s7">} </span><span class="s4">doesn't have an __init__ method&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">has_kw = </span><span class="s3">False</span>
+
+    <span class="s3">if not </span><span class="s1">has_init </span><span class="s3">or </span><span class="s1">has_kw:</span>
+        <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">cls.__bases__:</span>
+            <span class="s3">if </span><span class="s1">get_cls_kwargs(c</span><span class="s5">, </span><span class="s1">_set=_set) </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">break</span>
+
+    <span class="s1">_set.discard(</span><span class="s4">&quot;self&quot;</span><span class="s1">)</span>
+    <span class="s3">return </span><span class="s1">_set</span>
+
+
+<span class="s3">def </span><span class="s1">get_func_kwargs(func: Callable[...</span><span class="s5">, </span><span class="s1">Any]) -&gt; List[str]:</span>
+    <span class="s2">&quot;&quot;&quot;Return the set of legal kwargs for the given `func`. 
+ 
+    Uses getargspec so is safe to call for methods, functions, 
+    etc. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">return </span><span class="s1">compat.inspect_getfullargspec(func)[</span><span class="s6">0</span><span class="s1">]</span>
+
+
+<span class="s3">def </span><span class="s1">get_callable_argspec(</span>
+    <span class="s1">fn: Callable[...</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">no_self: bool = </span><span class="s3">False</span><span class="s5">, </span><span class="s1">_is_init: bool = </span><span class="s3">False</span>
+<span class="s1">) -&gt; compat.FullArgSpec:</span>
+    <span class="s2">&quot;&quot;&quot;Return the argument signature for any callable. 
+ 
+    All pure-Python callables are accepted, including 
+    functions, methods, classes, objects with __call__; 
+    builtins and other edge cases like functools.partial() objects 
+    raise a TypeError. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">inspect.isbuiltin(fn):</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;Can't inspect builtin: %s&quot; </span><span class="s1">% fn)</span>
+    <span class="s3">elif </span><span class="s1">inspect.isfunction(fn):</span>
+        <span class="s3">if </span><span class="s1">_is_init </span><span class="s3">and </span><span class="s1">no_self:</span>
+            <span class="s1">spec = compat.inspect_getfullargspec(fn)</span>
+            <span class="s3">return </span><span class="s1">compat.FullArgSpec(</span>
+                <span class="s1">spec.args[</span><span class="s6">1</span><span class="s1">:]</span><span class="s5">,</span>
+                <span class="s1">spec.varargs</span><span class="s5">,</span>
+                <span class="s1">spec.varkw</span><span class="s5">,</span>
+                <span class="s1">spec.defaults</span><span class="s5">,</span>
+                <span class="s1">spec.kwonlyargs</span><span class="s5">,</span>
+                <span class="s1">spec.kwonlydefaults</span><span class="s5">,</span>
+                <span class="s1">spec.annotations</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">compat.inspect_getfullargspec(fn)</span>
+    <span class="s3">elif </span><span class="s1">inspect.ismethod(fn):</span>
+        <span class="s3">if </span><span class="s1">no_self </span><span class="s3">and </span><span class="s1">(_is_init </span><span class="s3">or </span><span class="s1">fn.__self__):</span>
+            <span class="s1">spec = compat.inspect_getfullargspec(fn.__func__)</span>
+            <span class="s3">return </span><span class="s1">compat.FullArgSpec(</span>
+                <span class="s1">spec.args[</span><span class="s6">1</span><span class="s1">:]</span><span class="s5">,</span>
+                <span class="s1">spec.varargs</span><span class="s5">,</span>
+                <span class="s1">spec.varkw</span><span class="s5">,</span>
+                <span class="s1">spec.defaults</span><span class="s5">,</span>
+                <span class="s1">spec.kwonlyargs</span><span class="s5">,</span>
+                <span class="s1">spec.kwonlydefaults</span><span class="s5">,</span>
+                <span class="s1">spec.annotations</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">compat.inspect_getfullargspec(fn.__func__)</span>
+    <span class="s3">elif </span><span class="s1">inspect.isclass(fn):</span>
+        <span class="s3">return </span><span class="s1">get_callable_argspec(</span>
+            <span class="s1">fn.__init__</span><span class="s5">, </span><span class="s1">no_self=no_self</span><span class="s5">, </span><span class="s1">_is_init=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+    <span class="s3">elif </span><span class="s1">hasattr(fn</span><span class="s5">, </span><span class="s4">&quot;__func__&quot;</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">compat.inspect_getfullargspec(fn.__func__)</span>
+    <span class="s3">elif </span><span class="s1">hasattr(fn</span><span class="s5">, </span><span class="s4">&quot;__call__&quot;</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">inspect.ismethod(fn.__call__):</span>
+            <span class="s3">return </span><span class="s1">get_callable_argspec(fn.__call__</span><span class="s5">, </span><span class="s1">no_self=no_self)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;Can't inspect callable: %s&quot; </span><span class="s1">% fn)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;Can't inspect callable: %s&quot; </span><span class="s1">% fn)</span>
+
+
+<span class="s3">def </span><span class="s1">format_argspec_plus(</span>
+    <span class="s1">fn: Union[Callable[...</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">compat.FullArgSpec]</span><span class="s5">, </span><span class="s1">grouped: bool = </span><span class="s3">True</span>
+<span class="s1">) -&gt; Dict[str</span><span class="s5">, </span><span class="s1">Optional[str]]:</span>
+    <span class="s2">&quot;&quot;&quot;Returns a dictionary of formatted, introspected function arguments. 
+ 
+    A enhanced variant of inspect.formatargspec to support code generation. 
+ 
+    fn 
+       An inspectable callable or tuple of inspect getargspec() results. 
+    grouped 
+      Defaults to True; include (parens, around, argument) lists 
+ 
+    Returns: 
+ 
+    args 
+      Full inspect.formatargspec for fn 
+    self_arg 
+      The name of the first positional argument, varargs[0], or None 
+      if the function defines no positional arguments. 
+    apply_pos 
+      args, re-written in calling rather than receiving syntax.  Arguments are 
+      passed positionally. 
+    apply_kw 
+      Like apply_pos, except keyword-ish args are passed as keywords. 
+    apply_pos_proxied 
+      Like apply_pos but omits the self/cls argument 
+ 
+    Example:: 
+ 
+      &gt;&gt;&gt; format_argspec_plus(lambda self, a, b, c=3, **d: 123) 
+      {'grouped_args': '(self, a, b, c=3, **d)', 
+       'self_arg': 'self', 
+       'apply_kw': '(self, a, b, c=c, **d)', 
+       'apply_pos': '(self, a, b, c, **d)'} 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">callable(fn):</span>
+        <span class="s1">spec = compat.inspect_getfullargspec(fn)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">spec = fn</span>
+
+    <span class="s1">args = compat.inspect_formatargspec(*spec)</span>
+
+    <span class="s1">apply_pos = compat.inspect_formatargspec(</span>
+        <span class="s1">spec[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">spec[</span><span class="s6">1</span><span class="s1">]</span><span class="s5">, </span><span class="s1">spec[</span><span class="s6">2</span><span class="s1">]</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">spec[</span><span class="s6">4</span><span class="s1">]</span>
+    <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">spec[</span><span class="s6">0</span><span class="s1">]:</span>
+        <span class="s1">self_arg = spec[</span><span class="s6">0</span><span class="s1">][</span><span class="s6">0</span><span class="s1">]</span>
+
+        <span class="s1">apply_pos_proxied = compat.inspect_formatargspec(</span>
+            <span class="s1">spec[</span><span class="s6">0</span><span class="s1">][</span><span class="s6">1</span><span class="s1">:]</span><span class="s5">, </span><span class="s1">spec[</span><span class="s6">1</span><span class="s1">]</span><span class="s5">, </span><span class="s1">spec[</span><span class="s6">2</span><span class="s1">]</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">spec[</span><span class="s6">4</span><span class="s1">]</span>
+        <span class="s1">)</span>
+
+    <span class="s3">elif </span><span class="s1">spec[</span><span class="s6">1</span><span class="s1">]:</span>
+        <span class="s0"># I'm not sure what this is</span>
+        <span class="s1">self_arg = </span><span class="s4">&quot;%s[0]&quot; </span><span class="s1">% spec[</span><span class="s6">1</span><span class="s1">]</span>
+
+        <span class="s1">apply_pos_proxied = apply_pos</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">self_arg = </span><span class="s3">None</span>
+        <span class="s1">apply_pos_proxied = apply_pos</span>
+
+    <span class="s1">num_defaults = </span><span class="s6">0</span>
+    <span class="s3">if </span><span class="s1">spec[</span><span class="s6">3</span><span class="s1">]:</span>
+        <span class="s1">num_defaults += len(cast(Tuple[Any]</span><span class="s5">, </span><span class="s1">spec[</span><span class="s6">3</span><span class="s1">]))</span>
+    <span class="s3">if </span><span class="s1">spec[</span><span class="s6">4</span><span class="s1">]:</span>
+        <span class="s1">num_defaults += len(spec[</span><span class="s6">4</span><span class="s1">])</span>
+
+    <span class="s1">name_args = spec[</span><span class="s6">0</span><span class="s1">] + spec[</span><span class="s6">4</span><span class="s1">]</span>
+
+    <span class="s1">defaulted_vals: Union[List[str]</span><span class="s5">, </span><span class="s1">Tuple[()]]</span>
+
+    <span class="s3">if </span><span class="s1">num_defaults:</span>
+        <span class="s1">defaulted_vals = name_args[</span><span class="s6">0 </span><span class="s1">- num_defaults :]</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">defaulted_vals = ()</span>
+
+    <span class="s1">apply_kw = compat.inspect_formatargspec(</span>
+        <span class="s1">name_args</span><span class="s5">,</span>
+        <span class="s1">spec[</span><span class="s6">1</span><span class="s1">]</span><span class="s5">,</span>
+        <span class="s1">spec[</span><span class="s6">2</span><span class="s1">]</span><span class="s5">,</span>
+        <span class="s1">defaulted_vals</span><span class="s5">,</span>
+        <span class="s1">formatvalue=</span><span class="s3">lambda </span><span class="s1">x: </span><span class="s4">&quot;=&quot; </span><span class="s1">+ str(x)</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">spec[</span><span class="s6">0</span><span class="s1">]:</span>
+        <span class="s1">apply_kw_proxied = compat.inspect_formatargspec(</span>
+            <span class="s1">name_args[</span><span class="s6">1</span><span class="s1">:]</span><span class="s5">,</span>
+            <span class="s1">spec[</span><span class="s6">1</span><span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">spec[</span><span class="s6">2</span><span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">defaulted_vals</span><span class="s5">,</span>
+            <span class="s1">formatvalue=</span><span class="s3">lambda </span><span class="s1">x: </span><span class="s4">&quot;=&quot; </span><span class="s1">+ str(x)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">apply_kw_proxied = apply_kw</span>
+
+    <span class="s3">if </span><span class="s1">grouped:</span>
+        <span class="s3">return </span><span class="s1">dict(</span>
+            <span class="s1">grouped_args=args</span><span class="s5">,</span>
+            <span class="s1">self_arg=self_arg</span><span class="s5">,</span>
+            <span class="s1">apply_pos=apply_pos</span><span class="s5">,</span>
+            <span class="s1">apply_kw=apply_kw</span><span class="s5">,</span>
+            <span class="s1">apply_pos_proxied=apply_pos_proxied</span><span class="s5">,</span>
+            <span class="s1">apply_kw_proxied=apply_kw_proxied</span><span class="s5">,</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">dict(</span>
+            <span class="s1">grouped_args=args</span><span class="s5">,</span>
+            <span class="s1">self_arg=self_arg</span><span class="s5">,</span>
+            <span class="s1">apply_pos=apply_pos[</span><span class="s6">1</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">apply_kw=apply_kw[</span><span class="s6">1</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">apply_pos_proxied=apply_pos_proxied[</span><span class="s6">1</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">apply_kw_proxied=apply_kw_proxied[</span><span class="s6">1</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">format_argspec_init(method</span><span class="s5">, </span><span class="s1">grouped=</span><span class="s3">True</span><span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;format_argspec_plus with considerations for typical __init__ methods 
+ 
+    Wraps format_argspec_plus with error handling strategies for typical 
+    __init__ cases:: 
+ 
+      object.__init__ -&gt; (self) 
+      other unreflectable (usually C) -&gt; (self, *args, **kwargs) 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">method </span><span class="s3">is </span><span class="s1">object.__init__:</span>
+        <span class="s1">grouped_args = </span><span class="s4">&quot;(self)&quot;</span>
+        <span class="s1">args = </span><span class="s4">&quot;(self)&quot; </span><span class="s3">if </span><span class="s1">grouped </span><span class="s3">else </span><span class="s4">&quot;self&quot;</span>
+        <span class="s1">proxied = </span><span class="s4">&quot;()&quot; </span><span class="s3">if </span><span class="s1">grouped </span><span class="s3">else </span><span class="s4">&quot;&quot;</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">format_argspec_plus(method</span><span class="s5">, </span><span class="s1">grouped=grouped)</span>
+        <span class="s3">except </span><span class="s1">TypeError:</span>
+            <span class="s1">grouped_args = </span><span class="s4">&quot;(self, *args, **kwargs)&quot;</span>
+            <span class="s1">args = grouped_args </span><span class="s3">if </span><span class="s1">grouped </span><span class="s3">else </span><span class="s4">&quot;self, *args, **kwargs&quot;</span>
+            <span class="s1">proxied = </span><span class="s4">&quot;(*args, **kwargs)&quot; </span><span class="s3">if </span><span class="s1">grouped </span><span class="s3">else </span><span class="s4">&quot;*args, **kwargs&quot;</span>
+    <span class="s3">return </span><span class="s1">dict(</span>
+        <span class="s1">self_arg=</span><span class="s4">&quot;self&quot;</span><span class="s5">,</span>
+        <span class="s1">grouped_args=grouped_args</span><span class="s5">,</span>
+        <span class="s1">apply_pos=args</span><span class="s5">,</span>
+        <span class="s1">apply_kw=args</span><span class="s5">,</span>
+        <span class="s1">apply_pos_proxied=proxied</span><span class="s5">,</span>
+        <span class="s1">apply_kw_proxied=proxied</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">create_proxy_methods(</span>
+    <span class="s1">target_cls: Type[Any]</span><span class="s5">,</span>
+    <span class="s1">target_cls_sphinx_name: str</span><span class="s5">,</span>
+    <span class="s1">proxy_cls_sphinx_name: str</span><span class="s5">,</span>
+    <span class="s1">classmethods: Sequence[str] = ()</span><span class="s5">,</span>
+    <span class="s1">methods: Sequence[str] = ()</span><span class="s5">,</span>
+    <span class="s1">attributes: Sequence[str] = ()</span><span class="s5">,</span>
+    <span class="s1">use_intermediate_variable: Sequence[str] = ()</span><span class="s5">,</span>
+<span class="s1">) -&gt; Callable[[_T]</span><span class="s5">, </span><span class="s1">_T]:</span>
+    <span class="s2">&quot;&quot;&quot;A class decorator indicating attributes should refer to a proxy 
+    class. 
+ 
+    This decorator is now a &quot;marker&quot; that does nothing at runtime.  Instead, 
+    it is consumed by the tools/generate_proxy_methods.py script to 
+    statically generate proxy methods and attributes that are fully 
+    recognized by typing tools such as mypy. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">decorate(cls):</span>
+        <span class="s3">return </span><span class="s1">cls</span>
+
+    <span class="s3">return </span><span class="s1">decorate</span>
+
+
+<span class="s3">def </span><span class="s1">getargspec_init(method):</span>
+    <span class="s2">&quot;&quot;&quot;inspect.getargspec with considerations for typical __init__ methods 
+ 
+    Wraps inspect.getargspec with error handling for typical __init__ cases:: 
+ 
+      object.__init__ -&gt; (self) 
+      other unreflectable (usually C) -&gt; (self, *args, **kwargs) 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">compat.inspect_getfullargspec(method)</span>
+    <span class="s3">except </span><span class="s1">TypeError:</span>
+        <span class="s3">if </span><span class="s1">method </span><span class="s3">is </span><span class="s1">object.__init__:</span>
+            <span class="s3">return </span><span class="s1">([</span><span class="s4">&quot;self&quot;</span><span class="s1">]</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">([</span><span class="s4">&quot;self&quot;</span><span class="s1">]</span><span class="s5">, </span><span class="s4">&quot;args&quot;</span><span class="s5">, </span><span class="s4">&quot;kwargs&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">unbound_method_to_callable(func_or_cls):</span>
+    <span class="s2">&quot;&quot;&quot;Adjust the incoming callable such that a 'self' argument is not 
+    required. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">isinstance(func_or_cls</span><span class="s5">, </span><span class="s1">types.MethodType) </span><span class="s3">and not </span><span class="s1">func_or_cls.__self__:</span>
+        <span class="s3">return </span><span class="s1">func_or_cls.__func__</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">func_or_cls</span>
+
+
+<span class="s3">def </span><span class="s1">generic_repr(</span>
+    <span class="s1">obj: Any</span><span class="s5">,</span>
+    <span class="s1">additional_kw: Sequence[Tuple[str</span><span class="s5">, </span><span class="s1">Any]] = ()</span><span class="s5">,</span>
+    <span class="s1">to_inspect: Optional[Union[object</span><span class="s5">, </span><span class="s1">List[object]]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">omit_kwarg: Sequence[str] = ()</span><span class="s5">,</span>
+<span class="s1">) -&gt; str:</span>
+    <span class="s2">&quot;&quot;&quot;Produce a __repr__() based on direct association of the __init__() 
+    specification vs. same-named attributes present. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">to_inspect </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">to_inspect = [obj]</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">to_inspect = _collections.to_list(to_inspect)</span>
+
+    <span class="s1">missing = object()</span>
+
+    <span class="s1">pos_args = []</span>
+    <span class="s1">kw_args: _collections.OrderedDict[str</span><span class="s5">, </span><span class="s1">Any] = _collections.OrderedDict()</span>
+    <span class="s1">vargs = </span><span class="s3">None</span>
+    <span class="s3">for </span><span class="s1">i</span><span class="s5">, </span><span class="s1">insp </span><span class="s3">in </span><span class="s1">enumerate(to_inspect):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">spec = compat.inspect_getfullargspec(insp.__init__)</span>
+        <span class="s3">except </span><span class="s1">TypeError:</span>
+            <span class="s3">continue</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">default_len = len(spec.defaults) </span><span class="s3">if </span><span class="s1">spec.defaults </span><span class="s3">else </span><span class="s6">0</span>
+            <span class="s3">if </span><span class="s1">i == </span><span class="s6">0</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">spec.varargs:</span>
+                    <span class="s1">vargs = spec.varargs</span>
+                <span class="s3">if </span><span class="s1">default_len:</span>
+                    <span class="s1">pos_args.extend(spec.args[</span><span class="s6">1</span><span class="s1">:-default_len])</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">pos_args.extend(spec.args[</span><span class="s6">1</span><span class="s1">:])</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">kw_args.update(</span>
+                    <span class="s1">[(arg</span><span class="s5">, </span><span class="s1">missing) </span><span class="s3">for </span><span class="s1">arg </span><span class="s3">in </span><span class="s1">spec.args[</span><span class="s6">1</span><span class="s1">:-default_len]]</span>
+                <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">default_len:</span>
+                <span class="s3">assert </span><span class="s1">spec.defaults</span>
+                <span class="s1">kw_args.update(</span>
+                    <span class="s1">[</span>
+                        <span class="s1">(arg</span><span class="s5">, </span><span class="s1">default)</span>
+                        <span class="s3">for </span><span class="s1">arg</span><span class="s5">, </span><span class="s1">default </span><span class="s3">in </span><span class="s1">zip(</span>
+                            <span class="s1">spec.args[-default_len:]</span><span class="s5">, </span><span class="s1">spec.defaults</span>
+                        <span class="s1">)</span>
+                    <span class="s1">]</span>
+                <span class="s1">)</span>
+    <span class="s1">output: List[str] = []</span>
+
+    <span class="s1">output.extend(repr(getattr(obj</span><span class="s5">, </span><span class="s1">arg</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)) </span><span class="s3">for </span><span class="s1">arg </span><span class="s3">in </span><span class="s1">pos_args)</span>
+
+    <span class="s3">if </span><span class="s1">vargs </span><span class="s3">is not None and </span><span class="s1">hasattr(obj</span><span class="s5">, </span><span class="s1">vargs):</span>
+        <span class="s1">output.extend([repr(val) </span><span class="s3">for </span><span class="s1">val </span><span class="s3">in </span><span class="s1">getattr(obj</span><span class="s5">, </span><span class="s1">vargs)])</span>
+
+    <span class="s3">for </span><span class="s1">arg</span><span class="s5">, </span><span class="s1">defval </span><span class="s3">in </span><span class="s1">kw_args.items():</span>
+        <span class="s3">if </span><span class="s1">arg </span><span class="s3">in </span><span class="s1">omit_kwarg:</span>
+            <span class="s3">continue</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">val = getattr(obj</span><span class="s5">, </span><span class="s1">arg</span><span class="s5">, </span><span class="s1">missing)</span>
+            <span class="s3">if </span><span class="s1">val </span><span class="s3">is not </span><span class="s1">missing </span><span class="s3">and </span><span class="s1">val != defval:</span>
+                <span class="s1">output.append(</span><span class="s4">&quot;%s=%r&quot; </span><span class="s1">% (arg</span><span class="s5">, </span><span class="s1">val))</span>
+        <span class="s3">except </span><span class="s1">Exception:</span>
+            <span class="s3">pass</span>
+
+    <span class="s3">if </span><span class="s1">additional_kw:</span>
+        <span class="s3">for </span><span class="s1">arg</span><span class="s5">, </span><span class="s1">defval </span><span class="s3">in </span><span class="s1">additional_kw:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">val = getattr(obj</span><span class="s5">, </span><span class="s1">arg</span><span class="s5">, </span><span class="s1">missing)</span>
+                <span class="s3">if </span><span class="s1">val </span><span class="s3">is not </span><span class="s1">missing </span><span class="s3">and </span><span class="s1">val != defval:</span>
+                    <span class="s1">output.append(</span><span class="s4">&quot;%s=%r&quot; </span><span class="s1">% (arg</span><span class="s5">, </span><span class="s1">val))</span>
+            <span class="s3">except </span><span class="s1">Exception:</span>
+                <span class="s3">pass</span>
+
+    <span class="s3">return </span><span class="s4">&quot;%s(%s)&quot; </span><span class="s1">% (obj.__class__.__name__</span><span class="s5">, </span><span class="s4">&quot;, &quot;</span><span class="s1">.join(output))</span>
+
+
+<span class="s3">class </span><span class="s1">portable_instancemethod:</span>
+    <span class="s2">&quot;&quot;&quot;Turn an instancemethod into a (parent, name) pair 
+    to produce a serializable callable. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = </span><span class="s4">&quot;target&quot;</span><span class="s5">, </span><span class="s4">&quot;name&quot;</span><span class="s5">, </span><span class="s4">&quot;kwargs&quot;</span><span class="s5">, </span><span class="s4">&quot;__weakref__&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self):</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s4">&quot;target&quot;</span><span class="s1">: self.target</span><span class="s5">,</span>
+            <span class="s4">&quot;name&quot;</span><span class="s1">: self.name</span><span class="s5">,</span>
+            <span class="s4">&quot;kwargs&quot;</span><span class="s1">: self.kwargs</span><span class="s5">,</span>
+        <span class="s1">}</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state):</span>
+        <span class="s1">self.target = state[</span><span class="s4">&quot;target&quot;</span><span class="s1">]</span>
+        <span class="s1">self.name = state[</span><span class="s4">&quot;name&quot;</span><span class="s1">]</span>
+        <span class="s1">self.kwargs = state.get(</span><span class="s4">&quot;kwargs&quot;</span><span class="s5">, </span><span class="s1">())</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">meth</span><span class="s5">, </span><span class="s1">kwargs=()):</span>
+        <span class="s1">self.target = meth.__self__</span>
+        <span class="s1">self.name = meth.__name__</span>
+        <span class="s1">self.kwargs = kwargs</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">*arg</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s1">kw.update(self.kwargs)</span>
+        <span class="s3">return </span><span class="s1">getattr(self.target</span><span class="s5">, </span><span class="s1">self.name)(*arg</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+
+<span class="s3">def </span><span class="s1">class_hierarchy(cls):</span>
+    <span class="s2">&quot;&quot;&quot;Return an unordered sequence of all classes related to cls. 
+ 
+    Traverses diamond hierarchies. 
+ 
+    Fibs slightly: subclasses of builtin types are not returned.  Thus 
+    class_hierarchy(class A(object)) returns (A, object), not A plus every 
+    class systemwide that derives from object. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">hier = {cls}</span>
+    <span class="s1">process = list(cls.__mro__)</span>
+    <span class="s3">while </span><span class="s1">process:</span>
+        <span class="s1">c = process.pop()</span>
+        <span class="s1">bases = (_ </span><span class="s3">for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">c.__bases__ </span><span class="s3">if </span><span class="s1">_ </span><span class="s3">not in </span><span class="s1">hier)</span>
+
+        <span class="s3">for </span><span class="s1">b </span><span class="s3">in </span><span class="s1">bases:</span>
+            <span class="s1">process.append(b)</span>
+            <span class="s1">hier.add(b)</span>
+
+        <span class="s3">if </span><span class="s1">c.__module__ == </span><span class="s4">&quot;builtins&quot; </span><span class="s3">or not </span><span class="s1">hasattr(c</span><span class="s5">, </span><span class="s4">&quot;__subclasses__&quot;</span><span class="s1">):</span>
+            <span class="s3">continue</span>
+
+        <span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">[</span>
+            <span class="s1">_</span>
+            <span class="s3">for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s1">c.__subclasses__()</span>
+                <span class="s3">if not </span><span class="s1">issubclass(c</span><span class="s5">, </span><span class="s1">type)</span>
+                <span class="s3">else </span><span class="s1">c.__subclasses__(c)</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">_ </span><span class="s3">not in </span><span class="s1">hier</span>
+        <span class="s1">]:</span>
+            <span class="s1">process.append(s)</span>
+            <span class="s1">hier.add(s)</span>
+    <span class="s3">return </span><span class="s1">list(hier)</span>
+
+
+<span class="s3">def </span><span class="s1">iterate_attributes(cls):</span>
+    <span class="s2">&quot;&quot;&quot;iterate all the keys and attributes associated 
+    with a class, without using getattr(). 
+ 
+    Does not use getattr() so that class-sensitive 
+    descriptors (i.e. property.__get__()) are not called. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">keys = dir(cls)</span>
+    <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">keys:</span>
+        <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">cls.__mro__:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">c.__dict__:</span>
+                <span class="s3">yield </span><span class="s1">(key</span><span class="s5">, </span><span class="s1">c.__dict__[key])</span>
+                <span class="s3">break</span>
+
+
+<span class="s3">def </span><span class="s1">monkeypatch_proxied_specials(</span>
+    <span class="s1">into_cls</span><span class="s5">,</span>
+    <span class="s1">from_cls</span><span class="s5">,</span>
+    <span class="s1">skip=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">only=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">name=</span><span class="s4">&quot;self.proxy&quot;</span><span class="s5">,</span>
+    <span class="s1">from_instance=</span><span class="s3">None</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Automates delegation of __specials__ for a proxying type.&quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">only:</span>
+        <span class="s1">dunders = only</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">skip </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">skip = (</span>
+                <span class="s4">&quot;__slots__&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;__del__&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;__getattribute__&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;__metaclass__&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;__getstate__&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;__setstate__&quot;</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">dunders = [</span>
+            <span class="s1">m</span>
+            <span class="s3">for </span><span class="s1">m </span><span class="s3">in </span><span class="s1">dir(from_cls)</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">m.startswith(</span><span class="s4">&quot;__&quot;</span><span class="s1">)</span>
+                <span class="s3">and </span><span class="s1">m.endswith(</span><span class="s4">&quot;__&quot;</span><span class="s1">)</span>
+                <span class="s3">and not </span><span class="s1">hasattr(into_cls</span><span class="s5">, </span><span class="s1">m)</span>
+                <span class="s3">and </span><span class="s1">m </span><span class="s3">not in </span><span class="s1">skip</span>
+            <span class="s1">)</span>
+        <span class="s1">]</span>
+
+    <span class="s3">for </span><span class="s1">method </span><span class="s3">in </span><span class="s1">dunders:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">maybe_fn = getattr(from_cls</span><span class="s5">, </span><span class="s1">method)</span>
+            <span class="s3">if not </span><span class="s1">hasattr(maybe_fn</span><span class="s5">, </span><span class="s4">&quot;__call__&quot;</span><span class="s1">):</span>
+                <span class="s3">continue</span>
+            <span class="s1">maybe_fn = getattr(maybe_fn</span><span class="s5">, </span><span class="s4">&quot;__func__&quot;</span><span class="s5">, </span><span class="s1">maybe_fn)</span>
+            <span class="s1">fn = cast(types.FunctionType</span><span class="s5">, </span><span class="s1">maybe_fn)</span>
+
+        <span class="s3">except </span><span class="s1">AttributeError:</span>
+            <span class="s3">continue</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">spec = compat.inspect_getfullargspec(fn)</span>
+            <span class="s1">fn_args = compat.inspect_formatargspec(spec[</span><span class="s6">0</span><span class="s1">])</span>
+            <span class="s1">d_args = compat.inspect_formatargspec(spec[</span><span class="s6">0</span><span class="s1">][</span><span class="s6">1</span><span class="s1">:])</span>
+        <span class="s3">except </span><span class="s1">TypeError:</span>
+            <span class="s1">fn_args = </span><span class="s4">&quot;(self, *args, **kw)&quot;</span>
+            <span class="s1">d_args = </span><span class="s4">&quot;(*args, **kw)&quot;</span>
+
+        <span class="s1">py = (</span>
+            <span class="s4">&quot;def %(method)s%(fn_args)s: &quot;</span>
+            <span class="s4">&quot;return %(name)s.%(method)s%(d_args)s&quot; </span><span class="s1">% locals()</span>
+        <span class="s1">)</span>
+
+        <span class="s1">env: Dict[str</span><span class="s5">, </span><span class="s1">types.FunctionType] = (</span>
+            <span class="s1">from_instance </span><span class="s3">is not None and </span><span class="s1">{name: from_instance} </span><span class="s3">or </span><span class="s1">{}</span>
+        <span class="s1">)</span>
+        <span class="s1">exec(py</span><span class="s5">, </span><span class="s1">env)</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">env[method].__defaults__ = fn.__defaults__</span>
+        <span class="s3">except </span><span class="s1">AttributeError:</span>
+            <span class="s3">pass</span>
+        <span class="s1">setattr(into_cls</span><span class="s5">, </span><span class="s1">method</span><span class="s5">, </span><span class="s1">env[method])</span>
+
+
+<span class="s3">def </span><span class="s1">methods_equivalent(meth1</span><span class="s5">, </span><span class="s1">meth2):</span>
+    <span class="s2">&quot;&quot;&quot;Return True if the two methods are the same implementation.&quot;&quot;&quot;</span>
+
+    <span class="s3">return </span><span class="s1">getattr(meth1</span><span class="s5">, </span><span class="s4">&quot;__func__&quot;</span><span class="s5">, </span><span class="s1">meth1) </span><span class="s3">is </span><span class="s1">getattr(</span>
+        <span class="s1">meth2</span><span class="s5">, </span><span class="s4">&quot;__func__&quot;</span><span class="s5">, </span><span class="s1">meth2</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">as_interface(obj</span><span class="s5">, </span><span class="s1">cls=</span><span class="s3">None</span><span class="s5">, </span><span class="s1">methods=</span><span class="s3">None</span><span class="s5">, </span><span class="s1">required=</span><span class="s3">None</span><span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Ensure basic interface compliance for an instance or dict of callables. 
+ 
+    Checks that ``obj`` implements public methods of ``cls`` or has members 
+    listed in ``methods``. If ``required`` is not supplied, implementing at 
+    least one interface method is sufficient. Methods present on ``obj`` that 
+    are not in the interface are ignored. 
+ 
+    If ``obj`` is a dict and ``dict`` does not meet the interface 
+    requirements, the keys of the dictionary are inspected. Keys present in 
+    ``obj`` that are not in the interface will raise TypeErrors. 
+ 
+    Raises TypeError if ``obj`` does not meet the interface criteria. 
+ 
+    In all passing cases, an object with callable members is returned.  In the 
+    simple case, ``obj`` is returned as-is; if dict processing kicks in then 
+    an anonymous class is returned. 
+ 
+    obj 
+      A type, instance, or dictionary of callables. 
+    cls 
+      Optional, a type.  All public methods of cls are considered the 
+      interface.  An ``obj`` instance of cls will always pass, ignoring 
+      ``required``.. 
+    methods 
+      Optional, a sequence of method names to consider as the interface. 
+    required 
+      Optional, a sequence of mandatory implementations. If omitted, an 
+      ``obj`` that provides at least one interface method is considered 
+      sufficient.  As a convenience, required may be a type, in which case 
+      all public methods of the type are required. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if not </span><span class="s1">cls </span><span class="s3">and not </span><span class="s1">methods:</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;a class or collection of method names are required&quot;</span><span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">isinstance(cls</span><span class="s5">, </span><span class="s1">type) </span><span class="s3">and </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">cls):</span>
+        <span class="s3">return </span><span class="s1">obj</span>
+
+    <span class="s1">interface = set(methods </span><span class="s3">or </span><span class="s1">[m </span><span class="s3">for </span><span class="s1">m </span><span class="s3">in </span><span class="s1">dir(cls) </span><span class="s3">if not </span><span class="s1">m.startswith(</span><span class="s4">&quot;_&quot;</span><span class="s1">)])</span>
+    <span class="s1">implemented = set(dir(obj))</span>
+
+    <span class="s1">complies = operator.ge</span>
+    <span class="s3">if </span><span class="s1">isinstance(required</span><span class="s5">, </span><span class="s1">type):</span>
+        <span class="s1">required = interface</span>
+    <span class="s3">elif not </span><span class="s1">required:</span>
+        <span class="s1">required = set()</span>
+        <span class="s1">complies = operator.gt</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">required = set(required)</span>
+
+    <span class="s3">if </span><span class="s1">complies(implemented.intersection(interface)</span><span class="s5">, </span><span class="s1">required):</span>
+        <span class="s3">return </span><span class="s1">obj</span>
+
+    <span class="s0"># No dict duck typing here.</span>
+    <span class="s3">if not </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">dict):</span>
+        <span class="s1">qualifier = complies </span><span class="s3">is </span><span class="s1">operator.gt </span><span class="s3">and </span><span class="s4">&quot;any of&quot; </span><span class="s3">or </span><span class="s4">&quot;all of&quot;</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span>
+            <span class="s4">&quot;%r does not implement %s: %s&quot;</span>
+            <span class="s1">% (obj</span><span class="s5">, </span><span class="s1">qualifier</span><span class="s5">, </span><span class="s4">&quot;, &quot;</span><span class="s1">.join(interface))</span>
+        <span class="s1">)</span>
+
+    <span class="s3">class </span><span class="s1">AnonymousInterface:</span>
+        <span class="s2">&quot;&quot;&quot;A callable-holding shell.&quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">cls:</span>
+        <span class="s1">AnonymousInterface.__name__ = </span><span class="s4">&quot;Anonymous&quot; </span><span class="s1">+ cls.__name__</span>
+    <span class="s1">found = set()</span>
+
+    <span class="s3">for </span><span class="s1">method</span><span class="s5">, </span><span class="s1">impl </span><span class="s3">in </span><span class="s1">dictlike_iteritems(obj):</span>
+        <span class="s3">if </span><span class="s1">method </span><span class="s3">not in </span><span class="s1">interface:</span>
+            <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;%r: unknown in this interface&quot; </span><span class="s1">% method)</span>
+        <span class="s3">if not </span><span class="s1">callable(impl):</span>
+            <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;%r=%r is not callable&quot; </span><span class="s1">% (method</span><span class="s5">, </span><span class="s1">impl))</span>
+        <span class="s1">setattr(AnonymousInterface</span><span class="s5">, </span><span class="s1">method</span><span class="s5">, </span><span class="s1">staticmethod(impl))</span>
+        <span class="s1">found.add(method)</span>
+
+    <span class="s3">if </span><span class="s1">complies(found</span><span class="s5">, </span><span class="s1">required):</span>
+        <span class="s3">return </span><span class="s1">AnonymousInterface</span>
+
+    <span class="s3">raise </span><span class="s1">TypeError(</span>
+        <span class="s4">&quot;dictionary does not contain required keys %s&quot;</span>
+        <span class="s1">% </span><span class="s4">&quot;, &quot;</span><span class="s1">.join(required - found)</span>
+    <span class="s1">)</span>
+
+
+<span class="s1">_GFD = TypeVar(</span><span class="s4">&quot;_GFD&quot;</span><span class="s5">, </span><span class="s1">bound=</span><span class="s4">&quot;generic_fn_descriptor[Any]&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">generic_fn_descriptor(Generic[_T_co]):</span>
+    <span class="s2">&quot;&quot;&quot;Descriptor which proxies a function when the attribute is not 
+    present in dict 
+ 
+    This superclass is organized in a particular way with &quot;memoized&quot; and 
+    &quot;non-memoized&quot; implementation classes that are hidden from type checkers, 
+    as Mypy seems to not be able to handle seeing multiple kinds of descriptor 
+    classes used for the same attribute. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">fget: Callable[...</span><span class="s5">, </span><span class="s1">_T_co]</span>
+    <span class="s1">__doc__: Optional[str]</span>
+    <span class="s1">__name__: str</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">fget: Callable[...</span><span class="s5">, </span><span class="s1">_T_co]</span><span class="s5">, </span><span class="s1">doc: Optional[str] = </span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">self.fget = fget</span>
+        <span class="s1">self.__doc__ = doc </span><span class="s3">or </span><span class="s1">fget.__doc__</span>
+        <span class="s1">self.__name__ = fget.__name__</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__get__(self: _GFD</span><span class="s5">, </span><span class="s1">obj: </span><span class="s3">None</span><span class="s5">, </span><span class="s1">cls: Any) -&gt; _GFD: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">obj: object</span><span class="s5">, </span><span class="s1">cls: Any) -&gt; _T_co: ...</span>
+
+    <span class="s3">def </span><span class="s1">__get__(self: _GFD</span><span class="s5">, </span><span class="s1">obj: Any</span><span class="s5">, </span><span class="s1">cls: Any) -&gt; Union[_GFD</span><span class="s5">, </span><span class="s1">_T_co]:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">__set__(self</span><span class="s5">, </span><span class="s1">instance: Any</span><span class="s5">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+        <span class="s3">def </span><span class="s1">__delete__(self</span><span class="s5">, </span><span class="s1">instance: Any) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s3">def </span><span class="s1">_reset(self</span><span class="s5">, </span><span class="s1">obj: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">reset(cls</span><span class="s5">, </span><span class="s1">obj: Any</span><span class="s5">, </span><span class="s1">name: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s3">class </span><span class="s1">_non_memoized_property(generic_fn_descriptor[_T_co]):</span>
+    <span class="s2">&quot;&quot;&quot;a plain descriptor that proxies a function. 
+ 
+    primary rationale is to provide a plain attribute that's 
+    compatible with memoized_property which is also recognized as equivalent 
+    by mypy. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">cls):</span>
+            <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">self</span>
+            <span class="s3">return </span><span class="s1">self.fget(obj)</span>
+
+
+<span class="s3">class </span><span class="s1">_memoized_property(generic_fn_descriptor[_T_co]):</span>
+    <span class="s2">&quot;&quot;&quot;A read-only @property that is only evaluated once.&quot;&quot;&quot;</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">cls):</span>
+            <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">self</span>
+            <span class="s1">obj.__dict__[self.__name__] = result = self.fget(obj)</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">_reset(self</span><span class="s5">, </span><span class="s1">obj):</span>
+        <span class="s1">_memoized_property.reset(obj</span><span class="s5">, </span><span class="s1">self.__name__)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">reset(cls</span><span class="s5">, </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">name):</span>
+        <span class="s1">obj.__dict__.pop(name</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+
+<span class="s0"># despite many attempts to get Mypy to recognize an overridden descriptor</span>
+<span class="s0"># where one is memoized and the other isn't, there seems to be no reliable</span>
+<span class="s0"># way other than completely deceiving the type checker into thinking there</span>
+<span class="s0"># is just one single descriptor type everywhere.  Otherwise, if a superclass</span>
+<span class="s0"># has non-memoized and subclass has memoized, that requires</span>
+<span class="s0"># &quot;class memoized(non_memoized)&quot;.  but then if a superclass has memoized and</span>
+<span class="s0"># superclass has non-memoized, the class hierarchy of the descriptors</span>
+<span class="s0"># would need to be reversed; &quot;class non_memoized(memoized)&quot;.  so there's no</span>
+<span class="s0"># way to achieve this.</span>
+<span class="s0"># additional issues, RO properties:</span>
+<span class="s0"># https://github.com/python/mypy/issues/12440</span>
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0"># allow memoized and non-memoized to be freely mixed by having them</span>
+    <span class="s0"># be the same class</span>
+    <span class="s1">memoized_property = generic_fn_descriptor</span>
+    <span class="s1">non_memoized_property = generic_fn_descriptor</span>
+
+    <span class="s0"># for read only situations, mypy only sees @property as read only.</span>
+    <span class="s0"># read only is needed when a subtype specializes the return type</span>
+    <span class="s0"># of a property, meaning assignment needs to be disallowed</span>
+    <span class="s1">ro_memoized_property = property</span>
+    <span class="s1">ro_non_memoized_property = property</span>
+
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s1">memoized_property = ro_memoized_property = _memoized_property</span>
+    <span class="s1">non_memoized_property = ro_non_memoized_property = _non_memoized_property</span>
+
+
+<span class="s3">def </span><span class="s1">memoized_instancemethod(fn: _F) -&gt; _F:</span>
+    <span class="s2">&quot;&quot;&quot;Decorate a method memoize its return value. 
+ 
+    Best applied to no-arg methods: memoization is not sensitive to 
+    argument values, and will always return the same value even when 
+    called with different arguments. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">oneshot(self</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s1">result = fn(self</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+        <span class="s3">def </span><span class="s1">memo(*a</span><span class="s5">, </span><span class="s1">**kw):</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+        <span class="s1">memo.__name__ = fn.__name__</span>
+        <span class="s1">memo.__doc__ = fn.__doc__</span>
+        <span class="s1">self.__dict__[fn.__name__] = memo</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">return </span><span class="s1">update_wrapper(oneshot</span><span class="s5">, </span><span class="s1">fn)  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s3">class </span><span class="s1">HasMemoized:</span>
+    <span class="s2">&quot;&quot;&quot;A mixin class that maintains the names of memoized elements in a 
+    collection for easy cache clearing, generative, etc. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s0"># support classes that want to have __slots__ with an explicit</span>
+        <span class="s0"># slot for __dict__.  not sure if that requires base __slots__ here.</span>
+        <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_memoized_keys: FrozenSet[str] = frozenset()</span>
+
+    <span class="s3">def </span><span class="s1">_reset_memoizations(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">self._memoized_keys:</span>
+            <span class="s1">self.__dict__.pop(elem</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_assert_no_memoizations(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">self._memoized_keys:</span>
+            <span class="s3">assert </span><span class="s1">elem </span><span class="s3">not in </span><span class="s1">self.__dict__</span>
+
+    <span class="s3">def </span><span class="s1">_set_memoized_attribute(self</span><span class="s5">, </span><span class="s1">key: str</span><span class="s5">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.__dict__[key] = value</span>
+        <span class="s1">self._memoized_keys |= {key}</span>
+
+    <span class="s3">class </span><span class="s1">memoized_attribute(memoized_property[_T]):</span>
+        <span class="s2">&quot;&quot;&quot;A read-only @property that is only evaluated once. 
+ 
+        :meta private: 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">fget: Callable[...</span><span class="s5">, </span><span class="s1">_T]</span>
+        <span class="s1">__doc__: Optional[str]</span>
+        <span class="s1">__name__: str</span>
+
+        <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">fget: Callable[...</span><span class="s5">, </span><span class="s1">_T]</span><span class="s5">, </span><span class="s1">doc: Optional[str] = </span><span class="s3">None</span><span class="s1">):</span>
+            <span class="s1">self.fget = fget</span>
+            <span class="s1">self.__doc__ = doc </span><span class="s3">or </span><span class="s1">fget.__doc__</span>
+            <span class="s1">self.__name__ = fget.__name__</span>
+
+        <span class="s1">@overload</span>
+        <span class="s3">def </span><span class="s1">__get__(self: _MA</span><span class="s5">, </span><span class="s1">obj: </span><span class="s3">None</span><span class="s5">, </span><span class="s1">cls: Any) -&gt; _MA: ...</span>
+
+        <span class="s1">@overload</span>
+        <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">obj: Any</span><span class="s5">, </span><span class="s1">cls: Any) -&gt; _T: ...</span>
+
+        <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">cls):</span>
+            <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">self</span>
+            <span class="s1">obj.__dict__[self.__name__] = result = self.fget(obj)</span>
+            <span class="s1">obj._memoized_keys |= {self.__name__}</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">memoized_instancemethod(cls</span><span class="s5">, </span><span class="s1">fn: _F) -&gt; _F:</span>
+        <span class="s2">&quot;&quot;&quot;Decorate a method memoize its return value. 
+ 
+        :meta private: 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">oneshot(self: Any</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; Any:</span>
+            <span class="s1">result = fn(self</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+            <span class="s3">def </span><span class="s1">memo(*a</span><span class="s5">, </span><span class="s1">**kw):</span>
+                <span class="s3">return </span><span class="s1">result</span>
+
+            <span class="s1">memo.__name__ = fn.__name__</span>
+            <span class="s1">memo.__doc__ = fn.__doc__</span>
+            <span class="s1">self.__dict__[fn.__name__] = memo</span>
+            <span class="s1">self._memoized_keys |= {fn.__name__}</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+        <span class="s3">return </span><span class="s1">update_wrapper(oneshot</span><span class="s5">, </span><span class="s1">fn)  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s1">HasMemoized_ro_memoized_attribute = property</span>
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s1">HasMemoized_ro_memoized_attribute = HasMemoized.memoized_attribute</span>
+
+
+<span class="s3">class </span><span class="s1">MemoizedSlots:</span>
+    <span class="s2">&quot;&quot;&quot;Apply memoized items to an object using a __getattr__ scheme. 
+ 
+    This allows the functionality of memoized_property and 
+    memoized_instancemethod to be available to a class using __slots__. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">_fallback_getattr(self</span><span class="s5">, </span><span class="s1">key):</span>
+        <span class="s3">raise </span><span class="s1">AttributeError(key)</span>
+
+    <span class="s3">def </span><span class="s1">__getattr__(self</span><span class="s5">, </span><span class="s1">key: str) -&gt; Any:</span>
+        <span class="s3">if </span><span class="s1">key.startswith(</span><span class="s4">&quot;_memoized_attr_&quot;</span><span class="s1">) </span><span class="s3">or </span><span class="s1">key.startswith(</span>
+            <span class="s4">&quot;_memoized_method_&quot;</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">AttributeError(key)</span>
+        <span class="s0"># to avoid recursion errors when interacting with other __getattr__</span>
+        <span class="s0"># schemes that refer to this one, when testing for memoized method</span>
+        <span class="s0"># look at __class__ only rather than going into __getattr__ again.</span>
+        <span class="s3">elif </span><span class="s1">hasattr(self.__class__</span><span class="s5">, </span><span class="s4">f&quot;_memoized_attr_</span><span class="s7">{</span><span class="s1">key</span><span class="s7">}</span><span class="s4">&quot;</span><span class="s1">):</span>
+            <span class="s1">value = getattr(self</span><span class="s5">, </span><span class="s4">f&quot;_memoized_attr_</span><span class="s7">{</span><span class="s1">key</span><span class="s7">}</span><span class="s4">&quot;</span><span class="s1">)()</span>
+            <span class="s1">setattr(self</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value)</span>
+            <span class="s3">return </span><span class="s1">value</span>
+        <span class="s3">elif </span><span class="s1">hasattr(self.__class__</span><span class="s5">, </span><span class="s4">f&quot;_memoized_method_</span><span class="s7">{</span><span class="s1">key</span><span class="s7">}</span><span class="s4">&quot;</span><span class="s1">):</span>
+            <span class="s1">fn = getattr(self</span><span class="s5">, </span><span class="s4">f&quot;_memoized_method_</span><span class="s7">{</span><span class="s1">key</span><span class="s7">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+
+            <span class="s3">def </span><span class="s1">oneshot(*args</span><span class="s5">, </span><span class="s1">**kw):</span>
+                <span class="s1">result = fn(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+                <span class="s3">def </span><span class="s1">memo(*a</span><span class="s5">, </span><span class="s1">**kw):</span>
+                    <span class="s3">return </span><span class="s1">result</span>
+
+                <span class="s1">memo.__name__ = fn.__name__</span>
+                <span class="s1">memo.__doc__ = fn.__doc__</span>
+                <span class="s1">setattr(self</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">memo)</span>
+                <span class="s3">return </span><span class="s1">result</span>
+
+            <span class="s1">oneshot.__doc__ = fn.__doc__</span>
+            <span class="s3">return </span><span class="s1">oneshot</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._fallback_getattr(key)</span>
+
+
+<span class="s0"># from paste.deploy.converters</span>
+<span class="s3">def </span><span class="s1">asbool(obj: Any) -&gt; bool:</span>
+    <span class="s3">if </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">str):</span>
+        <span class="s1">obj = obj.strip().lower()</span>
+        <span class="s3">if </span><span class="s1">obj </span><span class="s3">in </span><span class="s1">[</span><span class="s4">&quot;true&quot;</span><span class="s5">, </span><span class="s4">&quot;yes&quot;</span><span class="s5">, </span><span class="s4">&quot;on&quot;</span><span class="s5">, </span><span class="s4">&quot;y&quot;</span><span class="s5">, </span><span class="s4">&quot;t&quot;</span><span class="s5">, </span><span class="s4">&quot;1&quot;</span><span class="s1">]:</span>
+            <span class="s3">return True</span>
+        <span class="s3">elif </span><span class="s1">obj </span><span class="s3">in </span><span class="s1">[</span><span class="s4">&quot;false&quot;</span><span class="s5">, </span><span class="s4">&quot;no&quot;</span><span class="s5">, </span><span class="s4">&quot;off&quot;</span><span class="s5">, </span><span class="s4">&quot;n&quot;</span><span class="s5">, </span><span class="s4">&quot;f&quot;</span><span class="s5">, </span><span class="s4">&quot;0&quot;</span><span class="s1">]:</span>
+            <span class="s3">return False</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;String is not true/false: %r&quot; </span><span class="s1">% obj)</span>
+    <span class="s3">return </span><span class="s1">bool(obj)</span>
+
+
+<span class="s3">def </span><span class="s1">bool_or_str(*text: str) -&gt; Callable[[str]</span><span class="s5">, </span><span class="s1">Union[str</span><span class="s5">, </span><span class="s1">bool]]:</span>
+    <span class="s2">&quot;&quot;&quot;Return a callable that will evaluate a string as 
+    boolean, or one of a set of &quot;alternate&quot; string values. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">bool_or_value(obj: str) -&gt; Union[str</span><span class="s5">, </span><span class="s1">bool]:</span>
+        <span class="s3">if </span><span class="s1">obj </span><span class="s3">in </span><span class="s1">text:</span>
+            <span class="s3">return </span><span class="s1">obj</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">asbool(obj)</span>
+
+    <span class="s3">return </span><span class="s1">bool_or_value</span>
+
+
+<span class="s3">def </span><span class="s1">asint(value: Any) -&gt; Optional[int]:</span>
+    <span class="s2">&quot;&quot;&quot;Coerce to integer.&quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">value </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">value</span>
+    <span class="s3">return </span><span class="s1">int(value)</span>
+
+
+<span class="s3">def </span><span class="s1">coerce_kw_type(</span>
+    <span class="s1">kw: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">,</span>
+    <span class="s1">key: str</span><span class="s5">,</span>
+    <span class="s1">type_: Type[Any]</span><span class="s5">,</span>
+    <span class="s1">flexi_bool: bool = </span><span class="s3">True</span><span class="s5">,</span>
+    <span class="s1">dest: Optional[Dict[str</span><span class="s5">, </span><span class="s1">Any]] = </span><span class="s3">None</span><span class="s5">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s2">r&quot;&quot;&quot;If 'key' is present in dict 'kw', coerce its value to type 'type\_' if 
+    necessary.  If 'flexi_bool' is True, the string '0' is considered false 
+    when coercing to boolean. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">dest </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">dest = kw</span>
+
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s1">key </span><span class="s3">in </span><span class="s1">kw</span>
+        <span class="s3">and </span><span class="s1">(</span><span class="s3">not </span><span class="s1">isinstance(type_</span><span class="s5">, </span><span class="s1">type) </span><span class="s3">or not </span><span class="s1">isinstance(kw[key]</span><span class="s5">, </span><span class="s1">type_))</span>
+        <span class="s3">and </span><span class="s1">kw[key] </span><span class="s3">is not None</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">type_ </span><span class="s3">is </span><span class="s1">bool </span><span class="s3">and </span><span class="s1">flexi_bool:</span>
+            <span class="s1">dest[key] = asbool(kw[key])</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">dest[key] = type_(kw[key])</span>
+
+
+<span class="s3">def </span><span class="s1">constructor_key(obj: Any</span><span class="s5">, </span><span class="s1">cls: Type[Any]) -&gt; Tuple[Any</span><span class="s5">, </span><span class="s1">...]:</span>
+    <span class="s2">&quot;&quot;&quot;Produce a tuple structure that is cacheable using the __dict__ of 
+    obj to retrieve values 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">names = get_cls_kwargs(cls)</span>
+    <span class="s3">return </span><span class="s1">(cls</span><span class="s5">,</span><span class="s1">) + tuple(</span>
+        <span class="s1">(k</span><span class="s5">, </span><span class="s1">obj.__dict__[k]) </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">names </span><span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">obj.__dict__</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">constructor_copy(obj: _T</span><span class="s5">, </span><span class="s1">cls: Type[_T]</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; _T:</span>
+    <span class="s2">&quot;&quot;&quot;Instantiate cls using the __dict__ of obj as constructor arguments. 
+ 
+    Uses inspect to match the named arguments of ``cls``. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">names = get_cls_kwargs(cls)</span>
+    <span class="s1">kw.update(</span>
+        <span class="s1">(k</span><span class="s5">, </span><span class="s1">obj.__dict__[k]) </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">names.difference(kw) </span><span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">obj.__dict__</span>
+    <span class="s1">)</span>
+    <span class="s3">return </span><span class="s1">cls(*args</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+
+<span class="s3">def </span><span class="s1">counter() -&gt; Callable[[]</span><span class="s5">, </span><span class="s1">int]:</span>
+    <span class="s2">&quot;&quot;&quot;Return a threadsafe counter function.&quot;&quot;&quot;</span>
+
+    <span class="s1">lock = threading.Lock()</span>
+    <span class="s1">counter = itertools.count(</span><span class="s6">1</span><span class="s1">)</span>
+
+    <span class="s0"># avoid the 2to3 &quot;next&quot; transformation...</span>
+    <span class="s3">def </span><span class="s1">_next():</span>
+        <span class="s3">with </span><span class="s1">lock:</span>
+            <span class="s3">return </span><span class="s1">next(counter)</span>
+
+    <span class="s3">return </span><span class="s1">_next</span>
+
+
+<span class="s3">def </span><span class="s1">duck_type_collection(</span>
+    <span class="s1">specimen: Any</span><span class="s5">, </span><span class="s1">default: Optional[Type[Any]] = </span><span class="s3">None</span>
+<span class="s1">) -&gt; Optional[Type[Any]]:</span>
+    <span class="s2">&quot;&quot;&quot;Given an instance or class, guess if it is or is acting as one of 
+    the basic collection types: list, set and dict.  If the __emulates__ 
+    property is present, return that preferentially. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">hasattr(specimen</span><span class="s5">, </span><span class="s4">&quot;__emulates__&quot;</span><span class="s1">):</span>
+        <span class="s0"># canonicalize set vs sets.Set to a standard: the builtin set</span>
+        <span class="s3">if </span><span class="s1">specimen.__emulates__ </span><span class="s3">is not None and </span><span class="s1">issubclass(</span>
+            <span class="s1">specimen.__emulates__</span><span class="s5">, </span><span class="s1">set</span>
+        <span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">set</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">specimen.__emulates__  </span><span class="s0"># type: ignore</span>
+
+    <span class="s1">isa = issubclass </span><span class="s3">if </span><span class="s1">isinstance(specimen</span><span class="s5">, </span><span class="s1">type) </span><span class="s3">else </span><span class="s1">isinstance</span>
+    <span class="s3">if </span><span class="s1">isa(specimen</span><span class="s5">, </span><span class="s1">list):</span>
+        <span class="s3">return </span><span class="s1">list</span>
+    <span class="s3">elif </span><span class="s1">isa(specimen</span><span class="s5">, </span><span class="s1">set):</span>
+        <span class="s3">return </span><span class="s1">set</span>
+    <span class="s3">elif </span><span class="s1">isa(specimen</span><span class="s5">, </span><span class="s1">dict):</span>
+        <span class="s3">return </span><span class="s1">dict</span>
+
+    <span class="s3">if </span><span class="s1">hasattr(specimen</span><span class="s5">, </span><span class="s4">&quot;append&quot;</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">list</span>
+    <span class="s3">elif </span><span class="s1">hasattr(specimen</span><span class="s5">, </span><span class="s4">&quot;add&quot;</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">set</span>
+    <span class="s3">elif </span><span class="s1">hasattr(specimen</span><span class="s5">, </span><span class="s4">&quot;set&quot;</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">dict</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">default</span>
+
+
+<span class="s3">def </span><span class="s1">assert_arg_type(</span>
+    <span class="s1">arg: Any</span><span class="s5">, </span><span class="s1">argtype: Union[Tuple[Type[Any]</span><span class="s5">, </span><span class="s1">...]</span><span class="s5">, </span><span class="s1">Type[Any]]</span><span class="s5">, </span><span class="s1">name: str</span>
+<span class="s1">) -&gt; Any:</span>
+    <span class="s3">if </span><span class="s1">isinstance(arg</span><span class="s5">, </span><span class="s1">argtype):</span>
+        <span class="s3">return </span><span class="s1">arg</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">isinstance(argtype</span><span class="s5">, </span><span class="s1">tuple):</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;Argument '%s' is expected to be one of type %s, got '%s'&quot;</span>
+                <span class="s1">% (name</span><span class="s5">, </span><span class="s4">&quot; or &quot;</span><span class="s1">.join(</span><span class="s4">&quot;'%s'&quot; </span><span class="s1">% a </span><span class="s3">for </span><span class="s1">a </span><span class="s3">in </span><span class="s1">argtype)</span><span class="s5">, </span><span class="s1">type(arg))</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;Argument '%s' is expected to be of type '%s', got '%s'&quot;</span>
+                <span class="s1">% (name</span><span class="s5">, </span><span class="s1">argtype</span><span class="s5">, </span><span class="s1">type(arg))</span>
+            <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">dictlike_iteritems(dictlike):</span>
+    <span class="s2">&quot;&quot;&quot;Return a (key, value) iterator for almost any dict-like object.&quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s1">hasattr(dictlike</span><span class="s5">, </span><span class="s4">&quot;items&quot;</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">list(dictlike.items())</span>
+
+    <span class="s1">getter = getattr(dictlike</span><span class="s5">, </span><span class="s4">&quot;__getitem__&quot;</span><span class="s5">, </span><span class="s1">getattr(dictlike</span><span class="s5">, </span><span class="s4">&quot;get&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">))</span>
+    <span class="s3">if </span><span class="s1">getter </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;Object '%r' is not dict-like&quot; </span><span class="s1">% dictlike)</span>
+
+    <span class="s3">if </span><span class="s1">hasattr(dictlike</span><span class="s5">, </span><span class="s4">&quot;iterkeys&quot;</span><span class="s1">):</span>
+
+        <span class="s3">def </span><span class="s1">iterator():</span>
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">dictlike.iterkeys():</span>
+                <span class="s3">assert </span><span class="s1">getter </span><span class="s3">is not None</span>
+                <span class="s3">yield </span><span class="s1">key</span><span class="s5">, </span><span class="s1">getter(key)</span>
+
+        <span class="s3">return </span><span class="s1">iterator()</span>
+    <span class="s3">elif </span><span class="s1">hasattr(dictlike</span><span class="s5">, </span><span class="s4">&quot;keys&quot;</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">iter((key</span><span class="s5">, </span><span class="s1">getter(key)) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">dictlike.keys())</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;Object '%r' is not dict-like&quot; </span><span class="s1">% dictlike)</span>
+
+
+<span class="s3">class </span><span class="s1">classproperty(property):</span>
+    <span class="s2">&quot;&quot;&quot;A decorator that behaves like @property except that operates 
+    on classes rather than instances. 
+ 
+    The decorator is currently special when using the declarative 
+    module, but note that the 
+    :class:`~.sqlalchemy.ext.declarative.declared_attr` 
+    decorator should be used for this purpose with declarative. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">fget: Callable[[Any]</span><span class="s5">, </span><span class="s1">Any]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">fget: Callable[[Any]</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">*arg: Any</span><span class="s5">, </span><span class="s1">**kw: Any):</span>
+        <span class="s1">super().__init__(fget</span><span class="s5">, </span><span class="s1">*arg</span><span class="s5">, </span><span class="s1">**kw)</span>
+        <span class="s1">self.__doc__ = fget.__doc__</span>
+
+    <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">obj: Any</span><span class="s5">, </span><span class="s1">cls: Optional[type] = </span><span class="s3">None</span><span class="s1">) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">self.fget(cls)</span>
+
+
+<span class="s3">class </span><span class="s1">hybridproperty(Generic[_T]):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">func: Callable[...</span><span class="s5">, </span><span class="s1">_T]):</span>
+        <span class="s1">self.func = func</span>
+        <span class="s1">self.clslevel = func</span>
+
+    <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">instance: Any</span><span class="s5">, </span><span class="s1">owner: Any) -&gt; _T:</span>
+        <span class="s3">if </span><span class="s1">instance </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">clsval = self.clslevel(owner)</span>
+            <span class="s3">return </span><span class="s1">clsval</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.func(instance)</span>
+
+    <span class="s3">def </span><span class="s1">classlevel(self</span><span class="s5">, </span><span class="s1">func: Callable[...</span><span class="s5">, </span><span class="s1">Any]) -&gt; hybridproperty[_T]:</span>
+        <span class="s1">self.clslevel = func</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+
+<span class="s3">class </span><span class="s1">rw_hybridproperty(Generic[_T]):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">func: Callable[...</span><span class="s5">, </span><span class="s1">_T]):</span>
+        <span class="s1">self.func = func</span>
+        <span class="s1">self.clslevel = func</span>
+        <span class="s1">self.setfn: Optional[Callable[...</span><span class="s5">, </span><span class="s1">Any]] = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">instance: Any</span><span class="s5">, </span><span class="s1">owner: Any) -&gt; _T:</span>
+        <span class="s3">if </span><span class="s1">instance </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">clsval = self.clslevel(owner)</span>
+            <span class="s3">return </span><span class="s1">clsval</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.func(instance)</span>
+
+    <span class="s3">def </span><span class="s1">__set__(self</span><span class="s5">, </span><span class="s1">instance: Any</span><span class="s5">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">assert </span><span class="s1">self.setfn </span><span class="s3">is not None</span>
+        <span class="s1">self.setfn(instance</span><span class="s5">, </span><span class="s1">value)</span>
+
+    <span class="s3">def </span><span class="s1">setter(self</span><span class="s5">, </span><span class="s1">func: Callable[...</span><span class="s5">, </span><span class="s1">Any]) -&gt; rw_hybridproperty[_T]:</span>
+        <span class="s1">self.setfn = func</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">classlevel(self</span><span class="s5">, </span><span class="s1">func: Callable[...</span><span class="s5">, </span><span class="s1">Any]) -&gt; rw_hybridproperty[_T]:</span>
+        <span class="s1">self.clslevel = func</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+
+<span class="s3">class </span><span class="s1">hybridmethod(Generic[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Decorate a function as cls- or instance- level.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">func: Callable[...</span><span class="s5">, </span><span class="s1">_T]):</span>
+        <span class="s1">self.func = self.__func__ = func</span>
+        <span class="s1">self.clslevel = func</span>
+
+    <span class="s3">def </span><span class="s1">__get__(self</span><span class="s5">, </span><span class="s1">instance: Any</span><span class="s5">, </span><span class="s1">owner: Any) -&gt; Callable[...</span><span class="s5">, </span><span class="s1">_T]:</span>
+        <span class="s3">if </span><span class="s1">instance </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.clslevel.__get__(owner</span><span class="s5">, </span><span class="s1">owner.__class__)  </span><span class="s0"># type:ignore</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.func.__get__(instance</span><span class="s5">, </span><span class="s1">owner)  </span><span class="s0"># type:ignore</span>
+
+    <span class="s3">def </span><span class="s1">classlevel(self</span><span class="s5">, </span><span class="s1">func: Callable[...</span><span class="s5">, </span><span class="s1">Any]) -&gt; hybridmethod[_T]:</span>
+        <span class="s1">self.clslevel = func</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+
+<span class="s3">class </span><span class="s1">symbol(int):</span>
+    <span class="s2">&quot;&quot;&quot;A constant symbol. 
+ 
+    &gt;&gt;&gt; symbol('foo') is symbol('foo') 
+    True 
+    &gt;&gt;&gt; symbol('foo') 
+    &lt;symbol 'foo&gt; 
+ 
+    A slight refinement of the MAGICCOOKIE=object() pattern.  The primary 
+    advantage of symbol() is its repr().  They are also singletons. 
+ 
+    Repeated calls of symbol('name') will all return the same instance. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name: str</span>
+
+    <span class="s1">symbols: Dict[str</span><span class="s5">, </span><span class="s1">symbol] = {}</span>
+    <span class="s1">_lock = threading.Lock()</span>
+
+    <span class="s3">def </span><span class="s1">__new__(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">name: str</span><span class="s5">,</span>
+        <span class="s1">doc: Optional[str] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">canonical: Optional[int] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; symbol:</span>
+        <span class="s3">with </span><span class="s1">cls._lock:</span>
+            <span class="s1">sym = cls.symbols.get(name)</span>
+            <span class="s3">if </span><span class="s1">sym </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">assert </span><span class="s1">isinstance(name</span><span class="s5">, </span><span class="s1">str)</span>
+                <span class="s3">if </span><span class="s1">canonical </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s1">canonical = hash(name)</span>
+                <span class="s1">sym = int.__new__(symbol</span><span class="s5">, </span><span class="s1">canonical)</span>
+                <span class="s1">sym.name = name</span>
+                <span class="s3">if </span><span class="s1">doc:</span>
+                    <span class="s1">sym.__doc__ = doc</span>
+
+                <span class="s0"># NOTE: we should ultimately get rid of this global thing,</span>
+                <span class="s0"># however, currently it is to support pickling.  The best</span>
+                <span class="s0"># change would be when we are on py3.11 at a minimum, we</span>
+                <span class="s0"># switch to stdlib enum.IntFlag.</span>
+                <span class="s1">cls.symbols[name] = sym</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">canonical </span><span class="s3">and </span><span class="s1">canonical != sym:</span>
+                    <span class="s3">raise </span><span class="s1">TypeError(</span>
+                        <span class="s4">f&quot;Can't replace canonical symbol for </span><span class="s7">{</span><span class="s1">name</span><span class="s7">!r} </span><span class="s4">&quot;</span>
+                        <span class="s4">f&quot;with new int value </span><span class="s7">{</span><span class="s1">canonical</span><span class="s7">}</span><span class="s4">&quot;</span>
+                    <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">sym</span>
+
+    <span class="s3">def </span><span class="s1">__reduce__(self):</span>
+        <span class="s3">return </span><span class="s1">symbol</span><span class="s5">, </span><span class="s1">(self.name</span><span class="s5">, </span><span class="s4">&quot;x&quot;</span><span class="s5">, </span><span class="s1">int(self))</span>
+
+    <span class="s3">def </span><span class="s1">__str__(self):</span>
+        <span class="s3">return </span><span class="s1">repr(self)</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self):</span>
+        <span class="s3">return </span><span class="s4">f&quot;symbol(</span><span class="s7">{</span><span class="s1">self.name</span><span class="s7">!r}</span><span class="s4">)&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">_IntFlagMeta(type):</span>
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">classname: str</span><span class="s5">,</span>
+        <span class="s1">bases: Tuple[Type[Any]</span><span class="s5">, </span><span class="s1">...]</span><span class="s5">,</span>
+        <span class="s1">dict_: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">items: List[symbol]</span>
+        <span class="s1">cls._items = items = []</span>
+        <span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">dict_.items():</span>
+            <span class="s3">if </span><span class="s1">re.match(</span><span class="s4">r&quot;^__.*__$&quot;</span><span class="s5">, </span><span class="s1">k):</span>
+                <span class="s3">continue</span>
+            <span class="s3">if </span><span class="s1">isinstance(v</span><span class="s5">, </span><span class="s1">int):</span>
+                <span class="s1">sym = symbol(k</span><span class="s5">, </span><span class="s1">canonical=v)</span>
+            <span class="s3">elif not </span><span class="s1">k.startswith(</span><span class="s4">&quot;_&quot;</span><span class="s1">):</span>
+                <span class="s3">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;Expected integer values for IntFlag&quot;</span><span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">continue</span>
+            <span class="s1">setattr(cls</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">sym)</span>
+            <span class="s1">items.append(sym)</span>
+
+        <span class="s1">cls.__members__ = _collections.immutabledict(</span>
+            <span class="s1">{sym.name: sym </span><span class="s3">for </span><span class="s1">sym </span><span class="s3">in </span><span class="s1">items}</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[symbol]:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+            <span class="s4">&quot;iter not implemented to ensure compatibility with &quot;</span>
+            <span class="s4">&quot;Python 3.11 IntFlag.  Please use __members__.  See &quot;</span>
+            <span class="s4">&quot;https://github.com/python/cpython/issues/99304&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_FastIntFlag(metaclass=_IntFlagMeta):</span>
+    <span class="s2">&quot;&quot;&quot;An 'IntFlag' copycat that isn't slow when performing bitwise 
+    operations. 
+ 
+    the ``FastIntFlag`` class will return ``enum.IntFlag`` under TYPE_CHECKING 
+    and ``_FastIntFlag`` otherwise. 
+ 
+    &quot;&quot;&quot;</span>
+
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">enum </span><span class="s3">import </span><span class="s1">IntFlag</span>
+
+    <span class="s1">FastIntFlag = IntFlag</span>
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s1">FastIntFlag = _FastIntFlag</span>
+
+
+<span class="s1">_E = TypeVar(</span><span class="s4">&quot;_E&quot;</span><span class="s5">, </span><span class="s1">bound=enum.Enum)</span>
+
+
+<span class="s3">def </span><span class="s1">parse_user_argument_for_enum(</span>
+    <span class="s1">arg: Any</span><span class="s5">,</span>
+    <span class="s1">choices: Dict[_E</span><span class="s5">, </span><span class="s1">List[Any]]</span><span class="s5">,</span>
+    <span class="s1">name: str</span><span class="s5">,</span>
+    <span class="s1">resolve_symbol_names: bool = </span><span class="s3">False</span><span class="s5">,</span>
+<span class="s1">) -&gt; Optional[_E]:</span>
+    <span class="s2">&quot;&quot;&quot;Given a user parameter, parse the parameter into a chosen value 
+    from a list of choice objects, typically Enum values. 
+ 
+    The user argument can be a string name that matches the name of a 
+    symbol, or the symbol object itself, or any number of alternate choices 
+    such as True/False/ None etc. 
+ 
+    :param arg: the user argument. 
+    :param choices: dictionary of enum values to lists of possible 
+        entries for each. 
+    :param name: name of the argument.   Used in an :class:`.ArgumentError` 
+        that is raised if the parameter doesn't match any available argument. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">for </span><span class="s1">enum_value</span><span class="s5">, </span><span class="s1">choice </span><span class="s3">in </span><span class="s1">choices.items():</span>
+        <span class="s3">if </span><span class="s1">arg </span><span class="s3">is </span><span class="s1">enum_value:</span>
+            <span class="s3">return </span><span class="s1">enum_value</span>
+        <span class="s3">elif </span><span class="s1">resolve_symbol_names </span><span class="s3">and </span><span class="s1">arg == enum_value.name:</span>
+            <span class="s3">return </span><span class="s1">enum_value</span>
+        <span class="s3">elif </span><span class="s1">arg </span><span class="s3">in </span><span class="s1">choice:</span>
+            <span class="s3">return </span><span class="s1">enum_value</span>
+
+    <span class="s3">if </span><span class="s1">arg </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s3">return None</span>
+
+    <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span><span class="s4">f&quot;Invalid value for '</span><span class="s7">{</span><span class="s1">name</span><span class="s7">}</span><span class="s4">': </span><span class="s7">{</span><span class="s1">arg</span><span class="s7">!r}</span><span class="s4">&quot;</span><span class="s1">)</span>
+
+
+<span class="s1">_creation_order = </span><span class="s6">1</span>
+
+
+<span class="s3">def </span><span class="s1">set_creation_order(instance: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s2">&quot;&quot;&quot;Assign a '_creation_order' sequence to the given instance. 
+ 
+    This allows multiple instances to be sorted in order of creation 
+    (typically within a single thread; the counter is not particularly 
+    threadsafe). 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">global </span><span class="s1">_creation_order</span>
+    <span class="s1">instance._creation_order = _creation_order</span>
+    <span class="s1">_creation_order += </span><span class="s6">1</span>
+
+
+<span class="s3">def </span><span class="s1">warn_exception(func: Callable[...</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; Any:</span>
+    <span class="s2">&quot;&quot;&quot;executes the given function, catches all exceptions and converts to 
+    a warning. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">func(*args</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+    <span class="s3">except </span><span class="s1">Exception:</span>
+        <span class="s1">warn(</span><span class="s4">&quot;%s('%s') ignored&quot; </span><span class="s1">% sys.exc_info()[</span><span class="s6">0</span><span class="s1">:</span><span class="s6">2</span><span class="s1">])</span>
+
+
+<span class="s3">def </span><span class="s1">ellipses_string(value</span><span class="s5">, </span><span class="s1">len_=</span><span class="s6">25</span><span class="s1">):</span>
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">len(value) &gt; len_:</span>
+            <span class="s3">return </span><span class="s4">&quot;%s...&quot; </span><span class="s1">% value[</span><span class="s6">0</span><span class="s1">:len_]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">value</span>
+    <span class="s3">except </span><span class="s1">TypeError:</span>
+        <span class="s3">return </span><span class="s1">value</span>
+
+
+<span class="s3">class </span><span class="s1">_hash_limit_string(str):</span>
+    <span class="s2">&quot;&quot;&quot;A string subclass that can only be hashed on a maximum amount 
+    of unique values. 
+ 
+    This is used for warnings so that we can send out parameterized warnings 
+    without the __warningregistry__ of the module,  or the non-overridable 
+    &quot;once&quot; registry within warnings.py, overloading memory, 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_hash: int</span>
+
+    <span class="s3">def </span><span class="s1">__new__(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">value: str</span><span class="s5">, </span><span class="s1">num: int</span><span class="s5">, </span><span class="s1">args: Sequence[Any]</span>
+    <span class="s1">) -&gt; _hash_limit_string:</span>
+        <span class="s1">interpolated = (value % args) + (</span>
+            <span class="s4">&quot; (this warning may be suppressed after %d occurrences)&quot; </span><span class="s1">% num</span>
+        <span class="s1">)</span>
+        <span class="s1">self = super().__new__(cls</span><span class="s5">, </span><span class="s1">interpolated)</span>
+        <span class="s1">self._hash = hash(</span><span class="s4">&quot;%s_%d&quot; </span><span class="s1">% (value</span><span class="s5">, </span><span class="s1">hash(interpolated) % num))</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__hash__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">self._hash</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">hash(self) == hash(other)</span>
+
+
+<span class="s3">def </span><span class="s1">warn(msg: str</span><span class="s5">, </span><span class="s1">code: Optional[str] = </span><span class="s3">None</span><span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s2">&quot;&quot;&quot;Issue a warning. 
+ 
+    If msg is a string, :class:`.exc.SAWarning` is used as 
+    the category. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">code:</span>
+        <span class="s1">_warnings_warn(exc.SAWarning(msg</span><span class="s5">, </span><span class="s1">code=code))</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">_warnings_warn(msg</span><span class="s5">, </span><span class="s1">exc.SAWarning)</span>
+
+
+<span class="s3">def </span><span class="s1">warn_limited(msg: str</span><span class="s5">, </span><span class="s1">args: Sequence[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s2">&quot;&quot;&quot;Issue a warning with a parameterized string, limiting the number 
+    of registrations. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">args:</span>
+        <span class="s1">msg = _hash_limit_string(msg</span><span class="s5">, </span><span class="s6">10</span><span class="s5">, </span><span class="s1">args)</span>
+    <span class="s1">_warnings_warn(msg</span><span class="s5">, </span><span class="s1">exc.SAWarning)</span>
+
+
+<span class="s1">_warning_tags: Dict[CodeType</span><span class="s5">, </span><span class="s1">Tuple[str</span><span class="s5">, </span><span class="s1">Type[Warning]]] = {}</span>
+
+
+<span class="s3">def </span><span class="s1">tag_method_for_warnings(</span>
+    <span class="s1">message: str</span><span class="s5">, </span><span class="s1">category: Type[Warning]</span>
+<span class="s1">) -&gt; Callable[[_F]</span><span class="s5">, </span><span class="s1">_F]:</span>
+    <span class="s3">def </span><span class="s1">go(fn):</span>
+        <span class="s1">_warning_tags[fn.__code__] = (message</span><span class="s5">, </span><span class="s1">category)</span>
+        <span class="s3">return </span><span class="s1">fn</span>
+
+    <span class="s3">return </span><span class="s1">go</span>
+
+
+<span class="s1">_not_sa_pattern = re.compile(</span><span class="s4">r&quot;^(?:sqlalchemy\.(?!testing)|alembic\.)&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_warnings_warn(</span>
+    <span class="s1">message: Union[str</span><span class="s5">, </span><span class="s1">Warning]</span><span class="s5">,</span>
+    <span class="s1">category: Optional[Type[Warning]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">stacklevel: int = </span><span class="s6">2</span><span class="s5">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s0"># adjust the given stacklevel to be outside of SQLAlchemy</span>
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">frame = sys._getframe(stacklevel)</span>
+    <span class="s3">except </span><span class="s1">ValueError:</span>
+        <span class="s0"># being called from less than 3 (or given) stacklevels, weird,</span>
+        <span class="s0"># but don't crash</span>
+        <span class="s1">stacklevel = </span><span class="s6">0</span>
+    <span class="s3">except</span><span class="s1">:</span>
+        <span class="s0"># _getframe() doesn't work, weird interpreter issue, weird,</span>
+        <span class="s0"># ok, but don't crash</span>
+        <span class="s1">stacklevel = </span><span class="s6">0</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">stacklevel_found = warning_tag_found = </span><span class="s3">False</span>
+        <span class="s3">while </span><span class="s1">frame </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s0"># using __name__ here requires that we have __name__ in the</span>
+            <span class="s0"># __globals__ of the decorated string functions we make also.</span>
+            <span class="s0"># we generate this using {&quot;__name__&quot;: fn.__module__}</span>
+            <span class="s3">if not </span><span class="s1">stacklevel_found </span><span class="s3">and not </span><span class="s1">re.match(</span>
+                <span class="s1">_not_sa_pattern</span><span class="s5">, </span><span class="s1">frame.f_globals.get(</span><span class="s4">&quot;__name__&quot;</span><span class="s5">, </span><span class="s4">&quot;&quot;</span><span class="s1">)</span>
+            <span class="s1">):</span>
+                <span class="s0"># stop incrementing stack level if an out-of-SQLA line</span>
+                <span class="s0"># were found.</span>
+                <span class="s1">stacklevel_found = </span><span class="s3">True</span>
+
+                <span class="s0"># however, for the warning tag thing, we have to keep</span>
+                <span class="s0"># scanning up the whole traceback</span>
+
+            <span class="s3">if </span><span class="s1">frame.f_code </span><span class="s3">in </span><span class="s1">_warning_tags:</span>
+                <span class="s1">warning_tag_found = </span><span class="s3">True</span>
+                <span class="s1">(_suffix</span><span class="s5">, </span><span class="s1">_category) = _warning_tags[frame.f_code]</span>
+                <span class="s1">category = category </span><span class="s3">or </span><span class="s1">_category</span>
+                <span class="s1">message = </span><span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">message</span><span class="s7">} </span><span class="s4">(</span><span class="s7">{</span><span class="s1">_suffix</span><span class="s7">}</span><span class="s4">)&quot;</span>
+
+            <span class="s1">frame = frame.f_back  </span><span class="s0"># type: ignore[assignment]</span>
+
+            <span class="s3">if not </span><span class="s1">stacklevel_found:</span>
+                <span class="s1">stacklevel += </span><span class="s6">1</span>
+            <span class="s3">elif </span><span class="s1">stacklevel_found </span><span class="s3">and </span><span class="s1">warning_tag_found:</span>
+                <span class="s3">break</span>
+
+    <span class="s3">if </span><span class="s1">category </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">warnings.warn(message</span><span class="s5">, </span><span class="s1">category</span><span class="s5">, </span><span class="s1">stacklevel=stacklevel + </span><span class="s6">1</span><span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">warnings.warn(message</span><span class="s5">, </span><span class="s1">stacklevel=stacklevel + </span><span class="s6">1</span><span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">only_once(</span>
+    <span class="s1">fn: Callable[...</span><span class="s5">, </span><span class="s1">_T]</span><span class="s5">, </span><span class="s1">retry_on_exception: bool</span>
+<span class="s1">) -&gt; Callable[...</span><span class="s5">, </span><span class="s1">Optional[_T]]:</span>
+    <span class="s2">&quot;&quot;&quot;Decorate the given function to be a no-op after it is called exactly 
+    once.&quot;&quot;&quot;</span>
+
+    <span class="s1">once = [fn]</span>
+
+    <span class="s3">def </span><span class="s1">go(*arg: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; Optional[_T]:</span>
+        <span class="s0"># strong reference fn so that it isn't garbage collected,</span>
+        <span class="s0"># which interferes with the event system's expectations</span>
+        <span class="s1">strong_fn = fn  </span><span class="s0"># noqa</span>
+        <span class="s3">if </span><span class="s1">once:</span>
+            <span class="s1">once_fn = once.pop()</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">once_fn(*arg</span><span class="s5">, </span><span class="s1">**kw)</span>
+            <span class="s3">except</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">retry_on_exception:</span>
+                    <span class="s1">once.insert(</span><span class="s6">0</span><span class="s5">, </span><span class="s1">once_fn)</span>
+                <span class="s3">raise</span>
+
+        <span class="s3">return None</span>
+
+    <span class="s3">return </span><span class="s1">go</span>
+
+
+<span class="s1">_SQLA_RE = re.compile(</span><span class="s4">r&quot;sqlalchemy/([a-z_]+/){0,2}[a-z_]+\.py&quot;</span><span class="s1">)</span>
+<span class="s1">_UNITTEST_RE = re.compile(</span><span class="s4">r&quot;unit(?:2|test2?/)&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">chop_traceback(</span>
+    <span class="s1">tb: List[str]</span><span class="s5">,</span>
+    <span class="s1">exclude_prefix: re.Pattern[str] = _UNITTEST_RE</span><span class="s5">,</span>
+    <span class="s1">exclude_suffix: re.Pattern[str] = _SQLA_RE</span><span class="s5">,</span>
+<span class="s1">) -&gt; List[str]:</span>
+    <span class="s2">&quot;&quot;&quot;Chop extraneous lines off beginning and end of a traceback. 
+ 
+    :param tb: 
+      a list of traceback lines as returned by ``traceback.format_stack()`` 
+ 
+    :param exclude_prefix: 
+      a regular expression object matching lines to skip at beginning of 
+      ``tb`` 
+ 
+    :param exclude_suffix: 
+      a regular expression object matching lines to skip at end of ``tb`` 
+    &quot;&quot;&quot;</span>
+    <span class="s1">start = </span><span class="s6">0</span>
+    <span class="s1">end = len(tb) - </span><span class="s6">1</span>
+    <span class="s3">while </span><span class="s1">start &lt;= end </span><span class="s3">and </span><span class="s1">exclude_prefix.search(tb[start]):</span>
+        <span class="s1">start += </span><span class="s6">1</span>
+    <span class="s3">while </span><span class="s1">start &lt;= end </span><span class="s3">and </span><span class="s1">exclude_suffix.search(tb[end]):</span>
+        <span class="s1">end -= </span><span class="s6">1</span>
+    <span class="s3">return </span><span class="s1">tb[start : end + </span><span class="s6">1</span><span class="s1">]</span>
+
+
+<span class="s1">NoneType = type(</span><span class="s3">None</span><span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">attrsetter(attrname):</span>
+    <span class="s1">code = </span><span class="s4">&quot;def set(obj, value):    obj.%s = value&quot; </span><span class="s1">% attrname</span>
+    <span class="s1">env = locals().copy()</span>
+    <span class="s1">exec(code</span><span class="s5">, </span><span class="s1">env)</span>
+    <span class="s3">return </span><span class="s1">env[</span><span class="s4">&quot;set&quot;</span><span class="s1">]</span>
+
+
+<span class="s1">_dunders = re.compile(</span><span class="s4">&quot;^__.+__$&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">TypingOnly:</span>
+    <span class="s2">&quot;&quot;&quot;A mixin class that marks a class as 'typing only', meaning it has 
+    absolutely no methods, attributes, or runtime functionality whatsoever. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">__init_subclass__(cls) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">TypingOnly </span><span class="s3">in </span><span class="s1">cls.__bases__:</span>
+            <span class="s1">remaining = {</span>
+                <span class="s1">name </span><span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">cls.__dict__ </span><span class="s3">if not </span><span class="s1">_dunders.match(name)</span>
+            <span class="s1">}</span>
+            <span class="s3">if </span><span class="s1">remaining:</span>
+                <span class="s3">raise </span><span class="s1">AssertionError(</span>
+                    <span class="s4">f&quot;Class </span><span class="s7">{</span><span class="s1">cls</span><span class="s7">} </span><span class="s4">directly inherits TypingOnly but has &quot;</span>
+                    <span class="s4">f&quot;additional attributes </span><span class="s7">{</span><span class="s1">remaining</span><span class="s7">}</span><span class="s4">.&quot;</span>
+                <span class="s1">)</span>
+        <span class="s1">super().__init_subclass__()</span>
+
+
+<span class="s3">class </span><span class="s1">EnsureKWArg:</span>
+    <span class="s2">r&quot;&quot;&quot;Apply translation of functions to accept \**kw arguments if they 
+    don't already. 
+ 
+    Used to ensure cross-compatibility with third party legacy code, for things 
+    like compiler visit methods that need to accept ``**kw`` arguments, 
+    but may have been copied from old code that didn't accept them. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">ensure_kwarg: str</span>
+    <span class="s4">&quot;&quot;&quot;a regular expression that indicates method names for which the method 
+    should accept ``**kw`` arguments. 
+ 
+    The class will scan for methods matching the name template and decorate 
+    them if necessary to ensure ``**kw`` parameters are accepted. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init_subclass__(cls) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">fn_reg = cls.ensure_kwarg</span>
+        <span class="s1">clsdict = cls.__dict__</span>
+        <span class="s3">if </span><span class="s1">fn_reg:</span>
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">clsdict:</span>
+                <span class="s1">m = re.match(fn_reg</span><span class="s5">, </span><span class="s1">key)</span>
+                <span class="s3">if </span><span class="s1">m:</span>
+                    <span class="s1">fn = clsdict[key]</span>
+                    <span class="s1">spec = compat.inspect_getfullargspec(fn)</span>
+                    <span class="s3">if not </span><span class="s1">spec.varkw:</span>
+                        <span class="s1">wrapped = cls._wrap_w_kw(fn)</span>
+                        <span class="s1">setattr(cls</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">wrapped)</span>
+        <span class="s1">super().__init_subclass__()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_wrap_w_kw(cls</span><span class="s5">, </span><span class="s1">fn: Callable[...</span><span class="s5">, </span><span class="s1">Any]) -&gt; Callable[...</span><span class="s5">, </span><span class="s1">Any]:</span>
+        <span class="s3">def </span><span class="s1">wrap(*arg: Any</span><span class="s5">, </span><span class="s1">**kw: Any) -&gt; Any:</span>
+            <span class="s3">return </span><span class="s1">fn(*arg)</span>
+
+        <span class="s3">return </span><span class="s1">update_wrapper(wrap</span><span class="s5">, </span><span class="s1">fn)</span>
+
+
+<span class="s3">def </span><span class="s1">wrap_callable(wrapper</span><span class="s5">, </span><span class="s1">fn):</span>
+    <span class="s2">&quot;&quot;&quot;Augment functools.update_wrapper() to work with objects with 
+    a ``__call__()`` method. 
+ 
+    :param fn: 
+      object with __call__ method 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">hasattr(fn</span><span class="s5">, </span><span class="s4">&quot;__name__&quot;</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">update_wrapper(wrapper</span><span class="s5">, </span><span class="s1">fn)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">_f = wrapper</span>
+        <span class="s1">_f.__name__ = fn.__class__.__name__</span>
+        <span class="s3">if </span><span class="s1">hasattr(fn</span><span class="s5">, </span><span class="s4">&quot;__module__&quot;</span><span class="s1">):</span>
+            <span class="s1">_f.__module__ = fn.__module__</span>
+
+        <span class="s3">if </span><span class="s1">hasattr(fn.__call__</span><span class="s5">, </span><span class="s4">&quot;__doc__&quot;</span><span class="s1">) </span><span class="s3">and </span><span class="s1">fn.__call__.__doc__:</span>
+            <span class="s1">_f.__doc__ = fn.__call__.__doc__</span>
+        <span class="s3">elif </span><span class="s1">fn.__doc__:</span>
+            <span class="s1">_f.__doc__ = fn.__doc__</span>
+
+        <span class="s3">return </span><span class="s1">_f</span>
+
+
+<span class="s3">def </span><span class="s1">quoted_token_parser(value):</span>
+    <span class="s2">&quot;&quot;&quot;Parse a dotted identifier with accommodation for quoted names. 
+ 
+    Includes support for SQL-style double quotes as a literal character. 
+ 
+    E.g.:: 
+ 
+        &gt;&gt;&gt; quoted_token_parser(&quot;name&quot;) 
+        [&quot;name&quot;] 
+        &gt;&gt;&gt; quoted_token_parser(&quot;schema.name&quot;) 
+        [&quot;schema&quot;, &quot;name&quot;] 
+        &gt;&gt;&gt; quoted_token_parser('&quot;Schema&quot;.&quot;Name&quot;') 
+        ['Schema', 'Name'] 
+        &gt;&gt;&gt; quoted_token_parser('&quot;Schema&quot;.&quot;Name&quot;&quot;Foo&quot;') 
+        ['Schema', 'Name&quot;&quot;Foo'] 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if </span><span class="s4">'&quot;' </span><span class="s3">not in </span><span class="s1">value:</span>
+        <span class="s3">return </span><span class="s1">value.split(</span><span class="s4">&quot;.&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># 0 = outside of quotes</span>
+    <span class="s0"># 1 = inside of quotes</span>
+    <span class="s1">state = </span><span class="s6">0</span>
+    <span class="s1">result: List[List[str]] = [[]]</span>
+    <span class="s1">idx = </span><span class="s6">0</span>
+    <span class="s1">lv = len(value)</span>
+    <span class="s3">while </span><span class="s1">idx &lt; lv:</span>
+        <span class="s1">char = value[idx]</span>
+        <span class="s3">if </span><span class="s1">char == </span><span class="s4">'&quot;'</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">state == </span><span class="s6">1 </span><span class="s3">and </span><span class="s1">idx &lt; lv - </span><span class="s6">1 </span><span class="s3">and </span><span class="s1">value[idx + </span><span class="s6">1</span><span class="s1">] == </span><span class="s4">'&quot;'</span><span class="s1">:</span>
+                <span class="s1">result[-</span><span class="s6">1</span><span class="s1">].append(</span><span class="s4">'&quot;'</span><span class="s1">)</span>
+                <span class="s1">idx += </span><span class="s6">1</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">state ^= </span><span class="s6">1</span>
+        <span class="s3">elif </span><span class="s1">char == </span><span class="s4">&quot;.&quot; </span><span class="s3">and </span><span class="s1">state == </span><span class="s6">0</span><span class="s1">:</span>
+            <span class="s1">result.append([])</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">result[-</span><span class="s6">1</span><span class="s1">].append(char)</span>
+        <span class="s1">idx += </span><span class="s6">1</span>
+
+    <span class="s3">return </span><span class="s1">[</span><span class="s4">&quot;&quot;</span><span class="s1">.join(token) </span><span class="s3">for </span><span class="s1">token </span><span class="s3">in </span><span class="s1">result]</span>
+
+
+<span class="s3">def </span><span class="s1">add_parameter_text(params: Any</span><span class="s5">, </span><span class="s1">text: str) -&gt; Callable[[_F]</span><span class="s5">, </span><span class="s1">_F]:</span>
+    <span class="s1">params = _collections.to_list(params)</span>
+
+    <span class="s3">def </span><span class="s1">decorate(fn):</span>
+        <span class="s1">doc = fn.__doc__ </span><span class="s3">is not None and </span><span class="s1">fn.__doc__ </span><span class="s3">or </span><span class="s4">&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">doc:</span>
+            <span class="s1">doc = inject_param_text(doc</span><span class="s5">, </span><span class="s1">{param: text </span><span class="s3">for </span><span class="s1">param </span><span class="s3">in </span><span class="s1">params})</span>
+        <span class="s1">fn.__doc__ = doc</span>
+        <span class="s3">return </span><span class="s1">fn</span>
+
+    <span class="s3">return </span><span class="s1">decorate</span>
+
+
+<span class="s3">def </span><span class="s1">_dedent_docstring(text: str) -&gt; str:</span>
+    <span class="s1">split_text = text.split(</span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot;</span><span class="s5">, </span><span class="s6">1</span><span class="s1">)</span>
+    <span class="s3">if </span><span class="s1">len(split_text) == </span><span class="s6">1</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">text</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">firstline</span><span class="s5">, </span><span class="s1">remaining = split_text</span>
+    <span class="s3">if not </span><span class="s1">firstline.startswith(</span><span class="s4">&quot; &quot;</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">firstline + </span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot; </span><span class="s1">+ textwrap.dedent(remaining)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">textwrap.dedent(text)</span>
+
+
+<span class="s3">def </span><span class="s1">inject_docstring_text(</span>
+    <span class="s1">given_doctext: Optional[str]</span><span class="s5">, </span><span class="s1">injecttext: str</span><span class="s5">, </span><span class="s1">pos: int</span>
+<span class="s1">) -&gt; str:</span>
+    <span class="s1">doctext: str = _dedent_docstring(given_doctext </span><span class="s3">or </span><span class="s4">&quot;&quot;</span><span class="s1">)</span>
+    <span class="s1">lines = doctext.split(</span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot;</span><span class="s1">)</span>
+    <span class="s3">if </span><span class="s1">len(lines) == </span><span class="s6">1</span><span class="s1">:</span>
+        <span class="s1">lines.append(</span><span class="s4">&quot;&quot;</span><span class="s1">)</span>
+    <span class="s1">injectlines = textwrap.dedent(injecttext).split(</span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot;</span><span class="s1">)</span>
+    <span class="s3">if </span><span class="s1">injectlines[</span><span class="s6">0</span><span class="s1">]:</span>
+        <span class="s1">injectlines.insert(</span><span class="s6">0</span><span class="s5">, </span><span class="s4">&quot;&quot;</span><span class="s1">)</span>
+
+    <span class="s1">blanks = [num </span><span class="s3">for </span><span class="s1">num</span><span class="s5">, </span><span class="s1">line </span><span class="s3">in </span><span class="s1">enumerate(lines) </span><span class="s3">if not </span><span class="s1">line.strip()]</span>
+    <span class="s1">blanks.insert(</span><span class="s6">0</span><span class="s5">, </span><span class="s6">0</span><span class="s1">)</span>
+
+    <span class="s1">inject_pos = blanks[min(pos</span><span class="s5">, </span><span class="s1">len(blanks) - </span><span class="s6">1</span><span class="s1">)]</span>
+
+    <span class="s1">lines = lines[</span><span class="s6">0</span><span class="s1">:inject_pos] + injectlines + lines[inject_pos:]</span>
+    <span class="s3">return </span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot;</span><span class="s1">.join(lines)</span>
+
+
+<span class="s1">_param_reg = re.compile(</span><span class="s4">r&quot;(\s+):param (.+?):&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">inject_param_text(doctext: str</span><span class="s5">, </span><span class="s1">inject_params: Dict[str</span><span class="s5">, </span><span class="s1">str]) -&gt; str:</span>
+    <span class="s1">doclines = collections.deque(doctext.splitlines())</span>
+    <span class="s1">lines = []</span>
+
+    <span class="s0"># TODO: this is not working for params like &quot;:param case_sensitive=True:&quot;</span>
+
+    <span class="s1">to_inject = </span><span class="s3">None</span>
+    <span class="s3">while </span><span class="s1">doclines:</span>
+        <span class="s1">line = doclines.popleft()</span>
+
+        <span class="s1">m = _param_reg.match(line)</span>
+
+        <span class="s3">if </span><span class="s1">to_inject </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">m:</span>
+                <span class="s1">param = m.group(</span><span class="s6">2</span><span class="s1">).lstrip(</span><span class="s4">&quot;*&quot;</span><span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">param </span><span class="s3">in </span><span class="s1">inject_params:</span>
+                    <span class="s0"># default indent to that of :param: plus one</span>
+                    <span class="s1">indent = </span><span class="s4">&quot; &quot; </span><span class="s1">* len(m.group(</span><span class="s6">1</span><span class="s1">)) + </span><span class="s4">&quot; &quot;</span>
+
+                    <span class="s0"># but if the next line has text, use that line's</span>
+                    <span class="s0"># indentation</span>
+                    <span class="s3">if </span><span class="s1">doclines:</span>
+                        <span class="s1">m2 = re.match(</span><span class="s4">r&quot;(\s+)\S&quot;</span><span class="s5">, </span><span class="s1">doclines[</span><span class="s6">0</span><span class="s1">])</span>
+                        <span class="s3">if </span><span class="s1">m2:</span>
+                            <span class="s1">indent = </span><span class="s4">&quot; &quot; </span><span class="s1">* len(m2.group(</span><span class="s6">1</span><span class="s1">))</span>
+
+                    <span class="s1">to_inject = indent + inject_params[param]</span>
+        <span class="s3">elif </span><span class="s1">m:</span>
+            <span class="s1">lines.extend([</span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot;</span><span class="s5">, </span><span class="s1">to_inject</span><span class="s5">, </span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot;</span><span class="s1">])</span>
+            <span class="s1">to_inject = </span><span class="s3">None</span>
+        <span class="s3">elif not </span><span class="s1">line.rstrip():</span>
+            <span class="s1">lines.extend([line</span><span class="s5">, </span><span class="s1">to_inject</span><span class="s5">, </span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot;</span><span class="s1">])</span>
+            <span class="s1">to_inject = </span><span class="s3">None</span>
+        <span class="s3">elif </span><span class="s1">line.endswith(</span><span class="s4">&quot;::&quot;</span><span class="s1">):</span>
+            <span class="s0"># TODO: this still won't cover if the code example itself has</span>
+            <span class="s0"># blank lines in it, need to detect those via indentation.</span>
+            <span class="s1">lines.extend([line</span><span class="s5">, </span><span class="s1">doclines.popleft()])</span>
+            <span class="s3">continue</span>
+        <span class="s1">lines.append(line)</span>
+
+    <span class="s3">return </span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">&quot;</span><span class="s1">.join(lines)</span>
+
+
+<span class="s3">def </span><span class="s1">repr_tuple_names(names: List[str]) -&gt; Optional[str]:</span>
+    <span class="s2">&quot;&quot;&quot;Trims a list of strings from the middle and return a string of up to 
+    four elements. Strings greater than 11 characters will be truncated&quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">len(names) == </span><span class="s6">0</span><span class="s1">:</span>
+        <span class="s3">return None</span>
+    <span class="s1">flag = len(names) &lt;= </span><span class="s6">4</span>
+    <span class="s1">names = names[</span><span class="s6">0</span><span class="s1">:</span><span class="s6">4</span><span class="s1">] </span><span class="s3">if </span><span class="s1">flag </span><span class="s3">else </span><span class="s1">names[</span><span class="s6">0</span><span class="s1">:</span><span class="s6">3</span><span class="s1">] + names[-</span><span class="s6">1</span><span class="s1">:]</span>
+    <span class="s1">res = [</span><span class="s4">&quot;%s..&quot; </span><span class="s1">% name[:</span><span class="s6">11</span><span class="s1">] </span><span class="s3">if </span><span class="s1">len(name) &gt; </span><span class="s6">11 </span><span class="s3">else </span><span class="s1">name </span><span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">names]</span>
+    <span class="s3">if </span><span class="s1">flag:</span>
+        <span class="s3">return </span><span class="s4">&quot;, &quot;</span><span class="s1">.join(res)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s4">&quot;%s, ..., %s&quot; </span><span class="s1">% (</span><span class="s4">&quot;, &quot;</span><span class="s1">.join(res[</span><span class="s6">0</span><span class="s1">:</span><span class="s6">3</span><span class="s1">])</span><span class="s5">, </span><span class="s1">res[-</span><span class="s6">1</span><span class="s1">])</span>
+
+
+<span class="s3">def </span><span class="s1">has_compiled_ext(raise_=</span><span class="s3">False</span><span class="s1">):</span>
+    <span class="s3">if </span><span class="s1">HAS_CYEXTENSION:</span>
+        <span class="s3">return True</span>
+    <span class="s3">elif </span><span class="s1">raise_:</span>
+        <span class="s3">raise </span><span class="s1">ImportError(</span>
+            <span class="s4">&quot;cython extensions were expected to be installed, &quot;</span>
+            <span class="s4">&quot;but are not present&quot;</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return False</span>
+
+
+<span class="s3">class </span><span class="s1">_Missing(enum.Enum):</span>
+    <span class="s1">Missing = enum.auto()</span>
+
+
+<span class="s1">Missing = _Missing.Missing</span>
+<span class="s1">MissingOr = Union[_T</span><span class="s5">, </span><span class="s1">Literal[_Missing.Missing]]</span>
+</pre>
+</body>
+</html>

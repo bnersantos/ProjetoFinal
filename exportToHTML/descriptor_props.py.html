@@ -1,0 +1,1100 @@
+<html>
+<head>
+<title>descriptor_props.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+descriptor_props.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/descriptor_props.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Descriptor properties are more &quot;auxiliary&quot; properties 
+that exist as configurational elements, but don't participate 
+as actively in the load/persist ORM loop. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">dataclasses </span><span class="s3">import </span><span class="s1">is_dataclass</span>
+<span class="s3">import </span><span class="s1">inspect</span>
+<span class="s3">import </span><span class="s1">itertools</span>
+<span class="s3">import </span><span class="s1">operator</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">weakref</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">orm_util</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_DeclarativeMapped</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">LoaderCallableStatus</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">Mapped</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PassiveFlag</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">SQLORMOperations</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_AttributeOptions</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_IntrospectsAnnotations</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_MapsColumns</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">MapperProperty</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">PropComparator</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">_none_set</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">de_stringify_annotation</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">event</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">sa_exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">schema</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">sql</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">expression</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">operators</span>
+<span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">BindParameter</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">is_fwd_ref</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">is_pep593</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">typing_get_args</span>
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_InstanceDict</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_RegistryType</span>
+    <span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">History</span>
+    <span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">InstrumentedAttribute</span>
+    <span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">QueryableAttribute</span>
+    <span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">ORMCompileState</span>
+    <span class="s3">from </span><span class="s1">.decl_base </span><span class="s3">import </span><span class="s1">_ClassScanMapperConfig</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.properties </span><span class="s3">import </span><span class="s1">ColumnProperty</span>
+    <span class="s3">from </span><span class="s1">.properties </span><span class="s3">import </span><span class="s1">MappedColumn</span>
+    <span class="s3">from </span><span class="s1">.state </span><span class="s3">import </span><span class="s1">InstanceState</span>
+    <span class="s3">from </span><span class="s1">..engine.base </span><span class="s3">import </span><span class="s1">Connection</span>
+    <span class="s3">from </span><span class="s1">..engine.row </span><span class="s3">import </span><span class="s1">Row</span>
+    <span class="s3">from </span><span class="s1">..sql._typing </span><span class="s3">import </span><span class="s1">_DMLColumnArgument</span>
+    <span class="s3">from </span><span class="s1">..sql._typing </span><span class="s3">import </span><span class="s1">_InfoType</span>
+    <span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">ClauseList</span>
+    <span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">ColumnElement</span>
+    <span class="s3">from </span><span class="s1">..sql.operators </span><span class="s3">import </span><span class="s1">OperatorType</span>
+    <span class="s3">from </span><span class="s1">..sql.schema </span><span class="s3">import </span><span class="s1">Column</span>
+    <span class="s3">from </span><span class="s1">..sql.selectable </span><span class="s3">import </span><span class="s1">Select</span>
+    <span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">_AnnotationScanType</span>
+    <span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">CallableReference</span>
+    <span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">DescriptorReference</span>
+    <span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">RODescriptorReference</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_PT = TypeVar(</span><span class="s4">&quot;_PT&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s3">class </span><span class="s1">DescriptorProperty(MapperProperty[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;:class:`.MapperProperty` which proxies access to a 
+    user-defined descriptor.&quot;&quot;&quot;</span>
+
+    <span class="s1">doc: Optional[str] = </span><span class="s3">None</span>
+
+    <span class="s1">uses_objects = </span><span class="s3">False</span>
+    <span class="s1">_links_to_entity = </span><span class="s3">False</span>
+
+    <span class="s1">descriptor: DescriptorReference[Any]</span>
+
+    <span class="s3">def </span><span class="s1">get_history(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_OFF</span><span class="s5">,</span>
+    <span class="s1">) -&gt; History:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">instrument_class(self</span><span class="s5">, </span><span class="s1">mapper: Mapper[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">prop = self</span>
+
+        <span class="s3">class </span><span class="s1">_ProxyImpl(attributes.AttributeImpl):</span>
+            <span class="s1">accepts_scalar_loader = </span><span class="s3">False</span>
+            <span class="s1">load_on_unexpire = </span><span class="s3">True</span>
+            <span class="s1">collection = </span><span class="s3">False</span>
+
+            <span class="s1">@property</span>
+            <span class="s3">def </span><span class="s1">uses_objects(self) -&gt; bool:  </span><span class="s0"># type: ignore</span>
+                <span class="s3">return </span><span class="s1">prop.uses_objects</span>
+
+            <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">key: str):</span>
+                <span class="s1">self.key = key</span>
+
+            <span class="s3">def </span><span class="s1">get_history(</span>
+                <span class="s1">self</span><span class="s5">,</span>
+                <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+                <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+                <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_OFF</span><span class="s5">,</span>
+            <span class="s1">) -&gt; History:</span>
+                <span class="s3">return </span><span class="s1">prop.get_history(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">passive)</span>
+
+        <span class="s3">if </span><span class="s1">self.descriptor </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">desc = getattr(mapper.class_</span><span class="s5">, </span><span class="s1">self.key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">mapper._is_userland_descriptor(self.key</span><span class="s5">, </span><span class="s1">desc):</span>
+                <span class="s1">self.descriptor = desc</span>
+
+        <span class="s3">if </span><span class="s1">self.descriptor </span><span class="s3">is None</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">fset(obj: Any</span><span class="s5">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s1">setattr(obj</span><span class="s5">, </span><span class="s1">self.name</span><span class="s5">, </span><span class="s1">value)</span>
+
+            <span class="s3">def </span><span class="s1">fdel(obj: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s1">delattr(obj</span><span class="s5">, </span><span class="s1">self.name)</span>
+
+            <span class="s3">def </span><span class="s1">fget(obj: Any) -&gt; Any:</span>
+                <span class="s3">return </span><span class="s1">getattr(obj</span><span class="s5">, </span><span class="s1">self.name)</span>
+
+            <span class="s1">self.descriptor = property(fget=fget</span><span class="s5">, </span><span class="s1">fset=fset</span><span class="s5">, </span><span class="s1">fdel=fdel)</span>
+
+        <span class="s1">proxy_attr = attributes.create_proxied_attribute(self.descriptor)(</span>
+            <span class="s1">self.parent.class_</span><span class="s5">,</span>
+            <span class="s1">self.key</span><span class="s5">,</span>
+            <span class="s1">self.descriptor</span><span class="s5">,</span>
+            <span class="s3">lambda</span><span class="s1">: self._comparator_factory(mapper)</span><span class="s5">,</span>
+            <span class="s1">doc=self.doc</span><span class="s5">,</span>
+            <span class="s1">original_property=self</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">proxy_attr.impl = _ProxyImpl(self.key)</span>
+        <span class="s1">mapper.class_manager.instrument_attribute(self.key</span><span class="s5">, </span><span class="s1">proxy_attr)</span>
+
+
+<span class="s1">_CompositeAttrType = Union[</span>
+    <span class="s1">str</span><span class="s5">,</span>
+    <span class="s4">&quot;Column[_T]&quot;</span><span class="s5">,</span>
+    <span class="s4">&quot;MappedColumn[_T]&quot;</span><span class="s5">,</span>
+    <span class="s4">&quot;InstrumentedAttribute[_T]&quot;</span><span class="s5">,</span>
+    <span class="s4">&quot;Mapped[_T]&quot;</span><span class="s5">,</span>
+<span class="s1">]</span>
+
+
+<span class="s1">_CC = TypeVar(</span><span class="s4">&quot;_CC&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s1">_composite_getters: weakref.WeakKeyDictionary[</span>
+    <span class="s1">Type[Any]</span><span class="s5">, </span><span class="s1">Callable[[Any]</span><span class="s5">, </span><span class="s1">Tuple[Any</span><span class="s5">, </span><span class="s1">...]]</span>
+<span class="s1">] = weakref.WeakKeyDictionary()</span>
+
+
+<span class="s3">class </span><span class="s1">CompositeProperty(</span>
+    <span class="s1">_MapsColumns[_CC]</span><span class="s5">, </span><span class="s1">_IntrospectsAnnotations</span><span class="s5">, </span><span class="s1">DescriptorProperty[_CC]</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Defines a &quot;composite&quot; mapped attribute, representing a collection 
+    of columns as one attribute. 
+ 
+    :class:`.CompositeProperty` is constructed using the :func:`.composite` 
+    function. 
+ 
+    .. seealso:: 
+ 
+        :ref:`mapper_composite` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">composite_class: Union[Type[_CC]</span><span class="s5">, </span><span class="s1">Callable[...</span><span class="s5">, </span><span class="s1">_CC]]</span>
+    <span class="s1">attrs: Tuple[_CompositeAttrType[Any]</span><span class="s5">, </span><span class="s1">...]</span>
+
+    <span class="s1">_generated_composite_accessor: CallableReference[</span>
+        <span class="s1">Optional[Callable[[_CC]</span><span class="s5">, </span><span class="s1">Tuple[Any</span><span class="s5">, </span><span class="s1">...]]]</span>
+    <span class="s1">]</span>
+
+    <span class="s1">comparator_factory: Type[Comparator[_CC]]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">_class_or_attr: Union[</span>
+            <span class="s3">None</span><span class="s5">, </span><span class="s1">Type[_CC]</span><span class="s5">, </span><span class="s1">Callable[...</span><span class="s5">, </span><span class="s1">_CC]</span><span class="s5">, </span><span class="s1">_CompositeAttrType[Any]</span>
+        <span class="s1">] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">*attrs: _CompositeAttrType[Any]</span><span class="s5">,</span>
+        <span class="s1">attribute_options: Optional[_AttributeOptions] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">active_history: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">deferred: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">group: Optional[str] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">comparator_factory: Optional[Type[Comparator[_CC]]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">info: Optional[_InfoType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">super().__init__(attribute_options=attribute_options)</span>
+
+        <span class="s3">if </span><span class="s1">isinstance(_class_or_attr</span><span class="s5">, </span><span class="s1">(Mapped</span><span class="s5">, </span><span class="s1">str</span><span class="s5">, </span><span class="s1">sql.ColumnElement)):</span>
+            <span class="s1">self.attrs = (_class_or_attr</span><span class="s5">,</span><span class="s1">) + attrs</span>
+            <span class="s0"># will initialize within declarative_scan</span>
+            <span class="s1">self.composite_class = </span><span class="s3">None  </span><span class="s0"># type: ignore</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.composite_class = _class_or_attr  </span><span class="s0"># type: ignore</span>
+            <span class="s1">self.attrs = attrs</span>
+
+        <span class="s1">self.active_history = active_history</span>
+        <span class="s1">self.deferred = deferred</span>
+        <span class="s1">self.group = group</span>
+        <span class="s1">self.comparator_factory = (</span>
+            <span class="s1">comparator_factory</span>
+            <span class="s3">if </span><span class="s1">comparator_factory </span><span class="s3">is not None</span>
+            <span class="s3">else </span><span class="s1">self.__class__.Comparator</span>
+        <span class="s1">)</span>
+        <span class="s1">self._generated_composite_accessor = </span><span class="s3">None</span>
+        <span class="s3">if </span><span class="s1">info </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.info.update(info)</span>
+
+        <span class="s1">util.set_creation_order(self)</span>
+        <span class="s1">self._create_descriptor()</span>
+        <span class="s1">self._init_accessor()</span>
+
+    <span class="s3">def </span><span class="s1">instrument_class(self</span><span class="s5">, </span><span class="s1">mapper: Mapper[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().instrument_class(mapper)</span>
+        <span class="s1">self._setup_event_handlers()</span>
+
+    <span class="s3">def </span><span class="s1">_composite_values_from_instance(self</span><span class="s5">, </span><span class="s1">value: _CC) -&gt; Tuple[Any</span><span class="s5">, </span><span class="s1">...]:</span>
+        <span class="s3">if </span><span class="s1">self._generated_composite_accessor:</span>
+            <span class="s3">return </span><span class="s1">self._generated_composite_accessor(value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">accessor = value.__composite_values__</span>
+            <span class="s3">except </span><span class="s1">AttributeError </span><span class="s3">as </span><span class="s1">ae:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">f&quot;Composite class </span><span class="s6">{</span><span class="s1">self.composite_class.__name__</span><span class="s6">} </span><span class="s4">is not &quot;</span>
+                    <span class="s4">f&quot;a dataclass and does not define a __composite_values__()&quot;</span>
+                    <span class="s4">&quot; method; can't get state&quot;</span>
+                <span class="s1">) </span><span class="s3">from </span><span class="s1">ae</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">accessor()  </span><span class="s0"># type: ignore</span>
+
+    <span class="s3">def </span><span class="s1">do_init(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Initialization which occurs after the :class:`.Composite` 
+        has been associated with its parent mapper. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._setup_arguments_on_columns()</span>
+
+    <span class="s1">_COMPOSITE_FGET = object()</span>
+
+    <span class="s3">def </span><span class="s1">_create_descriptor(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Create the Python descriptor that will serve as 
+        the access point on instances of the mapped class. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">fget(instance: Any) -&gt; Any:</span>
+            <span class="s1">dict_ = attributes.instance_dict(instance)</span>
+            <span class="s1">state = attributes.instance_state(instance)</span>
+
+            <span class="s3">if </span><span class="s1">self.key </span><span class="s3">not in </span><span class="s1">dict_:</span>
+                <span class="s0"># key not present.  Iterate through related</span>
+                <span class="s0"># attributes, retrieve their values.  This</span>
+                <span class="s0"># ensures they all load.</span>
+                <span class="s1">values = [</span>
+                    <span class="s1">getattr(instance</span><span class="s5">, </span><span class="s1">key) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._attribute_keys</span>
+                <span class="s1">]</span>
+
+                <span class="s0"># current expected behavior here is that the composite is</span>
+                <span class="s0"># created on access if the object is persistent or if</span>
+                <span class="s0"># col attributes have non-None.  This would be better</span>
+                <span class="s0"># if the composite were created unconditionally,</span>
+                <span class="s0"># but that would be a behavioral change.</span>
+                <span class="s3">if </span><span class="s1">self.key </span><span class="s3">not in </span><span class="s1">dict_ </span><span class="s3">and </span><span class="s1">(</span>
+                    <span class="s1">state.key </span><span class="s3">is not None or not </span><span class="s1">_none_set.issuperset(values)</span>
+                <span class="s1">):</span>
+                    <span class="s1">dict_[self.key] = self.composite_class(*values)</span>
+                    <span class="s1">state.manager.dispatch.refresh(</span>
+                        <span class="s1">state</span><span class="s5">, </span><span class="s1">self._COMPOSITE_FGET</span><span class="s5">, </span><span class="s1">[self.key]</span>
+                    <span class="s1">)</span>
+
+            <span class="s3">return </span><span class="s1">dict_.get(self.key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">fset(instance: Any</span><span class="s5">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s1">dict_ = attributes.instance_dict(instance)</span>
+            <span class="s1">state = attributes.instance_state(instance)</span>
+            <span class="s1">attr = state.manager[self.key]</span>
+
+            <span class="s3">if </span><span class="s1">attr.dispatch._active_history:</span>
+                <span class="s1">previous = fget(instance)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">previous = dict_.get(self.key</span><span class="s5">, </span><span class="s1">LoaderCallableStatus.NO_VALUE)</span>
+
+            <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">attr.dispatch.set:</span>
+                <span class="s1">value = fn(state</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">previous</span><span class="s5">, </span><span class="s1">attr.impl)</span>
+            <span class="s1">dict_[self.key] = value</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._attribute_keys:</span>
+                    <span class="s1">setattr(instance</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">zip(</span>
+                    <span class="s1">self._attribute_keys</span><span class="s5">,</span>
+                    <span class="s1">self._composite_values_from_instance(value)</span><span class="s5">,</span>
+                <span class="s1">):</span>
+                    <span class="s1">setattr(instance</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value)</span>
+
+        <span class="s3">def </span><span class="s1">fdel(instance: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s1">state = attributes.instance_state(instance)</span>
+            <span class="s1">dict_ = attributes.instance_dict(instance)</span>
+            <span class="s1">attr = state.manager[self.key]</span>
+
+            <span class="s3">if </span><span class="s1">attr.dispatch._active_history:</span>
+                <span class="s1">previous = fget(instance)</span>
+                <span class="s1">dict_.pop(self.key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">previous = dict_.pop(self.key</span><span class="s5">, </span><span class="s1">LoaderCallableStatus.NO_VALUE)</span>
+
+            <span class="s1">attr = state.manager[self.key]</span>
+            <span class="s1">attr.dispatch.remove(state</span><span class="s5">, </span><span class="s1">previous</span><span class="s5">, </span><span class="s1">attr.impl)</span>
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._attribute_keys:</span>
+                <span class="s1">setattr(instance</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s1">self.descriptor = property(fget</span><span class="s5">, </span><span class="s1">fset</span><span class="s5">, </span><span class="s1">fdel)</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s4">&quot;sqlalchemy.orm.properties&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">declarative_scan(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">decl_scan: _ClassScanMapperConfig</span><span class="s5">,</span>
+        <span class="s1">registry: _RegistryType</span><span class="s5">,</span>
+        <span class="s1">cls: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">originating_module: Optional[str]</span><span class="s5">,</span>
+        <span class="s1">key: str</span><span class="s5">,</span>
+        <span class="s1">mapped_container: Optional[Type[Mapped[Any]]]</span><span class="s5">,</span>
+        <span class="s1">annotation: Optional[_AnnotationScanType]</span><span class="s5">,</span>
+        <span class="s1">extracted_mapped_annotation: Optional[_AnnotationScanType]</span><span class="s5">,</span>
+        <span class="s1">is_dataclass_field: bool</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">MappedColumn = util.preloaded.orm_properties.MappedColumn</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">self.composite_class </span><span class="s3">is None</span>
+            <span class="s3">and </span><span class="s1">extracted_mapped_annotation </span><span class="s3">is None</span>
+        <span class="s1">):</span>
+            <span class="s1">self._raise_for_required(key</span><span class="s5">, </span><span class="s1">cls)</span>
+        <span class="s1">argument = extracted_mapped_annotation</span>
+
+        <span class="s3">if </span><span class="s1">is_pep593(argument):</span>
+            <span class="s1">argument = typing_get_args(argument)[</span><span class="s7">0</span><span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s1">argument </span><span class="s3">and </span><span class="s1">self.composite_class </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">isinstance(argument</span><span class="s5">, </span><span class="s1">str) </span><span class="s3">or </span><span class="s1">is_fwd_ref(</span>
+                <span class="s1">argument</span><span class="s5">, </span><span class="s1">check_generic=</span><span class="s3">True</span>
+            <span class="s1">):</span>
+                <span class="s3">if </span><span class="s1">originating_module </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s1">str_arg = (</span>
+                        <span class="s1">argument.__forward_arg__</span>
+                        <span class="s3">if </span><span class="s1">hasattr(argument</span><span class="s5">, </span><span class="s4">&quot;__forward_arg__&quot;</span><span class="s1">)</span>
+                        <span class="s3">else </span><span class="s1">str(argument)</span>
+                    <span class="s1">)</span>
+                    <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                        <span class="s4">f&quot;Can't use forward ref </span><span class="s6">{</span><span class="s1">argument</span><span class="s6">} </span><span class="s4">for composite &quot;</span>
+                        <span class="s4">f&quot;class argument; set up the type as Mapped[</span><span class="s6">{</span><span class="s1">str_arg</span><span class="s6">}</span><span class="s4">]&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s1">argument = de_stringify_annotation(</span>
+                    <span class="s1">cls</span><span class="s5">, </span><span class="s1">argument</span><span class="s5">, </span><span class="s1">originating_module</span><span class="s5">, </span><span class="s1">include_generic=</span><span class="s3">True</span>
+                <span class="s1">)</span>
+
+            <span class="s1">self.composite_class = argument</span>
+
+        <span class="s3">if </span><span class="s1">is_dataclass(self.composite_class):</span>
+            <span class="s1">self._setup_for_dataclass(registry</span><span class="s5">, </span><span class="s1">cls</span><span class="s5">, </span><span class="s1">originating_module</span><span class="s5">, </span><span class="s1">key)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">self.attrs:</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">(MappedColumn</span><span class="s5">, </span><span class="s1">schema.Column))</span>
+                    <span class="s3">and </span><span class="s1">attr.name </span><span class="s3">is None</span>
+                <span class="s1">):</span>
+                    <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                        <span class="s4">&quot;Composite class column arguments must be named &quot;</span>
+                        <span class="s4">&quot;unless a dataclass is used&quot;</span>
+                    <span class="s1">)</span>
+        <span class="s1">self._init_accessor()</span>
+
+    <span class="s3">def </span><span class="s1">_init_accessor(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">is_dataclass(self.composite_class) </span><span class="s3">and not </span><span class="s1">hasattr(</span>
+            <span class="s1">self.composite_class</span><span class="s5">, </span><span class="s4">&quot;__composite_values__&quot;</span>
+        <span class="s1">):</span>
+            <span class="s1">insp = inspect.signature(self.composite_class)</span>
+            <span class="s1">getter = operator.attrgetter(</span>
+                <span class="s1">*[p.name </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">insp.parameters.values()]</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">len(insp.parameters) == </span><span class="s7">1</span><span class="s1">:</span>
+                <span class="s1">self._generated_composite_accessor = </span><span class="s3">lambda </span><span class="s1">obj: (getter(obj)</span><span class="s5">,</span><span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self._generated_composite_accessor = getter</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">self.composite_class </span><span class="s3">is not None</span>
+            <span class="s3">and </span><span class="s1">isinstance(self.composite_class</span><span class="s5">, </span><span class="s1">type)</span>
+            <span class="s3">and </span><span class="s1">self.composite_class </span><span class="s3">not in </span><span class="s1">_composite_getters</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">self._generated_composite_accessor </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">_composite_getters[self.composite_class] = (</span>
+                    <span class="s1">self._generated_composite_accessor</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">hasattr(self.composite_class</span><span class="s5">, </span><span class="s4">&quot;__composite_values__&quot;</span><span class="s1">):</span>
+                <span class="s1">_composite_getters[self.composite_class] = (</span>
+                    <span class="s3">lambda </span><span class="s1">obj: obj.__composite_values__()</span>
+                <span class="s1">)</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s4">&quot;sqlalchemy.orm.properties&quot;</span><span class="s1">)</span>
+    <span class="s1">@util.preload_module(</span><span class="s4">&quot;sqlalchemy.orm.decl_base&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">_setup_for_dataclass(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">registry: _RegistryType</span><span class="s5">,</span>
+        <span class="s1">cls: Type[Any]</span><span class="s5">,</span>
+        <span class="s1">originating_module: Optional[str]</span><span class="s5">,</span>
+        <span class="s1">key: str</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">MappedColumn = util.preloaded.orm_properties.MappedColumn</span>
+
+        <span class="s1">decl_base = util.preloaded.orm_decl_base</span>
+
+        <span class="s1">insp = inspect.signature(self.composite_class)</span>
+        <span class="s3">for </span><span class="s1">param</span><span class="s5">, </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">itertools.zip_longest(</span>
+            <span class="s1">insp.parameters.values()</span><span class="s5">, </span><span class="s1">self.attrs</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">param </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">f&quot;number of composite attributes &quot;</span>
+                    <span class="s4">f&quot;</span><span class="s6">{</span><span class="s1">len(self.attrs)</span><span class="s6">} </span><span class="s4">exceeds &quot;</span>
+                    <span class="s4">f&quot;that of the number of attributes in class &quot;</span>
+                    <span class="s4">f&quot;</span><span class="s6">{</span><span class="s1">self.composite_class.__name__</span><span class="s6">} {</span><span class="s1">len(insp.parameters)</span><span class="s6">}</span><span class="s4">&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">attr </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s0"># fill in missing attr spots with empty MappedColumn</span>
+                <span class="s1">attr = MappedColumn()</span>
+                <span class="s1">self.attrs += (attr</span><span class="s5">,</span><span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">MappedColumn):</span>
+                <span class="s1">attr.declarative_scan_for_composite(</span>
+                    <span class="s1">registry</span><span class="s5">,</span>
+                    <span class="s1">cls</span><span class="s5">,</span>
+                    <span class="s1">originating_module</span><span class="s5">,</span>
+                    <span class="s1">key</span><span class="s5">,</span>
+                    <span class="s1">param.name</span><span class="s5">,</span>
+                    <span class="s1">param.annotation</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">schema.Column):</span>
+                <span class="s1">decl_base._undefer_column_name(param.name</span><span class="s5">, </span><span class="s1">attr)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_comparable_elements(self) -&gt; Sequence[QueryableAttribute[Any]]:</span>
+        <span class="s3">return </span><span class="s1">[getattr(self.parent.class_</span><span class="s5">, </span><span class="s1">prop.key) </span><span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">self.props]</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s1">@util.preload_module(</span><span class="s4">&quot;orm.properties&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">props(self) -&gt; Sequence[MapperProperty[Any]]:</span>
+        <span class="s1">props = []</span>
+        <span class="s1">MappedColumn = util.preloaded.orm_properties.MappedColumn</span>
+
+        <span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">self.attrs:</span>
+            <span class="s3">if </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">str):</span>
+                <span class="s1">prop = self.parent.get_property(attr</span><span class="s5">, </span><span class="s1">_configure_mappers=</span><span class="s3">False</span><span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">schema.Column):</span>
+                <span class="s1">prop = self.parent._columntoproperty[attr]</span>
+            <span class="s3">elif </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">MappedColumn):</span>
+                <span class="s1">prop = self.parent._columntoproperty[attr.column]</span>
+            <span class="s3">elif </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">attributes.InstrumentedAttribute):</span>
+                <span class="s1">prop = attr.property</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">prop = </span><span class="s3">None</span>
+
+            <span class="s3">if not </span><span class="s1">isinstance(prop</span><span class="s5">, </span><span class="s1">MapperProperty):</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">&quot;Composite expects Column objects or mapped &quot;</span>
+                    <span class="s4">f&quot;attributes/attribute names as arguments, got: </span><span class="s6">{</span><span class="s1">attr</span><span class="s6">!r}</span><span class="s4">&quot;</span>
+                <span class="s1">)</span>
+
+            <span class="s1">props.append(prop)</span>
+        <span class="s3">return </span><span class="s1">props</span>
+
+    <span class="s1">@util.non_memoized_property</span>
+    <span class="s1">@util.preload_module(</span><span class="s4">&quot;orm.properties&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">columns(self) -&gt; Sequence[Column[Any]]:</span>
+        <span class="s1">MappedColumn = util.preloaded.orm_properties.MappedColumn</span>
+        <span class="s3">return </span><span class="s1">[</span>
+            <span class="s1">a.column </span><span class="s3">if </span><span class="s1">isinstance(a</span><span class="s5">, </span><span class="s1">MappedColumn) </span><span class="s3">else </span><span class="s1">a</span>
+            <span class="s3">for </span><span class="s1">a </span><span class="s3">in </span><span class="s1">self.attrs</span>
+            <span class="s3">if </span><span class="s1">isinstance(a</span><span class="s5">, </span><span class="s1">(schema.Column</span><span class="s5">, </span><span class="s1">MappedColumn))</span>
+        <span class="s1">]</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">mapper_property_to_assign(self) -&gt; Optional[MapperProperty[_CC]]:</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">columns_to_assign(self) -&gt; List[Tuple[schema.Column[Any]</span><span class="s5">, </span><span class="s1">int]]:</span>
+        <span class="s3">return </span><span class="s1">[(c</span><span class="s5">, </span><span class="s7">0</span><span class="s1">) </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">self.columns </span><span class="s3">if </span><span class="s1">c.table </span><span class="s3">is None</span><span class="s1">]</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s4">&quot;orm.properties&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">_setup_arguments_on_columns(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Propagate configuration arguments made on this composite 
+        to the target columns, for those that apply. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">ColumnProperty = util.preloaded.orm_properties.ColumnProperty</span>
+
+        <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">self.props:</span>
+            <span class="s3">if not </span><span class="s1">isinstance(prop</span><span class="s5">, </span><span class="s1">ColumnProperty):</span>
+                <span class="s3">continue</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">cprop = prop</span>
+
+            <span class="s1">cprop.active_history = self.active_history</span>
+            <span class="s3">if </span><span class="s1">self.deferred:</span>
+                <span class="s1">cprop.deferred = self.deferred</span>
+                <span class="s1">cprop.strategy_key = ((</span><span class="s4">&quot;deferred&quot;</span><span class="s5">, </span><span class="s3">True</span><span class="s1">)</span><span class="s5">, </span><span class="s1">(</span><span class="s4">&quot;instrument&quot;</span><span class="s5">, </span><span class="s3">True</span><span class="s1">))</span>
+            <span class="s1">cprop.group = self.group</span>
+
+    <span class="s3">def </span><span class="s1">_setup_event_handlers(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Establish events that populate/expire the composite attribute.&quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">load_handler(</span>
+            <span class="s1">state: InstanceState[Any]</span><span class="s5">, </span><span class="s1">context: ORMCompileState</span>
+        <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s1">_load_refresh_handler(state</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">is_refresh=</span><span class="s3">False</span><span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">refresh_handler(</span>
+            <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+            <span class="s1">context: ORMCompileState</span><span class="s5">,</span>
+            <span class="s1">to_load: Optional[Sequence[str]]</span><span class="s5">,</span>
+        <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s0"># note this corresponds to sqlalchemy.ext.mutable load_attrs()</span>
+
+            <span class="s3">if not </span><span class="s1">to_load </span><span class="s3">or </span><span class="s1">(</span>
+                <span class="s1">{self.key}.union(self._attribute_keys)</span>
+            <span class="s1">).intersection(to_load):</span>
+                <span class="s1">_load_refresh_handler(state</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">to_load</span><span class="s5">, </span><span class="s1">is_refresh=</span><span class="s3">True</span><span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">_load_refresh_handler(</span>
+            <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+            <span class="s1">context: ORMCompileState</span><span class="s5">,</span>
+            <span class="s1">to_load: Optional[Sequence[str]]</span><span class="s5">,</span>
+            <span class="s1">is_refresh: bool</span><span class="s5">,</span>
+        <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s1">dict_ = state.dict</span>
+
+            <span class="s0"># if context indicates we are coming from the</span>
+            <span class="s0"># fget() handler, this already set the value; skip the</span>
+            <span class="s0"># handler here. (other handlers like mutablecomposite will still</span>
+            <span class="s0"># want to catch it)</span>
+            <span class="s0"># there's an insufficiency here in that the fget() handler</span>
+            <span class="s0"># really should not be using the refresh event and there should</span>
+            <span class="s0"># be some other event that mutablecomposite can subscribe</span>
+            <span class="s0"># towards for this.</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s3">not </span><span class="s1">is_refresh </span><span class="s3">or </span><span class="s1">context </span><span class="s3">is </span><span class="s1">self._COMPOSITE_FGET</span>
+            <span class="s1">) </span><span class="s3">and </span><span class="s1">self.key </span><span class="s3">in </span><span class="s1">dict_:</span>
+                <span class="s3">return</span>
+
+            <span class="s0"># if column elements aren't loaded, skip.</span>
+            <span class="s0"># __get__() will initiate a load for those</span>
+            <span class="s0"># columns</span>
+            <span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">self._attribute_keys:</span>
+                <span class="s3">if </span><span class="s1">k </span><span class="s3">not in </span><span class="s1">dict_:</span>
+                    <span class="s3">return</span>
+
+            <span class="s1">dict_[self.key] = self.composite_class(</span>
+                <span class="s1">*[state.dict[key] </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._attribute_keys]</span>
+            <span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">expire_handler(</span>
+            <span class="s1">state: InstanceState[Any]</span><span class="s5">, </span><span class="s1">keys: Optional[Sequence[str]]</span>
+        <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">keys </span><span class="s3">is None or </span><span class="s1">set(self._attribute_keys).intersection(keys):</span>
+                <span class="s1">state.dict.pop(self.key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">insert_update_handler(</span>
+            <span class="s1">mapper: Mapper[Any]</span><span class="s5">,</span>
+            <span class="s1">connection: Connection</span><span class="s5">,</span>
+            <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s2">&quot;&quot;&quot;After an insert or update, some columns may be expired due 
+            to server side defaults, or re-populated due to client side 
+            defaults.  Pop out the composite value here so that it 
+            recreates. 
+ 
+            &quot;&quot;&quot;</span>
+
+            <span class="s1">state.dict.pop(self.key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s1">event.listen(</span>
+            <span class="s1">self.parent</span><span class="s5">, </span><span class="s4">&quot;after_insert&quot;</span><span class="s5">, </span><span class="s1">insert_update_handler</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+        <span class="s1">event.listen(</span>
+            <span class="s1">self.parent</span><span class="s5">, </span><span class="s4">&quot;after_update&quot;</span><span class="s5">, </span><span class="s1">insert_update_handler</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+        <span class="s1">event.listen(</span>
+            <span class="s1">self.parent</span><span class="s5">, </span><span class="s4">&quot;load&quot;</span><span class="s5">, </span><span class="s1">load_handler</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">propagate=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+        <span class="s1">event.listen(</span>
+            <span class="s1">self.parent</span><span class="s5">, </span><span class="s4">&quot;refresh&quot;</span><span class="s5">, </span><span class="s1">refresh_handler</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">propagate=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+        <span class="s1">event.listen(</span>
+            <span class="s1">self.parent</span><span class="s5">, </span><span class="s4">&quot;expire&quot;</span><span class="s5">, </span><span class="s1">expire_handler</span><span class="s5">, </span><span class="s1">raw=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">propagate=</span><span class="s3">True</span>
+        <span class="s1">)</span>
+
+        <span class="s1">proxy_attr = self.parent.class_manager[self.key]</span>
+        <span class="s1">proxy_attr.impl.dispatch = proxy_attr.dispatch  </span><span class="s0"># type: ignore</span>
+        <span class="s1">proxy_attr.impl.dispatch._active_history = self.active_history</span>
+
+        <span class="s0"># TODO: need a deserialize hook here</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_attribute_keys(self) -&gt; Sequence[str]:</span>
+        <span class="s3">return </span><span class="s1">[prop.key </span><span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">self.props]</span>
+
+    <span class="s3">def </span><span class="s1">_populate_composite_bulk_save_mappings_fn(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Callable[[Dict[str</span><span class="s5">, </span><span class="s1">Any]]</span><span class="s5">, </span><span class="s3">None</span><span class="s1">]:</span>
+        <span class="s3">if </span><span class="s1">self._generated_composite_accessor:</span>
+            <span class="s1">get_values = self._generated_composite_accessor</span>
+        <span class="s3">else</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">get_values(val: Any) -&gt; Tuple[Any]:</span>
+                <span class="s3">return </span><span class="s1">val.__composite_values__()  </span><span class="s0"># type: ignore</span>
+
+        <span class="s1">attrs = [prop.key </span><span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">self.props]</span>
+
+        <span class="s3">def </span><span class="s1">populate(dest_dict: Dict[str</span><span class="s5">, </span><span class="s1">Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s1">dest_dict.update(</span>
+                <span class="s1">{</span>
+                    <span class="s1">key: val</span>
+                    <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">val </span><span class="s3">in </span><span class="s1">zip(</span>
+                        <span class="s1">attrs</span><span class="s5">, </span><span class="s1">get_values(dest_dict.pop(self.key))</span>
+                    <span class="s1">)</span>
+                <span class="s1">}</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">populate</span>
+
+    <span class="s3">def </span><span class="s1">get_history(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_OFF</span><span class="s5">,</span>
+    <span class="s1">) -&gt; History:</span>
+        <span class="s2">&quot;&quot;&quot;Provided for userland code that uses attributes.get_history().&quot;&quot;&quot;</span>
+
+        <span class="s1">added: List[Any] = []</span>
+        <span class="s1">deleted: List[Any] = []</span>
+
+        <span class="s1">has_history = </span><span class="s3">False</span>
+        <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">self.props:</span>
+            <span class="s1">key = prop.key</span>
+            <span class="s1">hist = state.manager[key].impl.get_history(state</span><span class="s5">, </span><span class="s1">dict_)</span>
+            <span class="s3">if </span><span class="s1">hist.has_changes():</span>
+                <span class="s1">has_history = </span><span class="s3">True</span>
+
+            <span class="s1">non_deleted = hist.non_deleted()</span>
+            <span class="s3">if </span><span class="s1">non_deleted:</span>
+                <span class="s1">added.extend(non_deleted)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">added.append(</span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">hist.deleted:</span>
+                <span class="s1">deleted.extend(hist.deleted)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">deleted.append(</span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">has_history:</span>
+            <span class="s3">return </span><span class="s1">attributes.History(</span>
+                <span class="s1">[self.composite_class(*added)]</span><span class="s5">,</span>
+                <span class="s1">()</span><span class="s5">,</span>
+                <span class="s1">[self.composite_class(*deleted)]</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">attributes.History(()</span><span class="s5">, </span><span class="s1">[self.composite_class(*added)]</span><span class="s5">, </span><span class="s1">())</span>
+
+    <span class="s3">def </span><span class="s1">_comparator_factory(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">mapper: Mapper[Any]</span>
+    <span class="s1">) -&gt; Composite.Comparator[_CC]:</span>
+        <span class="s3">return </span><span class="s1">self.comparator_factory(self</span><span class="s5">, </span><span class="s1">mapper)</span>
+
+    <span class="s3">class </span><span class="s1">CompositeBundle(orm_util.Bundle[_T]):</span>
+        <span class="s3">def </span><span class="s1">__init__(</span>
+            <span class="s1">self</span><span class="s5">,</span>
+            <span class="s1">property_: Composite[_T]</span><span class="s5">,</span>
+            <span class="s1">expr: ClauseList</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s1">self.property = property_</span>
+            <span class="s1">super().__init__(property_.key</span><span class="s5">, </span><span class="s1">*expr)</span>
+
+        <span class="s3">def </span><span class="s1">create_row_processor(</span>
+            <span class="s1">self</span><span class="s5">,</span>
+            <span class="s1">query: Select[Any]</span><span class="s5">,</span>
+            <span class="s1">procs: Sequence[Callable[[Row[Any]]</span><span class="s5">, </span><span class="s1">Any]]</span><span class="s5">,</span>
+            <span class="s1">labels: Sequence[str]</span><span class="s5">,</span>
+        <span class="s1">) -&gt; Callable[[Row[Any]]</span><span class="s5">, </span><span class="s1">Any]:</span>
+            <span class="s3">def </span><span class="s1">proc(row: Row[Any]) -&gt; Any:</span>
+                <span class="s3">return </span><span class="s1">self.property.composite_class(</span>
+                    <span class="s1">*[proc(row) </span><span class="s3">for </span><span class="s1">proc </span><span class="s3">in </span><span class="s1">procs]</span>
+                <span class="s1">)</span>
+
+            <span class="s3">return </span><span class="s1">proc</span>
+
+    <span class="s3">class </span><span class="s1">Comparator(PropComparator[_PT]):</span>
+        <span class="s2">&quot;&quot;&quot;Produce boolean, comparison, and other operators for 
+        :class:`.Composite` attributes. 
+ 
+        See the example in :ref:`composite_operations` for an overview 
+        of usage , as well as the documentation for :class:`.PropComparator`. 
+ 
+        .. seealso:: 
+ 
+            :class:`.PropComparator` 
+ 
+            :class:`.ColumnOperators` 
+ 
+            :ref:`types_operators` 
+ 
+            :attr:`.TypeEngine.comparator_factory` 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0"># https://github.com/python/mypy/issues/4266</span>
+        <span class="s1">__hash__ = </span><span class="s3">None  </span><span class="s0"># type: ignore</span>
+
+        <span class="s1">prop: RODescriptorReference[Composite[_PT]]</span>
+
+        <span class="s1">@util.memoized_property</span>
+        <span class="s3">def </span><span class="s1">clauses(self) -&gt; ClauseList:</span>
+            <span class="s3">return </span><span class="s1">expression.ClauseList(</span>
+                <span class="s1">group=</span><span class="s3">False</span><span class="s5">, </span><span class="s1">*self._comparable_elements</span>
+            <span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">__clause_element__(self) -&gt; CompositeProperty.CompositeBundle[_PT]:</span>
+            <span class="s3">return </span><span class="s1">self.expression</span>
+
+        <span class="s1">@util.memoized_property</span>
+        <span class="s3">def </span><span class="s1">expression(self) -&gt; CompositeProperty.CompositeBundle[_PT]:</span>
+            <span class="s1">clauses = self.clauses._annotate(</span>
+                <span class="s1">{</span>
+                    <span class="s4">&quot;parententity&quot;</span><span class="s1">: self._parententity</span><span class="s5">,</span>
+                    <span class="s4">&quot;parentmapper&quot;</span><span class="s1">: self._parententity</span><span class="s5">,</span>
+                    <span class="s4">&quot;proxy_key&quot;</span><span class="s1">: self.prop.key</span><span class="s5">,</span>
+                <span class="s1">}</span>
+            <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">CompositeProperty.CompositeBundle(self.prop</span><span class="s5">, </span><span class="s1">clauses)</span>
+
+        <span class="s3">def </span><span class="s1">_bulk_update_tuples(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">value: Any</span>
+        <span class="s1">) -&gt; Sequence[Tuple[_DMLColumnArgument</span><span class="s5">, </span><span class="s1">Any]]:</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">BindParameter):</span>
+                <span class="s1">value = value.value</span>
+
+            <span class="s1">values: Sequence[Any]</span>
+
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">values = [</span><span class="s3">None for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.prop._attribute_keys]</span>
+            <span class="s3">elif </span><span class="s1">isinstance(self.prop.composite_class</span><span class="s5">, </span><span class="s1">type) </span><span class="s3">and </span><span class="s1">isinstance(</span>
+                <span class="s1">value</span><span class="s5">, </span><span class="s1">self.prop.composite_class</span>
+            <span class="s1">):</span>
+                <span class="s1">values = self.prop._composite_values_from_instance(</span>
+                    <span class="s1">value  </span><span class="s0"># type: ignore[arg-type]</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">&quot;Can't UPDATE composite attribute %s to %r&quot;</span>
+                    <span class="s1">% (self.prop</span><span class="s5">, </span><span class="s1">value)</span>
+                <span class="s1">)</span>
+
+            <span class="s3">return </span><span class="s1">list(zip(self._comparable_elements</span><span class="s5">, </span><span class="s1">values))</span>
+
+        <span class="s1">@util.memoized_property</span>
+        <span class="s3">def </span><span class="s1">_comparable_elements(self) -&gt; Sequence[QueryableAttribute[Any]]:</span>
+            <span class="s3">if </span><span class="s1">self._adapt_to_entity:</span>
+                <span class="s3">return </span><span class="s1">[</span>
+                    <span class="s1">getattr(self._adapt_to_entity.entity</span><span class="s5">, </span><span class="s1">prop.key)</span>
+                    <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">self.prop._comparable_elements</span>
+                <span class="s1">]</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">self.prop._comparable_elements</span>
+
+        <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; ColumnElement[bool]:  </span><span class="s0"># type: ignore[override]  # noqa: E501</span>
+            <span class="s3">return </span><span class="s1">self._compare(operators.eq</span><span class="s5">, </span><span class="s1">other)</span>
+
+        <span class="s3">def </span><span class="s1">__ne__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; ColumnElement[bool]:  </span><span class="s0"># type: ignore[override]  # noqa: E501</span>
+            <span class="s3">return </span><span class="s1">self._compare(operators.ne</span><span class="s5">, </span><span class="s1">other)</span>
+
+        <span class="s3">def </span><span class="s1">__lt__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; ColumnElement[bool]:</span>
+            <span class="s3">return </span><span class="s1">self._compare(operators.lt</span><span class="s5">, </span><span class="s1">other)</span>
+
+        <span class="s3">def </span><span class="s1">__gt__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; ColumnElement[bool]:</span>
+            <span class="s3">return </span><span class="s1">self._compare(operators.gt</span><span class="s5">, </span><span class="s1">other)</span>
+
+        <span class="s3">def </span><span class="s1">__le__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; ColumnElement[bool]:</span>
+            <span class="s3">return </span><span class="s1">self._compare(operators.le</span><span class="s5">, </span><span class="s1">other)</span>
+
+        <span class="s3">def </span><span class="s1">__ge__(self</span><span class="s5">, </span><span class="s1">other: Any) -&gt; ColumnElement[bool]:</span>
+            <span class="s3">return </span><span class="s1">self._compare(operators.ge</span><span class="s5">, </span><span class="s1">other)</span>
+
+        <span class="s0"># what might be interesting would be if we create</span>
+        <span class="s0"># an instance of the composite class itself with</span>
+        <span class="s0"># the columns as data members, then use &quot;hybrid style&quot; comparison</span>
+        <span class="s0"># to create these comparisons.  then your Point.__eq__() method could</span>
+        <span class="s0"># be where comparison behavior is defined for SQL also.   Likely</span>
+        <span class="s0"># not a good choice for default behavior though, not clear how it would</span>
+        <span class="s0"># work w/ dataclasses, etc.  also no demand for any of this anyway.</span>
+        <span class="s3">def </span><span class="s1">_compare(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">operator: OperatorType</span><span class="s5">, </span><span class="s1">other: Any</span>
+        <span class="s1">) -&gt; ColumnElement[bool]:</span>
+            <span class="s1">values: Sequence[Any]</span>
+            <span class="s3">if </span><span class="s1">other </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">values = [</span><span class="s3">None</span><span class="s1">] * len(self.prop._comparable_elements)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">values = self.prop._composite_values_from_instance(other)</span>
+            <span class="s1">comparisons = [</span>
+                <span class="s1">operator(a</span><span class="s5">, </span><span class="s1">b)</span>
+                <span class="s3">for </span><span class="s1">a</span><span class="s5">, </span><span class="s1">b </span><span class="s3">in </span><span class="s1">zip(self.prop._comparable_elements</span><span class="s5">, </span><span class="s1">values)</span>
+            <span class="s1">]</span>
+            <span class="s3">if </span><span class="s1">self._adapt_to_entity:</span>
+                <span class="s3">assert </span><span class="s1">self.adapter </span><span class="s3">is not None</span>
+                <span class="s1">comparisons = [self.adapter(x) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">comparisons]</span>
+            <span class="s3">return </span><span class="s1">sql.and_(*comparisons)</span>
+
+    <span class="s3">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s1">str(self.parent.class_.__name__) + </span><span class="s4">&quot;.&quot; </span><span class="s1">+ self.key</span>
+
+
+<span class="s3">class </span><span class="s1">Composite(CompositeProperty[_T]</span><span class="s5">, </span><span class="s1">_DeclarativeMapped[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Declarative-compatible front-end for the :class:`.CompositeProperty` 
+    class. 
+ 
+    Public constructor is the :func:`_orm.composite` function. 
+ 
+    .. versionchanged:: 2.0 Added :class:`_orm.Composite` as a Declarative 
+       compatible subclass of :class:`_orm.CompositeProperty`. 
+ 
+    .. seealso:: 
+ 
+        :ref:`mapper_composite` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s3">True</span>
+    <span class="s4">&quot;&quot;&quot;:meta private:&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">ConcreteInheritedProperty(DescriptorProperty[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;A 'do nothing' :class:`.MapperProperty` that disables 
+    an attribute on a concrete subclass that is only present 
+    on the inherited mapper, not the concrete classes' mapper. 
+ 
+    Cases where this occurs include: 
+ 
+    * When the superclass mapper is mapped against a 
+      &quot;polymorphic union&quot;, which includes all attributes from 
+      all subclasses. 
+    * When a relationship() is configured on an inherited mapper, 
+      but not on the subclass mapper.  Concrete mappers require 
+      that relationship() is configured explicitly on each 
+      subclass. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">_comparator_factory(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">mapper: Mapper[Any]</span>
+    <span class="s1">) -&gt; Type[PropComparator[_T]]:</span>
+        <span class="s1">comparator_callable = </span><span class="s3">None</span>
+
+        <span class="s3">for </span><span class="s1">m </span><span class="s3">in </span><span class="s1">self.parent.iterate_to_root():</span>
+            <span class="s1">p = m._props[self.key]</span>
+            <span class="s3">if </span><span class="s1">getattr(p</span><span class="s5">, </span><span class="s4">&quot;comparator_factory&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">) </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">comparator_callable = p.comparator_factory</span>
+                <span class="s3">break</span>
+        <span class="s3">assert </span><span class="s1">comparator_callable </span><span class="s3">is not None</span>
+        <span class="s3">return </span><span class="s1">comparator_callable(p</span><span class="s5">, </span><span class="s1">mapper)  </span><span class="s0"># type: ignore</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super().__init__()</span>
+
+        <span class="s3">def </span><span class="s1">warn() -&gt; NoReturn:</span>
+            <span class="s3">raise </span><span class="s1">AttributeError(</span>
+                <span class="s4">&quot;Concrete %s does not implement &quot;</span>
+                <span class="s4">&quot;attribute %r at the instance level.  Add &quot;</span>
+                <span class="s4">&quot;this property explicitly to %s.&quot;</span>
+                <span class="s1">% (self.parent</span><span class="s5">, </span><span class="s1">self.key</span><span class="s5">, </span><span class="s1">self.parent)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">class </span><span class="s1">NoninheritedConcreteProp:</span>
+            <span class="s3">def </span><span class="s1">__set__(s: Any</span><span class="s5">, </span><span class="s1">obj: Any</span><span class="s5">, </span><span class="s1">value: Any) -&gt; NoReturn:</span>
+                <span class="s1">warn()</span>
+
+            <span class="s3">def </span><span class="s1">__delete__(s: Any</span><span class="s5">, </span><span class="s1">obj: Any) -&gt; NoReturn:</span>
+                <span class="s1">warn()</span>
+
+            <span class="s3">def </span><span class="s1">__get__(s: Any</span><span class="s5">, </span><span class="s1">obj: Any</span><span class="s5">, </span><span class="s1">owner: Any) -&gt; Any:</span>
+                <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s3">return </span><span class="s1">self.descriptor</span>
+                <span class="s1">warn()</span>
+
+        <span class="s1">self.descriptor = NoninheritedConcreteProp()</span>
+
+
+<span class="s3">class </span><span class="s1">SynonymProperty(DescriptorProperty[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Denote an attribute name as a synonym to a mapped property, 
+    in that the attribute will mirror the value and expression behavior 
+    of another attribute. 
+ 
+    :class:`.Synonym` is constructed using the :func:`_orm.synonym` 
+    function. 
+ 
+    .. seealso:: 
+ 
+        :ref:`synonyms` - Overview of synonyms 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">comparator_factory: Optional[Type[PropComparator[_T]]]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">name: str</span><span class="s5">,</span>
+        <span class="s1">map_column: Optional[bool] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">descriptor: Optional[Any] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">comparator_factory: Optional[Type[PropComparator[_T]]] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">attribute_options: Optional[_AttributeOptions] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">info: Optional[_InfoType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">doc: Optional[str] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">super().__init__(attribute_options=attribute_options)</span>
+
+        <span class="s1">self.name = name</span>
+        <span class="s1">self.map_column = map_column</span>
+        <span class="s1">self.descriptor = descriptor</span>
+        <span class="s1">self.comparator_factory = comparator_factory</span>
+        <span class="s3">if </span><span class="s1">doc:</span>
+            <span class="s1">self.doc = doc</span>
+        <span class="s3">elif </span><span class="s1">descriptor </span><span class="s3">and </span><span class="s1">descriptor.__doc__:</span>
+            <span class="s1">self.doc = descriptor.__doc__</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.doc = </span><span class="s3">None</span>
+        <span class="s3">if </span><span class="s1">info:</span>
+            <span class="s1">self.info.update(info)</span>
+
+        <span class="s1">util.set_creation_order(self)</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s1">@property</span>
+        <span class="s3">def </span><span class="s1">uses_objects(self) -&gt; bool:</span>
+            <span class="s3">return </span><span class="s1">getattr(self.parent.class_</span><span class="s5">, </span><span class="s1">self.name).impl.uses_objects</span>
+
+    <span class="s0"># TODO: when initialized, check _proxied_object,</span>
+    <span class="s0"># emit a warning if its not a column-based property</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_proxied_object(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Union[MapperProperty[_T]</span><span class="s5">, </span><span class="s1">SQLORMOperations[_T]]:</span>
+        <span class="s1">attr = getattr(self.parent.class_</span><span class="s5">, </span><span class="s1">self.name)</span>
+        <span class="s3">if not </span><span class="s1">hasattr(attr</span><span class="s5">, </span><span class="s4">&quot;property&quot;</span><span class="s1">) </span><span class="s3">or not </span><span class="s1">isinstance(</span>
+            <span class="s1">attr.property</span><span class="s5">, </span><span class="s1">MapperProperty</span>
+        <span class="s1">):</span>
+            <span class="s0"># attribute is a non-MapperProprerty proxy such as</span>
+            <span class="s0"># hybrid or association proxy</span>
+            <span class="s3">if </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">attributes.QueryableAttribute):</span>
+                <span class="s3">return </span><span class="s1">attr.comparator</span>
+            <span class="s3">elif </span><span class="s1">isinstance(attr</span><span class="s5">, </span><span class="s1">SQLORMOperations):</span>
+                <span class="s0"># assocaition proxy comes here</span>
+                <span class="s3">return </span><span class="s1">attr</span>
+
+            <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                <span class="s4">&quot;&quot;&quot;synonym() attribute &quot;%s.%s&quot; only supports &quot;&quot;&quot;</span>
+                <span class="s4">&quot;&quot;&quot;ORM mapped attributes, got %r&quot;&quot;&quot;</span>
+                <span class="s1">% (self.parent.class_.__name__</span><span class="s5">, </span><span class="s1">self.name</span><span class="s5">, </span><span class="s1">attr)</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">attr.property</span>
+
+    <span class="s3">def </span><span class="s1">_comparator_factory(self</span><span class="s5">, </span><span class="s1">mapper: Mapper[Any]) -&gt; SQLORMOperations[_T]:</span>
+        <span class="s1">prop = self._proxied_object</span>
+
+        <span class="s3">if </span><span class="s1">isinstance(prop</span><span class="s5">, </span><span class="s1">MapperProperty):</span>
+            <span class="s3">if </span><span class="s1">self.comparator_factory:</span>
+                <span class="s1">comp = self.comparator_factory(prop</span><span class="s5">, </span><span class="s1">mapper)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">comp = prop.comparator_factory(prop</span><span class="s5">, </span><span class="s1">mapper)</span>
+            <span class="s3">return </span><span class="s1">comp</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">prop</span>
+
+    <span class="s3">def </span><span class="s1">get_history(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_OFF</span><span class="s5">,</span>
+    <span class="s1">) -&gt; History:</span>
+        <span class="s1">attr: QueryableAttribute[Any] = getattr(self.parent.class_</span><span class="s5">, </span><span class="s1">self.name)</span>
+        <span class="s3">return </span><span class="s1">attr.impl.get_history(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">passive=passive)</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s4">&quot;sqlalchemy.orm.properties&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">set_parent(self</span><span class="s5">, </span><span class="s1">parent: Mapper[Any]</span><span class="s5">, </span><span class="s1">init: bool) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">properties = util.preloaded.orm_properties</span>
+
+        <span class="s3">if </span><span class="s1">self.map_column:</span>
+            <span class="s0"># implement the 'map_column' option.</span>
+            <span class="s3">if </span><span class="s1">self.key </span><span class="s3">not in </span><span class="s1">parent.persist_selectable.c:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">&quot;Can't compile synonym '%s': no column on table &quot;</span>
+                    <span class="s4">&quot;'%s' named '%s'&quot;</span>
+                    <span class="s1">% (</span>
+                        <span class="s1">self.name</span><span class="s5">,</span>
+                        <span class="s1">parent.persist_selectable.description</span><span class="s5">,</span>
+                        <span class="s1">self.key</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">(</span>
+                <span class="s1">parent.persist_selectable.c[self.key]</span>
+                <span class="s3">in </span><span class="s1">parent._columntoproperty</span>
+                <span class="s3">and </span><span class="s1">parent._columntoproperty[</span>
+                    <span class="s1">parent.persist_selectable.c[self.key]</span>
+                <span class="s1">].key</span>
+                <span class="s1">== self.name</span>
+            <span class="s1">):</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">&quot;Can't call map_column=True for synonym %r=%r, &quot;</span>
+                    <span class="s4">&quot;a ColumnProperty already exists keyed to the name &quot;</span>
+                    <span class="s4">&quot;%r for column %r&quot;</span>
+                    <span class="s1">% (self.key</span><span class="s5">, </span><span class="s1">self.name</span><span class="s5">, </span><span class="s1">self.name</span><span class="s5">, </span><span class="s1">self.key)</span>
+                <span class="s1">)</span>
+            <span class="s1">p: ColumnProperty[Any] = properties.ColumnProperty(</span>
+                <span class="s1">parent.persist_selectable.c[self.key]</span>
+            <span class="s1">)</span>
+            <span class="s1">parent._configure_property(self.name</span><span class="s5">, </span><span class="s1">p</span><span class="s5">, </span><span class="s1">init=init</span><span class="s5">, </span><span class="s1">setparent=</span><span class="s3">True</span><span class="s1">)</span>
+            <span class="s1">p._mapped_by_synonym = self.key</span>
+
+        <span class="s1">self.parent = parent</span>
+
+
+<span class="s3">class </span><span class="s1">Synonym(SynonymProperty[_T]</span><span class="s5">, </span><span class="s1">_DeclarativeMapped[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Declarative front-end for the :class:`.SynonymProperty` class. 
+ 
+    Public constructor is the :func:`_orm.synonym` function. 
+ 
+    .. versionchanged:: 2.0 Added :class:`_orm.Synonym` as a Declarative 
+       compatible subclass for :class:`_orm.SynonymProperty` 
+ 
+    .. seealso:: 
+ 
+        :ref:`synonyms` - Overview of synonyms 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s3">True</span>
+    <span class="s4">&quot;&quot;&quot;:meta private:&quot;&quot;&quot;</span>
+</pre>
+</body>
+</html>

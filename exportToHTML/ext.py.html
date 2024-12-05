@@ -1,0 +1,519 @@
+<html>
+<head>
+<title>ext.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ext.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/ext.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TypeVar</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">types</span>
+<span class="s2">from </span><span class="s1">.array </span><span class="s2">import </span><span class="s1">ARRAY</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">coercions</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">elements</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">expression</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">functions</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">roles</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">schema</span>
+<span class="s2">from </span><span class="s1">...sql.schema </span><span class="s2">import </span><span class="s1">ColumnCollectionConstraint</span>
+<span class="s2">from </span><span class="s1">...sql.sqltypes </span><span class="s2">import </span><span class="s1">TEXT</span>
+<span class="s2">from </span><span class="s1">...sql.visitors </span><span class="s2">import </span><span class="s1">InternalTraversal</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s3">&quot;_T&quot;</span><span class="s4">, </span><span class="s1">bound=Any)</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">...sql.visitors </span><span class="s2">import </span><span class="s1">_TraverseInternalsType</span>
+
+
+<span class="s2">class </span><span class="s1">aggregate_order_by(expression.ColumnElement):</span>
+    <span class="s5">&quot;&quot;&quot;Represent a PostgreSQL aggregate order by expression. 
+ 
+    E.g.:: 
+ 
+        from sqlalchemy.dialects.postgresql import aggregate_order_by 
+        expr = func.array_agg(aggregate_order_by(table.c.a, table.c.b.desc())) 
+        stmt = select(expr) 
+ 
+    would represent the expression:: 
+ 
+        SELECT array_agg(a ORDER BY b DESC) FROM table; 
+ 
+    Similarly:: 
+ 
+        expr = func.string_agg( 
+            table.c.a, 
+            aggregate_order_by(literal_column(&quot;','&quot;), table.c.a) 
+        ) 
+        stmt = select(expr) 
+ 
+    Would represent:: 
+ 
+        SELECT string_agg(a, ',' ORDER BY a) FROM table; 
+ 
+    .. versionchanged:: 1.2.13 - the ORDER BY argument may be multiple terms 
+ 
+    .. seealso:: 
+ 
+        :class:`_functions.array_agg` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s3">&quot;aggregate_order_by&quot;</span>
+
+    <span class="s1">stringify_dialect = </span><span class="s3">&quot;postgresql&quot;</span>
+    <span class="s1">_traverse_internals: _TraverseInternalsType = [</span>
+        <span class="s1">(</span><span class="s3">&quot;target&quot;</span><span class="s4">, </span><span class="s1">InternalTraversal.dp_clauseelement)</span><span class="s4">,</span>
+        <span class="s1">(</span><span class="s3">&quot;type&quot;</span><span class="s4">, </span><span class="s1">InternalTraversal.dp_type)</span><span class="s4">,</span>
+        <span class="s1">(</span><span class="s3">&quot;order_by&quot;</span><span class="s4">, </span><span class="s1">InternalTraversal.dp_clauseelement)</span><span class="s4">,</span>
+    <span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">target</span><span class="s4">, </span><span class="s1">*order_by):</span>
+        <span class="s1">self.target = coercions.expect(roles.ExpressionElementRole</span><span class="s4">, </span><span class="s1">target)</span>
+        <span class="s1">self.type = self.target.type</span>
+
+        <span class="s1">_lob = len(order_by)</span>
+        <span class="s2">if </span><span class="s1">_lob == </span><span class="s6">0</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;at least one ORDER BY element is required&quot;</span><span class="s1">)</span>
+        <span class="s2">elif </span><span class="s1">_lob == </span><span class="s6">1</span><span class="s1">:</span>
+            <span class="s1">self.order_by = coercions.expect(</span>
+                <span class="s1">roles.ExpressionElementRole</span><span class="s4">, </span><span class="s1">order_by[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.order_by = elements.ClauseList(</span>
+                <span class="s1">*order_by</span><span class="s4">, </span><span class="s1">_literal_as_text_role=roles.ExpressionElementRole</span>
+            <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">self_group(self</span><span class="s4">, </span><span class="s1">against=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">get_children(self</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+        <span class="s2">return </span><span class="s1">self.target</span><span class="s4">, </span><span class="s1">self.order_by</span>
+
+    <span class="s2">def </span><span class="s1">_copy_internals(self</span><span class="s4">, </span><span class="s1">clone=elements._clone</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">self.target = clone(self.target</span><span class="s4">, </span><span class="s1">**kw)</span>
+        <span class="s1">self.order_by = clone(self.order_by</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">_from_objects(self):</span>
+        <span class="s2">return </span><span class="s1">self.target._from_objects + self.order_by._from_objects</span>
+
+
+<span class="s2">class </span><span class="s1">ExcludeConstraint(ColumnCollectionConstraint):</span>
+    <span class="s3">&quot;&quot;&quot;A table-level EXCLUDE constraint. 
+ 
+    Defines an EXCLUDE constraint as described in the `PostgreSQL 
+    documentation`__. 
+ 
+    __ https://www.postgresql.org/docs/current/static/sql-createtable.html#SQL-CREATETABLE-EXCLUDE 
+ 
+    &quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s3">&quot;exclude_constraint&quot;</span>
+
+    <span class="s1">where = </span><span class="s2">None</span>
+    <span class="s1">inherit_cache = </span><span class="s2">False</span>
+
+    <span class="s1">create_drop_stringify_dialect = </span><span class="s3">&quot;postgresql&quot;</span>
+
+    <span class="s1">@elements._document_text_coercion(</span>
+        <span class="s3">&quot;where&quot;</span><span class="s4">,</span>
+        <span class="s3">&quot;:class:`.ExcludeConstraint`&quot;</span><span class="s4">,</span>
+        <span class="s3">&quot;:paramref:`.ExcludeConstraint.where`&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">*elements</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s5">r&quot;&quot;&quot; 
+        Create an :class:`.ExcludeConstraint` object. 
+ 
+        E.g.:: 
+ 
+            const = ExcludeConstraint( 
+                (Column('period'), '&amp;&amp;'), 
+                (Column('group'), '='), 
+                where=(Column('group') != 'some group'), 
+                ops={'group': 'my_operator_class'} 
+            ) 
+ 
+        The constraint is normally embedded into the :class:`_schema.Table` 
+        construct 
+        directly, or added later using :meth:`.append_constraint`:: 
+ 
+            some_table = Table( 
+                'some_table', metadata, 
+                Column('id', Integer, primary_key=True), 
+                Column('period', TSRANGE()), 
+                Column('group', String) 
+            ) 
+ 
+            some_table.append_constraint( 
+                ExcludeConstraint( 
+                    (some_table.c.period, '&amp;&amp;'), 
+                    (some_table.c.group, '='), 
+                    where=some_table.c.group != 'some group', 
+                    name='some_table_excl_const', 
+                    ops={'group': 'my_operator_class'} 
+                ) 
+            ) 
+ 
+        The exclude constraint defined in this example requires the 
+        ``btree_gist`` extension, that can be created using the 
+        command ``CREATE EXTENSION btree_gist;``. 
+ 
+        :param \*elements: 
+ 
+          A sequence of two tuples of the form ``(column, operator)`` where 
+          &quot;column&quot; is either a :class:`_schema.Column` object, or a SQL 
+          expression element (e.g. ``func.int8range(table.from, table.to)``) 
+          or the name of a column as string, and &quot;operator&quot; is a string 
+          containing the operator to use (e.g. `&quot;&amp;&amp;&quot;` or `&quot;=&quot;`). 
+ 
+          In order to specify a column name when a :class:`_schema.Column` 
+          object is not available, while ensuring 
+          that any necessary quoting rules take effect, an ad-hoc 
+          :class:`_schema.Column` or :func:`_expression.column` 
+          object should be used. 
+          The ``column`` may also be a string SQL expression when 
+          passed as :func:`_expression.literal_column` or 
+          :func:`_expression.text` 
+ 
+        :param name: 
+          Optional, the in-database name of this constraint. 
+ 
+        :param deferrable: 
+          Optional bool.  If set, emit DEFERRABLE or NOT DEFERRABLE when 
+          issuing DDL for this constraint. 
+ 
+        :param initially: 
+          Optional string.  If set, emit INITIALLY &lt;value&gt; when issuing DDL 
+          for this constraint. 
+ 
+        :param using: 
+          Optional string.  If set, emit USING &lt;index_method&gt; when issuing DDL 
+          for this constraint. Defaults to 'gist'. 
+ 
+        :param where: 
+          Optional SQL expression construct or literal SQL string. 
+          If set, emit WHERE &lt;predicate&gt; when issuing DDL 
+          for this constraint. 
+ 
+        :param ops: 
+          Optional dictionary.  Used to define operator classes for the 
+          elements; works the same way as that of the 
+          :ref:`postgresql_ops &lt;postgresql_operator_classes&gt;` 
+          parameter specified to the :class:`_schema.Index` construct. 
+ 
+          .. versionadded:: 1.3.21 
+ 
+          .. seealso:: 
+ 
+            :ref:`postgresql_operator_classes` - general description of how 
+            PostgreSQL operator classes are specified. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">columns = []</span>
+        <span class="s1">render_exprs = []</span>
+        <span class="s1">self.operators = {}</span>
+
+        <span class="s1">expressions</span><span class="s4">, </span><span class="s1">operators = zip(*elements)</span>
+
+        <span class="s2">for </span><span class="s1">(expr</span><span class="s4">, </span><span class="s1">column</span><span class="s4">, </span><span class="s1">strname</span><span class="s4">, </span><span class="s1">add_element)</span><span class="s4">, </span><span class="s1">operator </span><span class="s2">in </span><span class="s1">zip(</span>
+            <span class="s1">coercions.expect_col_expression_collection(</span>
+                <span class="s1">roles.DDLConstraintColumnRole</span><span class="s4">, </span><span class="s1">expressions</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">operators</span><span class="s4">,</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">add_element </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">columns.append(add_element)</span>
+
+            <span class="s1">name = column.name </span><span class="s2">if </span><span class="s1">column </span><span class="s2">is not None else </span><span class="s1">strname</span>
+
+            <span class="s2">if </span><span class="s1">name </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s0"># backwards compat</span>
+                <span class="s1">self.operators[name] = operator</span>
+
+            <span class="s1">render_exprs.append((expr</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">operator))</span>
+
+        <span class="s1">self._render_exprs = render_exprs</span>
+
+        <span class="s1">ColumnCollectionConstraint.__init__(</span>
+            <span class="s1">self</span><span class="s4">,</span>
+            <span class="s1">*columns</span><span class="s4">,</span>
+            <span class="s1">name=kw.get(</span><span class="s3">&quot;name&quot;</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">deferrable=kw.get(</span><span class="s3">&quot;deferrable&quot;</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">initially=kw.get(</span><span class="s3">&quot;initially&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self.using = kw.get(</span><span class="s3">&quot;using&quot;</span><span class="s4">, </span><span class="s3">&quot;gist&quot;</span><span class="s1">)</span>
+        <span class="s1">where = kw.get(</span><span class="s3">&quot;where&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">where </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.where = coercions.expect(roles.StatementOptionRole</span><span class="s4">, </span><span class="s1">where)</span>
+
+        <span class="s1">self.ops = kw.get(</span><span class="s3">&quot;ops&quot;</span><span class="s4">, </span><span class="s1">{})</span>
+
+    <span class="s2">def </span><span class="s1">_set_parent(self</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">super()._set_parent(table)</span>
+
+        <span class="s1">self._render_exprs = [</span>
+            <span class="s1">(</span>
+                <span class="s1">expr </span><span class="s2">if not </span><span class="s1">isinstance(expr</span><span class="s4">, </span><span class="s1">str) </span><span class="s2">else </span><span class="s1">table.c[expr]</span><span class="s4">,</span>
+                <span class="s1">name</span><span class="s4">,</span>
+                <span class="s1">operator</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">expr</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">operator </span><span class="s2">in </span><span class="s1">(self._render_exprs)</span>
+        <span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">_copy(self</span><span class="s4">, </span><span class="s1">target_table=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">elements = [</span>
+            <span class="s1">(</span>
+                <span class="s1">schema._copy_expression(expr</span><span class="s4">, </span><span class="s1">self.parent</span><span class="s4">, </span><span class="s1">target_table)</span><span class="s4">,</span>
+                <span class="s1">operator</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">expr</span><span class="s4">, </span><span class="s1">_</span><span class="s4">, </span><span class="s1">operator </span><span class="s2">in </span><span class="s1">self._render_exprs</span>
+        <span class="s1">]</span>
+        <span class="s1">c = self.__class__(</span>
+            <span class="s1">*elements</span><span class="s4">,</span>
+            <span class="s1">name=self.name</span><span class="s4">,</span>
+            <span class="s1">deferrable=self.deferrable</span><span class="s4">,</span>
+            <span class="s1">initially=self.initially</span><span class="s4">,</span>
+            <span class="s1">where=self.where</span><span class="s4">,</span>
+            <span class="s1">using=self.using</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">c.dispatch._update(self.dispatch)</span>
+        <span class="s2">return </span><span class="s1">c</span>
+
+
+<span class="s2">def </span><span class="s1">array_agg(*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+    <span class="s5">&quot;&quot;&quot;PostgreSQL-specific form of :class:`_functions.array_agg`, ensures 
+    return type is :class:`_postgresql.ARRAY` and not 
+    the plain :class:`_types.ARRAY`, unless an explicit ``type_`` 
+    is passed. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">kw[</span><span class="s3">&quot;_default_array_type&quot;</span><span class="s1">] = ARRAY</span>
+    <span class="s2">return </span><span class="s1">functions.func.array_agg(*arg</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+
+<span class="s2">class </span><span class="s1">_regconfig_fn(functions.GenericFunction[_T]):</span>
+    <span class="s1">inherit_cache = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">args = list(args)</span>
+        <span class="s2">if </span><span class="s1">len(args) &gt; </span><span class="s6">1</span><span class="s1">:</span>
+            <span class="s1">initial_arg = coercions.expect(</span>
+                <span class="s1">roles.ExpressionElementRole</span><span class="s4">,</span>
+                <span class="s1">args.pop(</span><span class="s6">0</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">name=getattr(self</span><span class="s4">, </span><span class="s3">&quot;name&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">apply_propagate_attrs=self</span><span class="s4">,</span>
+                <span class="s1">type_=types.REGCONFIG</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s1">initial_arg = [initial_arg]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">initial_arg = []</span>
+
+        <span class="s1">addtl_args = [</span>
+            <span class="s1">coercions.expect(</span>
+                <span class="s1">roles.ExpressionElementRole</span><span class="s4">,</span>
+                <span class="s1">c</span><span class="s4">,</span>
+                <span class="s1">name=getattr(self</span><span class="s4">, </span><span class="s3">&quot;name&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">apply_propagate_attrs=self</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">args</span>
+        <span class="s1">]</span>
+        <span class="s1">super().__init__(*(initial_arg + addtl_args)</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+
+
+<span class="s2">class </span><span class="s1">to_tsvector(_regconfig_fn):</span>
+    <span class="s5">&quot;&quot;&quot;The PostgreSQL ``to_tsvector`` SQL function. 
+ 
+    This function applies automatic casting of the REGCONFIG argument 
+    to use the :class:`_postgresql.REGCONFIG` datatype automatically, 
+    and applies a return type of :class:`_postgresql.TSVECTOR`. 
+ 
+    Assuming the PostgreSQL dialect has been imported, either by invoking 
+    ``from sqlalchemy.dialects import postgresql``, or by creating a PostgreSQL 
+    engine using ``create_engine(&quot;postgresql...&quot;)``, 
+    :class:`_postgresql.to_tsvector` will be used automatically when invoking 
+    ``sqlalchemy.func.to_tsvector()``, ensuring the correct argument and return 
+    type handlers are used at compile and execution time. 
+ 
+    .. versionadded:: 2.0.0rc1 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s2">True</span>
+    <span class="s1">type = types.TSVECTOR</span>
+
+
+<span class="s2">class </span><span class="s1">to_tsquery(_regconfig_fn):</span>
+    <span class="s5">&quot;&quot;&quot;The PostgreSQL ``to_tsquery`` SQL function. 
+ 
+    This function applies automatic casting of the REGCONFIG argument 
+    to use the :class:`_postgresql.REGCONFIG` datatype automatically, 
+    and applies a return type of :class:`_postgresql.TSQUERY`. 
+ 
+    Assuming the PostgreSQL dialect has been imported, either by invoking 
+    ``from sqlalchemy.dialects import postgresql``, or by creating a PostgreSQL 
+    engine using ``create_engine(&quot;postgresql...&quot;)``, 
+    :class:`_postgresql.to_tsquery` will be used automatically when invoking 
+    ``sqlalchemy.func.to_tsquery()``, ensuring the correct argument and return 
+    type handlers are used at compile and execution time. 
+ 
+    .. versionadded:: 2.0.0rc1 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s2">True</span>
+    <span class="s1">type = types.TSQUERY</span>
+
+
+<span class="s2">class </span><span class="s1">plainto_tsquery(_regconfig_fn):</span>
+    <span class="s5">&quot;&quot;&quot;The PostgreSQL ``plainto_tsquery`` SQL function. 
+ 
+    This function applies automatic casting of the REGCONFIG argument 
+    to use the :class:`_postgresql.REGCONFIG` datatype automatically, 
+    and applies a return type of :class:`_postgresql.TSQUERY`. 
+ 
+    Assuming the PostgreSQL dialect has been imported, either by invoking 
+    ``from sqlalchemy.dialects import postgresql``, or by creating a PostgreSQL 
+    engine using ``create_engine(&quot;postgresql...&quot;)``, 
+    :class:`_postgresql.plainto_tsquery` will be used automatically when 
+    invoking ``sqlalchemy.func.plainto_tsquery()``, ensuring the correct 
+    argument and return type handlers are used at compile and execution time. 
+ 
+    .. versionadded:: 2.0.0rc1 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s2">True</span>
+    <span class="s1">type = types.TSQUERY</span>
+
+
+<span class="s2">class </span><span class="s1">phraseto_tsquery(_regconfig_fn):</span>
+    <span class="s5">&quot;&quot;&quot;The PostgreSQL ``phraseto_tsquery`` SQL function. 
+ 
+    This function applies automatic casting of the REGCONFIG argument 
+    to use the :class:`_postgresql.REGCONFIG` datatype automatically, 
+    and applies a return type of :class:`_postgresql.TSQUERY`. 
+ 
+    Assuming the PostgreSQL dialect has been imported, either by invoking 
+    ``from sqlalchemy.dialects import postgresql``, or by creating a PostgreSQL 
+    engine using ``create_engine(&quot;postgresql...&quot;)``, 
+    :class:`_postgresql.phraseto_tsquery` will be used automatically when 
+    invoking ``sqlalchemy.func.phraseto_tsquery()``, ensuring the correct 
+    argument and return type handlers are used at compile and execution time. 
+ 
+    .. versionadded:: 2.0.0rc1 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s2">True</span>
+    <span class="s1">type = types.TSQUERY</span>
+
+
+<span class="s2">class </span><span class="s1">websearch_to_tsquery(_regconfig_fn):</span>
+    <span class="s5">&quot;&quot;&quot;The PostgreSQL ``websearch_to_tsquery`` SQL function. 
+ 
+    This function applies automatic casting of the REGCONFIG argument 
+    to use the :class:`_postgresql.REGCONFIG` datatype automatically, 
+    and applies a return type of :class:`_postgresql.TSQUERY`. 
+ 
+    Assuming the PostgreSQL dialect has been imported, either by invoking 
+    ``from sqlalchemy.dialects import postgresql``, or by creating a PostgreSQL 
+    engine using ``create_engine(&quot;postgresql...&quot;)``, 
+    :class:`_postgresql.websearch_to_tsquery` will be used automatically when 
+    invoking ``sqlalchemy.func.websearch_to_tsquery()``, ensuring the correct 
+    argument and return type handlers are used at compile and execution time. 
+ 
+    .. versionadded:: 2.0.0rc1 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s2">True</span>
+    <span class="s1">type = types.TSQUERY</span>
+
+
+<span class="s2">class </span><span class="s1">ts_headline(_regconfig_fn):</span>
+    <span class="s5">&quot;&quot;&quot;The PostgreSQL ``ts_headline`` SQL function. 
+ 
+    This function applies automatic casting of the REGCONFIG argument 
+    to use the :class:`_postgresql.REGCONFIG` datatype automatically, 
+    and applies a return type of :class:`_types.TEXT`. 
+ 
+    Assuming the PostgreSQL dialect has been imported, either by invoking 
+    ``from sqlalchemy.dialects import postgresql``, or by creating a PostgreSQL 
+    engine using ``create_engine(&quot;postgresql...&quot;)``, 
+    :class:`_postgresql.ts_headline` will be used automatically when invoking 
+    ``sqlalchemy.func.ts_headline()``, ensuring the correct argument and return 
+    type handlers are used at compile and execution time. 
+ 
+    .. versionadded:: 2.0.0rc1 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s2">True</span>
+    <span class="s1">type = TEXT</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">args = list(args)</span>
+
+        <span class="s0"># parse types according to</span>
+        <span class="s0"># https://www.postgresql.org/docs/current/textsearch-controls.html#TEXTSEARCH-HEADLINE</span>
+        <span class="s2">if </span><span class="s1">len(args) &lt; </span><span class="s6">2</span><span class="s1">:</span>
+            <span class="s0"># invalid args; don't do anything</span>
+            <span class="s1">has_regconfig = </span><span class="s2">False</span>
+        <span class="s2">elif </span><span class="s1">(</span>
+            <span class="s1">isinstance(args[</span><span class="s6">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">elements.ColumnElement)</span>
+            <span class="s2">and </span><span class="s1">args[</span><span class="s6">1</span><span class="s1">].type._type_affinity </span><span class="s2">is </span><span class="s1">types.TSQUERY</span>
+        <span class="s1">):</span>
+            <span class="s0"># tsquery is second argument, no regconfig argument</span>
+            <span class="s1">has_regconfig = </span><span class="s2">False</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">has_regconfig = </span><span class="s2">True</span>
+
+        <span class="s2">if </span><span class="s1">has_regconfig:</span>
+            <span class="s1">initial_arg = coercions.expect(</span>
+                <span class="s1">roles.ExpressionElementRole</span><span class="s4">,</span>
+                <span class="s1">args.pop(</span><span class="s6">0</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">apply_propagate_attrs=self</span><span class="s4">,</span>
+                <span class="s1">name=getattr(self</span><span class="s4">, </span><span class="s3">&quot;name&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">type_=types.REGCONFIG</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s1">initial_arg = [initial_arg]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">initial_arg = []</span>
+
+        <span class="s1">addtl_args = [</span>
+            <span class="s1">coercions.expect(</span>
+                <span class="s1">roles.ExpressionElementRole</span><span class="s4">,</span>
+                <span class="s1">c</span><span class="s4">,</span>
+                <span class="s1">name=getattr(self</span><span class="s4">, </span><span class="s3">&quot;name&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">apply_propagate_attrs=self</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">args</span>
+        <span class="s1">]</span>
+        <span class="s1">super().__init__(*(initial_arg + addtl_args)</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+</pre>
+</body>
+</html>

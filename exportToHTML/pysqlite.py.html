@@ -1,0 +1,780 @@
+<html>
+<head>
+<title>pysqlite.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pysqlite.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/sqlite/pysqlite.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">r&quot;&quot;&quot; 
+.. dialect:: sqlite+pysqlite 
+    :name: pysqlite 
+    :dbapi: sqlite3 
+    :connectstring: sqlite+pysqlite:///file_path 
+    :url: https://docs.python.org/library/sqlite3.html 
+ 
+    Note that ``pysqlite`` is the same driver as the ``sqlite3`` 
+    module included with the Python distribution. 
+ 
+Driver 
+------ 
+ 
+The ``sqlite3`` Python DBAPI is standard on all modern Python versions; 
+for cPython and Pypy, no additional installation is necessary. 
+ 
+ 
+Connect Strings 
+--------------- 
+ 
+The file specification for the SQLite database is taken as the &quot;database&quot; 
+portion of the URL.  Note that the format of a SQLAlchemy url is:: 
+ 
+    driver://user:pass@host/database 
+ 
+This means that the actual filename to be used starts with the characters to 
+the **right** of the third slash.   So connecting to a relative filepath 
+looks like:: 
+ 
+    # relative path 
+    e = create_engine('sqlite:///path/to/database.db') 
+ 
+An absolute path, which is denoted by starting with a slash, means you 
+need **four** slashes:: 
+ 
+    # absolute path 
+    e = create_engine('sqlite:////path/to/database.db') 
+ 
+To use a Windows path, regular drive specifications and backslashes can be 
+used. Double backslashes are probably needed:: 
+ 
+    # absolute path on Windows 
+    e = create_engine('sqlite:///C:\\path\\to\\database.db') 
+ 
+To use sqlite ``:memory:`` database specify it as the filename using 
+``sqlite:///:memory:``. It's also the default if no filepath is 
+present, specifying only ``sqlite://`` and nothing else:: 
+ 
+    # in-memory database (note three slashes) 
+    e = create_engine('sqlite:///:memory:') 
+    # also in-memory database 
+    e2 = create_engine('sqlite://') 
+ 
+.. _pysqlite_uri_connections: 
+ 
+URI Connections 
+^^^^^^^^^^^^^^^ 
+ 
+Modern versions of SQLite support an alternative system of connecting using a 
+`driver level URI &lt;https://www.sqlite.org/uri.html&gt;`_, which has the  advantage 
+that additional driver-level arguments can be passed including options such as 
+&quot;read only&quot;.   The Python sqlite3 driver supports this mode under modern Python 
+3 versions.   The SQLAlchemy pysqlite driver supports this mode of use by 
+specifying &quot;uri=true&quot; in the URL query string.  The SQLite-level &quot;URI&quot; is kept 
+as the &quot;database&quot; portion of the SQLAlchemy url (that is, following a slash):: 
+ 
+    e = create_engine(&quot;sqlite:///file:path/to/database?mode=ro&amp;uri=true&quot;) 
+ 
+.. note::  The &quot;uri=true&quot; parameter must appear in the **query string** 
+   of the URL.  It will not currently work as expected if it is only 
+   present in the :paramref:`_sa.create_engine.connect_args` 
+   parameter dictionary. 
+ 
+The logic reconciles the simultaneous presence of SQLAlchemy's query string and 
+SQLite's query string by separating out the parameters that belong to the 
+Python sqlite3 driver vs. those that belong to the SQLite URI.  This is 
+achieved through the use of a fixed list of parameters known to be accepted by 
+the Python side of the driver.  For example, to include a URL that indicates 
+the Python sqlite3 &quot;timeout&quot; and &quot;check_same_thread&quot; parameters, along with the 
+SQLite &quot;mode&quot; and &quot;nolock&quot; parameters, they can all be passed together on the 
+query string:: 
+ 
+    e = create_engine( 
+        &quot;sqlite:///file:path/to/database?&quot; 
+        &quot;check_same_thread=true&amp;timeout=10&amp;mode=ro&amp;nolock=1&amp;uri=true&quot; 
+    ) 
+ 
+Above, the pysqlite / sqlite3 DBAPI would be passed arguments as:: 
+ 
+    sqlite3.connect( 
+        &quot;file:path/to/database?mode=ro&amp;nolock=1&quot;, 
+        check_same_thread=True, timeout=10, uri=True 
+    ) 
+ 
+Regarding future parameters added to either the Python or native drivers. new 
+parameter names added to the SQLite URI scheme should be automatically 
+accommodated by this scheme.  New parameter names added to the Python driver 
+side can be accommodated by specifying them in the 
+:paramref:`_sa.create_engine.connect_args` dictionary, 
+until dialect support is 
+added by SQLAlchemy.   For the less likely case that the native SQLite driver 
+adds a new parameter name that overlaps with one of the existing, known Python 
+driver parameters (such as &quot;timeout&quot; perhaps), SQLAlchemy's dialect would 
+require adjustment for the URL scheme to continue to support this. 
+ 
+As is always the case for all SQLAlchemy dialects, the entire &quot;URL&quot; process 
+can be bypassed in :func:`_sa.create_engine` through the use of the 
+:paramref:`_sa.create_engine.creator` 
+parameter which allows for a custom callable 
+that creates a Python sqlite3 driver level connection directly. 
+ 
+.. versionadded:: 1.3.9 
+ 
+.. seealso:: 
+ 
+    `Uniform Resource Identifiers &lt;https://www.sqlite.org/uri.html&gt;`_ - in 
+    the SQLite documentation 
+ 
+.. _pysqlite_regexp: 
+ 
+Regular Expression Support 
+--------------------------- 
+ 
+.. versionadded:: 1.4 
+ 
+Support for the :meth:`_sql.ColumnOperators.regexp_match` operator is provided 
+using Python's re.search_ function.  SQLite itself does not include a working 
+regular expression operator; instead, it includes a non-implemented placeholder 
+operator ``REGEXP`` that calls a user-defined function that must be provided. 
+ 
+SQLAlchemy's implementation makes use of the pysqlite create_function_ hook 
+as follows:: 
+ 
+ 
+    def regexp(a, b): 
+        return re.search(a, b) is not None 
+ 
+    sqlite_connection.create_function( 
+        &quot;regexp&quot;, 2, regexp, 
+    ) 
+ 
+There is currently no support for regular expression flags as a separate 
+argument, as these are not supported by SQLite's REGEXP operator, however these 
+may be included inline within the regular expression string.  See `Python regular expressions`_ for 
+details. 
+ 
+.. seealso:: 
+ 
+    `Python regular expressions`_: Documentation for Python's regular expression syntax. 
+ 
+.. _create_function: https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.create_function 
+ 
+.. _re.search: https://docs.python.org/3/library/re.html#re.search 
+ 
+.. _Python regular expressions: https://docs.python.org/3/library/re.html#re.search 
+ 
+ 
+ 
+Compatibility with sqlite3 &quot;native&quot; date and datetime types 
+----------------------------------------------------------- 
+ 
+The pysqlite driver includes the sqlite3.PARSE_DECLTYPES and 
+sqlite3.PARSE_COLNAMES options, which have the effect of any column 
+or expression explicitly cast as &quot;date&quot; or &quot;timestamp&quot; will be converted 
+to a Python date or datetime object.  The date and datetime types provided 
+with the pysqlite dialect are not currently compatible with these options, 
+since they render the ISO date/datetime including microseconds, which 
+pysqlite's driver does not.   Additionally, SQLAlchemy does not at 
+this time automatically render the &quot;cast&quot; syntax required for the 
+freestanding functions &quot;current_timestamp&quot; and &quot;current_date&quot; to return 
+datetime/date types natively.   Unfortunately, pysqlite 
+does not provide the standard DBAPI types in ``cursor.description``, 
+leaving SQLAlchemy with no way to detect these types on the fly 
+without expensive per-row type checks. 
+ 
+Keeping in mind that pysqlite's parsing option is not recommended, 
+nor should be necessary, for use with SQLAlchemy, usage of PARSE_DECLTYPES 
+can be forced if one configures &quot;native_datetime=True&quot; on create_engine():: 
+ 
+    engine = create_engine('sqlite://', 
+        connect_args={'detect_types': 
+            sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES}, 
+        native_datetime=True 
+    ) 
+ 
+With this flag enabled, the DATE and TIMESTAMP types (but note - not the 
+DATETIME or TIME types...confused yet ?) will not perform any bind parameter 
+or result processing. Execution of &quot;func.current_date()&quot; will return a string. 
+&quot;func.current_timestamp()&quot; is registered as returning a DATETIME type in 
+SQLAlchemy, so this function still receives SQLAlchemy-level result 
+processing. 
+ 
+.. _pysqlite_threading_pooling: 
+ 
+Threading/Pooling Behavior 
+--------------------------- 
+ 
+The ``sqlite3`` DBAPI by default prohibits the use of a particular connection 
+in a thread which is not the one in which it was created.  As SQLite has 
+matured, it's behavior under multiple threads has improved, and even includes 
+options for memory only databases to be used in multiple threads. 
+ 
+The thread prohibition is known as &quot;check same thread&quot; and may be controlled 
+using the ``sqlite3`` parameter ``check_same_thread``, which will disable or 
+enable this check. SQLAlchemy's default behavior here is to set 
+``check_same_thread`` to ``False`` automatically whenever a file-based database 
+is in use, to establish compatibility with the default pool class 
+:class:`.QueuePool`. 
+ 
+The SQLAlchemy ``pysqlite`` DBAPI establishes the connection pool differently 
+based on the kind of SQLite database that's requested: 
+ 
+* When a ``:memory:`` SQLite database is specified, the dialect by default 
+  will use :class:`.SingletonThreadPool`. This pool maintains a single 
+  connection per thread, so that all access to the engine within the current 
+  thread use the same ``:memory:`` database - other threads would access a 
+  different ``:memory:`` database.  The ``check_same_thread`` parameter 
+  defaults to ``True``. 
+* When a file-based database is specified, the dialect will use 
+  :class:`.QueuePool` as the source of connections.   at the same time, 
+  the ``check_same_thread`` flag is set to False by default unless overridden. 
+ 
+  .. versionchanged:: 2.0 
+ 
+    SQLite file database engines now use :class:`.QueuePool` by default. 
+    Previously, :class:`.NullPool` were used.  The :class:`.NullPool` class 
+    may be used by specifying it via the 
+    :paramref:`_sa.create_engine.poolclass` parameter. 
+ 
+Disabling Connection Pooling for File Databases 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+ 
+Pooling may be disabled for a file based database by specifying the 
+:class:`.NullPool` implementation for the :func:`_sa.create_engine.poolclass` 
+parameter:: 
+ 
+    from sqlalchemy import NullPool 
+    engine = create_engine(&quot;sqlite:///myfile.db&quot;, poolclass=NullPool) 
+ 
+It's been observed that the :class:`.NullPool` implementation incurs an 
+extremely small performance overhead for repeated checkouts due to the lack of 
+connection re-use implemented by :class:`.QueuePool`.  However, it still 
+may be beneficial to use this class if the application is experiencing 
+issues with files being locked. 
+ 
+Using a Memory Database in Multiple Threads 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+ 
+To use a ``:memory:`` database in a multithreaded scenario, the same 
+connection object must be shared among threads, since the database exists 
+only within the scope of that connection.   The 
+:class:`.StaticPool` implementation will maintain a single connection 
+globally, and the ``check_same_thread`` flag can be passed to Pysqlite 
+as ``False``:: 
+ 
+    from sqlalchemy.pool import StaticPool 
+    engine = create_engine('sqlite://', 
+                        connect_args={'check_same_thread':False}, 
+                        poolclass=StaticPool) 
+ 
+Note that using a ``:memory:`` database in multiple threads requires a recent 
+version of SQLite. 
+ 
+Using Temporary Tables with SQLite 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+ 
+Due to the way SQLite deals with temporary tables, if you wish to use a 
+temporary table in a file-based SQLite database across multiple checkouts 
+from the connection pool, such as when using an ORM :class:`.Session` where 
+the temporary table should continue to remain after :meth:`.Session.commit` or 
+:meth:`.Session.rollback` is called, a pool which maintains a single 
+connection must be used.   Use :class:`.SingletonThreadPool` if the scope is 
+only needed within the current thread, or :class:`.StaticPool` is scope is 
+needed within multiple threads for this case:: 
+ 
+    # maintain the same connection per thread 
+    from sqlalchemy.pool import SingletonThreadPool 
+    engine = create_engine('sqlite:///mydb.db', 
+                        poolclass=SingletonThreadPool) 
+ 
+ 
+    # maintain the same connection across all threads 
+    from sqlalchemy.pool import StaticPool 
+    engine = create_engine('sqlite:///mydb.db', 
+                        poolclass=StaticPool) 
+ 
+Note that :class:`.SingletonThreadPool` should be configured for the number 
+of threads that are to be used; beyond that number, connections will be 
+closed out in a non deterministic way. 
+ 
+ 
+Dealing with Mixed String / Binary Columns 
+------------------------------------------------------ 
+ 
+The SQLite database is weakly typed, and as such it is possible when using 
+binary values, which in Python are represented as ``b'some string'``, that a 
+particular SQLite database can have data values within different rows where 
+some of them will be returned as a ``b''`` value by the Pysqlite driver, and 
+others will be returned as Python strings, e.g. ``''`` values.   This situation 
+is not known to occur if the SQLAlchemy :class:`.LargeBinary` datatype is used 
+consistently, however if a particular SQLite database has data that was 
+inserted using the Pysqlite driver directly, or when using the SQLAlchemy 
+:class:`.String` type which was later changed to :class:`.LargeBinary`, the 
+table will not be consistently readable because SQLAlchemy's 
+:class:`.LargeBinary` datatype does not handle strings so it has no way of 
+&quot;encoding&quot; a value that is in string format. 
+ 
+To deal with a SQLite table that has mixed string / binary data in the 
+same column, use a custom type that will check each row individually:: 
+ 
+    from sqlalchemy import String 
+    from sqlalchemy import TypeDecorator 
+ 
+    class MixedBinary(TypeDecorator): 
+        impl = String 
+        cache_ok = True 
+ 
+        def process_result_value(self, value, dialect): 
+            if isinstance(value, str): 
+                value = bytes(value, 'utf-8') 
+            elif value is not None: 
+                value = bytes(value) 
+ 
+            return value 
+ 
+Then use the above ``MixedBinary`` datatype in the place where 
+:class:`.LargeBinary` would normally be used. 
+ 
+.. _pysqlite_serializable: 
+ 
+Serializable isolation / Savepoints / Transactional DDL 
+------------------------------------------------------- 
+ 
+In the section :ref:`sqlite_concurrency`, we refer to the pysqlite 
+driver's assortment of issues that prevent several features of SQLite 
+from working correctly.  The pysqlite DBAPI driver has several 
+long-standing bugs which impact the correctness of its transactional 
+behavior.   In its default mode of operation, SQLite features such as 
+SERIALIZABLE isolation, transactional DDL, and SAVEPOINT support are 
+non-functional, and in order to use these features, workarounds must 
+be taken. 
+ 
+The issue is essentially that the driver attempts to second-guess the user's 
+intent, failing to start transactions and sometimes ending them prematurely, in 
+an effort to minimize the SQLite databases's file locking behavior, even 
+though SQLite itself uses &quot;shared&quot; locks for read-only activities. 
+ 
+SQLAlchemy chooses to not alter this behavior by default, as it is the 
+long-expected behavior of the pysqlite driver; if and when the pysqlite 
+driver attempts to repair these issues, that will be more of a driver towards 
+defaults for SQLAlchemy. 
+ 
+The good news is that with a few events, we can implement transactional 
+support fully, by disabling pysqlite's feature entirely and emitting BEGIN 
+ourselves. This is achieved using two event listeners:: 
+ 
+    from sqlalchemy import create_engine, event 
+ 
+    engine = create_engine(&quot;sqlite:///myfile.db&quot;) 
+ 
+    @event.listens_for(engine, &quot;connect&quot;) 
+    def do_connect(dbapi_connection, connection_record): 
+        # disable pysqlite's emitting of the BEGIN statement entirely. 
+        # also stops it from emitting COMMIT before any DDL. 
+        dbapi_connection.isolation_level = None 
+ 
+    @event.listens_for(engine, &quot;begin&quot;) 
+    def do_begin(conn): 
+        # emit our own BEGIN 
+        conn.exec_driver_sql(&quot;BEGIN&quot;) 
+ 
+.. warning:: When using the above recipe, it is advised to not use the 
+   :paramref:`.Connection.execution_options.isolation_level` setting on 
+   :class:`_engine.Connection` and :func:`_sa.create_engine` 
+   with the SQLite driver, 
+   as this function necessarily will also alter the &quot;.isolation_level&quot; setting. 
+ 
+ 
+Above, we intercept a new pysqlite connection and disable any transactional 
+integration.   Then, at the point at which SQLAlchemy knows that transaction 
+scope is to begin, we emit ``&quot;BEGIN&quot;`` ourselves. 
+ 
+When we take control of ``&quot;BEGIN&quot;``, we can also control directly SQLite's 
+locking modes, introduced at 
+`BEGIN TRANSACTION &lt;https://sqlite.org/lang_transaction.html&gt;`_, 
+by adding the desired locking mode to our ``&quot;BEGIN&quot;``:: 
+ 
+    @event.listens_for(engine, &quot;begin&quot;) 
+    def do_begin(conn): 
+        conn.exec_driver_sql(&quot;BEGIN EXCLUSIVE&quot;) 
+ 
+.. seealso:: 
+ 
+    `BEGIN TRANSACTION &lt;https://sqlite.org/lang_transaction.html&gt;`_ - 
+    on the SQLite site 
+ 
+    `sqlite3 SELECT does not BEGIN a transaction &lt;https://bugs.python.org/issue9924&gt;`_ - 
+    on the Python bug tracker 
+ 
+    `sqlite3 module breaks transactions and potentially corrupts data &lt;https://bugs.python.org/issue10740&gt;`_ - 
+    on the Python bug tracker 
+ 
+.. _pysqlite_udfs: 
+ 
+User-Defined Functions 
+---------------------- 
+ 
+pysqlite supports a `create_function() &lt;https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.create_function&gt;`_ 
+method that allows us to create our own user-defined functions (UDFs) in Python and use them directly in SQLite queries. 
+These functions are registered with a specific DBAPI Connection. 
+ 
+SQLAlchemy uses connection pooling with file-based SQLite databases, so we need to ensure that the UDF is attached to the 
+connection when it is created. That is accomplished with an event listener:: 
+ 
+    from sqlalchemy import create_engine 
+    from sqlalchemy import event 
+    from sqlalchemy import text 
+ 
+ 
+    def udf(): 
+        return &quot;udf-ok&quot; 
+ 
+ 
+    engine = create_engine(&quot;sqlite:///./db_file&quot;) 
+ 
+ 
+    @event.listens_for(engine, &quot;connect&quot;) 
+    def connect(conn, rec): 
+        conn.create_function(&quot;udf&quot;, 0, udf) 
+ 
+ 
+    for i in range(5): 
+        with engine.connect() as conn: 
+            print(conn.scalar(text(&quot;SELECT UDF()&quot;))) 
+ 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+
+<span class="s3">import </span><span class="s1">math</span>
+<span class="s3">import </span><span class="s1">os</span>
+<span class="s3">import </span><span class="s1">re</span>
+
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">DATE</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">DATETIME</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">SQLiteDialect</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">pool</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">types </span><span class="s3">as </span><span class="s1">sqltypes</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+
+
+<span class="s3">class </span><span class="s1">_SQLite_pysqliteTimeStamp(DATETIME):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s3">if </span><span class="s1">dialect.native_datetime:</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">DATETIME.bind_processor(self</span><span class="s4">, </span><span class="s1">dialect)</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">if </span><span class="s1">dialect.native_datetime:</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">DATETIME.result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype)</span>
+
+
+<span class="s3">class </span><span class="s1">_SQLite_pysqliteDate(DATE):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s3">if </span><span class="s1">dialect.native_datetime:</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">DATE.bind_processor(self</span><span class="s4">, </span><span class="s1">dialect)</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">if </span><span class="s1">dialect.native_datetime:</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">DATE.result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype)</span>
+
+
+<span class="s3">class </span><span class="s1">SQLiteDialect_pysqlite(SQLiteDialect):</span>
+    <span class="s1">default_paramstyle = </span><span class="s2">&quot;qmark&quot;</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+    <span class="s1">returns_native_bytes = </span><span class="s3">True</span>
+
+    <span class="s1">colspecs = util.update_copy(</span>
+        <span class="s1">SQLiteDialect.colspecs</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s1">sqltypes.Date: _SQLite_pysqliteDate</span><span class="s4">,</span>
+            <span class="s1">sqltypes.TIMESTAMP: _SQLite_pysqliteTimeStamp</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">description_encoding = </span><span class="s3">None</span>
+
+    <span class="s1">driver = </span><span class="s2">&quot;pysqlite&quot;</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">from </span><span class="s1">sqlite3 </span><span class="s3">import </span><span class="s1">dbapi2 </span><span class="s3">as </span><span class="s1">sqlite</span>
+
+        <span class="s3">return </span><span class="s1">sqlite</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_is_url_file_db(cls</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s3">if </span><span class="s1">(url.database </span><span class="s3">and </span><span class="s1">url.database != </span><span class="s2">&quot;:memory:&quot;</span><span class="s1">) </span><span class="s3">and </span><span class="s1">(</span>
+            <span class="s1">url.query.get(</span><span class="s2">&quot;mode&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">) != </span><span class="s2">&quot;memory&quot;</span>
+        <span class="s1">):</span>
+            <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_pool_class(cls</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s3">if </span><span class="s1">cls._is_url_file_db(url):</span>
+            <span class="s3">return </span><span class="s1">pool.QueuePool</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">pool.SingletonThreadPool</span>
+
+    <span class="s3">def </span><span class="s1">_get_server_version_info(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">self.dbapi.sqlite_version_info</span>
+
+    <span class="s1">_isolation_lookup = SQLiteDialect._isolation_lookup.union(</span>
+        <span class="s1">{</span>
+            <span class="s2">&quot;AUTOCOMMIT&quot;</span><span class="s1">: </span><span class="s3">None</span><span class="s4">,</span>
+        <span class="s1">}</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">set_isolation_level(self</span><span class="s4">, </span><span class="s1">dbapi_connection</span><span class="s4">, </span><span class="s1">level):</span>
+        <span class="s3">if </span><span class="s1">level == </span><span class="s2">&quot;AUTOCOMMIT&quot;</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.isolation_level = </span><span class="s3">None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.isolation_level = </span><span class="s2">&quot;&quot;</span>
+            <span class="s3">return </span><span class="s1">super().set_isolation_level(dbapi_connection</span><span class="s4">, </span><span class="s1">level)</span>
+
+    <span class="s3">def </span><span class="s1">on_connect(self):</span>
+        <span class="s3">def </span><span class="s1">regexp(a</span><span class="s4">, </span><span class="s1">b):</span>
+            <span class="s3">if </span><span class="s1">b </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+            <span class="s3">return </span><span class="s1">re.search(a</span><span class="s4">, </span><span class="s1">b) </span><span class="s3">is not None</span>
+
+        <span class="s3">if </span><span class="s1">util.py38 </span><span class="s3">and </span><span class="s1">self._get_server_version_info(</span><span class="s3">None</span><span class="s1">) &gt;= (</span><span class="s5">3</span><span class="s4">, </span><span class="s5">9</span><span class="s1">):</span>
+            <span class="s0"># sqlite must be greater than 3.8.3 for deterministic=True</span>
+            <span class="s0"># https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.create_function</span>
+            <span class="s0"># the check is more conservative since there were still issues</span>
+            <span class="s0"># with following 3.8 sqlite versions</span>
+            <span class="s1">create_func_kw = {</span><span class="s2">&quot;deterministic&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">create_func_kw = {}</span>
+
+        <span class="s3">def </span><span class="s1">set_regexp(dbapi_connection):</span>
+            <span class="s1">dbapi_connection.create_function(</span>
+                <span class="s2">&quot;regexp&quot;</span><span class="s4">, </span><span class="s5">2</span><span class="s4">, </span><span class="s1">regexp</span><span class="s4">, </span><span class="s1">**create_func_kw</span>
+            <span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">floor_func(dbapi_connection):</span>
+            <span class="s0"># NOTE: floor is optionally present in sqlite 3.35+ , however</span>
+            <span class="s0"># as it is normally non-present we deliver floor() unconditionally</span>
+            <span class="s0"># for now.</span>
+            <span class="s0"># https://www.sqlite.org/lang_mathfunc.html</span>
+            <span class="s1">dbapi_connection.create_function(</span>
+                <span class="s2">&quot;floor&quot;</span><span class="s4">, </span><span class="s5">1</span><span class="s4">, </span><span class="s1">math.floor</span><span class="s4">, </span><span class="s1">**create_func_kw</span>
+            <span class="s1">)</span>
+
+        <span class="s1">fns = [set_regexp</span><span class="s4">, </span><span class="s1">floor_func]</span>
+
+        <span class="s3">def </span><span class="s1">connect(conn):</span>
+            <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">fns:</span>
+                <span class="s1">fn(conn)</span>
+
+        <span class="s3">return </span><span class="s1">connect</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s3">if </span><span class="s1">url.username </span><span class="s3">or </span><span class="s1">url.password </span><span class="s3">or </span><span class="s1">url.host </span><span class="s3">or </span><span class="s1">url.port:</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s2">&quot;Invalid SQLite URL: %s</span><span class="s6">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot;Valid SQLite URL forms are:</span><span class="s6">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot; sqlite:///:memory: (or, sqlite://)</span><span class="s6">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot; sqlite:///relative/path/to/file.db</span><span class="s6">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot; sqlite:////absolute/path/to/file.db&quot; </span><span class="s1">% (url</span><span class="s4">,</span><span class="s1">)</span>
+            <span class="s1">)</span>
+
+        <span class="s0"># theoretically, this list can be augmented, at least as far as</span>
+        <span class="s0"># parameter names accepted by sqlite3/pysqlite, using</span>
+        <span class="s0"># inspect.getfullargspec().  for the moment this seems like overkill</span>
+        <span class="s0"># as these parameters don't change very often, and as always,</span>
+        <span class="s0"># parameters passed to connect_args will always go to the</span>
+        <span class="s0"># sqlite3/pysqlite driver.</span>
+        <span class="s1">pysqlite_args = [</span>
+            <span class="s1">(</span><span class="s2">&quot;uri&quot;</span><span class="s4">, </span><span class="s1">bool)</span><span class="s4">,</span>
+            <span class="s1">(</span><span class="s2">&quot;timeout&quot;</span><span class="s4">, </span><span class="s1">float)</span><span class="s4">,</span>
+            <span class="s1">(</span><span class="s2">&quot;isolation_level&quot;</span><span class="s4">, </span><span class="s1">str)</span><span class="s4">,</span>
+            <span class="s1">(</span><span class="s2">&quot;detect_types&quot;</span><span class="s4">, </span><span class="s1">int)</span><span class="s4">,</span>
+            <span class="s1">(</span><span class="s2">&quot;check_same_thread&quot;</span><span class="s4">, </span><span class="s1">bool)</span><span class="s4">,</span>
+            <span class="s1">(</span><span class="s2">&quot;cached_statements&quot;</span><span class="s4">, </span><span class="s1">int)</span><span class="s4">,</span>
+        <span class="s1">]</span>
+        <span class="s1">opts = url.query</span>
+        <span class="s1">pysqlite_opts = {}</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">type_ </span><span class="s3">in </span><span class="s1">pysqlite_args:</span>
+            <span class="s1">util.coerce_kw_type(opts</span><span class="s4">, </span><span class="s1">key</span><span class="s4">, </span><span class="s1">type_</span><span class="s4">, </span><span class="s1">dest=pysqlite_opts)</span>
+
+        <span class="s3">if </span><span class="s1">pysqlite_opts.get(</span><span class="s2">&quot;uri&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s1">uri_opts = dict(opts)</span>
+            <span class="s0"># here, we are actually separating the parameters that go to</span>
+            <span class="s0"># sqlite3/pysqlite vs. those that go the SQLite URI.  What if</span>
+            <span class="s0"># two names conflict?  again, this seems to be not the case right</span>
+            <span class="s0"># now, and in the case that new names are added to</span>
+            <span class="s0"># either side which overlap, again the sqlite3/pysqlite parameters</span>
+            <span class="s0"># can be passed through connect_args instead of in the URL.</span>
+            <span class="s0"># If SQLite native URIs add a parameter like &quot;timeout&quot; that</span>
+            <span class="s0"># we already have listed here for the python driver, then we need</span>
+            <span class="s0"># to adjust for that here.</span>
+            <span class="s3">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">type_ </span><span class="s3">in </span><span class="s1">pysqlite_args:</span>
+                <span class="s1">uri_opts.pop(key</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s1">filename = url.database</span>
+            <span class="s3">if </span><span class="s1">uri_opts:</span>
+                <span class="s0"># sorting of keys is for unit test support</span>
+                <span class="s1">filename += </span><span class="s2">&quot;?&quot; </span><span class="s1">+ (</span>
+                    <span class="s2">&quot;&amp;&quot;</span><span class="s1">.join(</span>
+                        <span class="s2">&quot;%s=%s&quot; </span><span class="s1">% (key</span><span class="s4">, </span><span class="s1">uri_opts[key])</span>
+                        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">sorted(uri_opts)</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">filename = url.database </span><span class="s3">or </span><span class="s2">&quot;:memory:&quot;</span>
+            <span class="s3">if </span><span class="s1">filename != </span><span class="s2">&quot;:memory:&quot;</span><span class="s1">:</span>
+                <span class="s1">filename = os.path.abspath(filename)</span>
+
+        <span class="s1">pysqlite_opts.setdefault(</span>
+            <span class="s2">&quot;check_same_thread&quot;</span><span class="s4">, </span><span class="s3">not </span><span class="s1">self._is_url_file_db(url)</span>
+        <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">([filename]</span><span class="s4">, </span><span class="s1">pysqlite_opts)</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s4">, </span><span class="s1">e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+        <span class="s3">return </span><span class="s1">isinstance(</span>
+            <span class="s1">e</span><span class="s4">, </span><span class="s1">self.dbapi.ProgrammingError</span>
+        <span class="s1">) </span><span class="s3">and </span><span class="s2">&quot;Cannot operate on a closed database.&quot; </span><span class="s3">in </span><span class="s1">str(e)</span>
+
+
+<span class="s1">dialect = SQLiteDialect_pysqlite</span>
+
+
+<span class="s3">class </span><span class="s1">_SQLiteDialect_pysqlite_numeric(SQLiteDialect_pysqlite):</span>
+    <span class="s7">&quot;&quot;&quot;numeric dialect for testing only 
+ 
+    internal use only.  This dialect is **NOT** supported by SQLAlchemy 
+    and may change at any time. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+    <span class="s1">default_paramstyle = </span><span class="s2">&quot;numeric&quot;</span>
+    <span class="s1">driver = </span><span class="s2">&quot;pysqlite_numeric&quot;</span>
+
+    <span class="s1">_first_bind = </span><span class="s2">&quot;:1&quot;</span>
+    <span class="s1">_not_in_statement_regexp = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">kw.setdefault(</span><span class="s2">&quot;paramstyle&quot;</span><span class="s4">, </span><span class="s2">&quot;numeric&quot;</span><span class="s1">)</span>
+        <span class="s1">super().__init__(*arg</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s1">arg</span><span class="s4">, </span><span class="s1">opts = super().create_connect_args(url)</span>
+        <span class="s1">opts[</span><span class="s2">&quot;factory&quot;</span><span class="s1">] = self._fix_sqlite_issue_99953()</span>
+        <span class="s3">return </span><span class="s1">arg</span><span class="s4">, </span><span class="s1">opts</span>
+
+    <span class="s3">def </span><span class="s1">_fix_sqlite_issue_99953(self):</span>
+        <span class="s3">import </span><span class="s1">sqlite3</span>
+
+        <span class="s1">first_bind = self._first_bind</span>
+        <span class="s3">if </span><span class="s1">self._not_in_statement_regexp:</span>
+            <span class="s1">nis = self._not_in_statement_regexp</span>
+
+            <span class="s3">def </span><span class="s1">_test_sql(sql):</span>
+                <span class="s1">m = nis.search(sql)</span>
+                <span class="s3">assert not </span><span class="s1">m</span><span class="s4">, </span><span class="s2">f&quot;Found </span><span class="s6">{</span><span class="s1">nis.pattern</span><span class="s6">!r} </span><span class="s2">in </span><span class="s6">{</span><span class="s1">sql</span><span class="s6">!r}</span><span class="s2">&quot;</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">_test_sql(sql):</span>
+                <span class="s3">pass</span>
+
+        <span class="s3">def </span><span class="s1">_numeric_param_as_dict(parameters):</span>
+            <span class="s3">if </span><span class="s1">parameters:</span>
+                <span class="s3">assert </span><span class="s1">isinstance(parameters</span><span class="s4">, </span><span class="s1">tuple)</span>
+                <span class="s3">return </span><span class="s1">{</span>
+                    <span class="s1">str(idx): value </span><span class="s3">for </span><span class="s1">idx</span><span class="s4">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">enumerate(parameters</span><span class="s4">, </span><span class="s5">1</span><span class="s1">)</span>
+                <span class="s1">}</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">()</span>
+
+        <span class="s3">class </span><span class="s1">SQLiteFix99953Cursor(sqlite3.Cursor):</span>
+            <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">sql</span><span class="s4">, </span><span class="s1">parameters=()):</span>
+                <span class="s1">_test_sql(sql)</span>
+                <span class="s3">if </span><span class="s1">first_bind </span><span class="s3">in </span><span class="s1">sql:</span>
+                    <span class="s1">parameters = _numeric_param_as_dict(parameters)</span>
+                <span class="s3">return </span><span class="s1">super().execute(sql</span><span class="s4">, </span><span class="s1">parameters)</span>
+
+            <span class="s3">def </span><span class="s1">executemany(self</span><span class="s4">, </span><span class="s1">sql</span><span class="s4">, </span><span class="s1">parameters):</span>
+                <span class="s1">_test_sql(sql)</span>
+                <span class="s3">if </span><span class="s1">first_bind </span><span class="s3">in </span><span class="s1">sql:</span>
+                    <span class="s1">parameters = [</span>
+                        <span class="s1">_numeric_param_as_dict(p) </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">parameters</span>
+                    <span class="s1">]</span>
+                <span class="s3">return </span><span class="s1">super().executemany(sql</span><span class="s4">, </span><span class="s1">parameters)</span>
+
+        <span class="s3">class </span><span class="s1">SQLiteFix99953Connection(sqlite3.Connection):</span>
+            <span class="s3">def </span><span class="s1">cursor(self</span><span class="s4">, </span><span class="s1">factory=</span><span class="s3">None</span><span class="s1">):</span>
+                <span class="s3">if </span><span class="s1">factory </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s1">factory = SQLiteFix99953Cursor</span>
+                <span class="s3">return </span><span class="s1">super().cursor(factory=factory)</span>
+
+            <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">sql</span><span class="s4">, </span><span class="s1">parameters=()):</span>
+                <span class="s1">_test_sql(sql)</span>
+                <span class="s3">if </span><span class="s1">first_bind </span><span class="s3">in </span><span class="s1">sql:</span>
+                    <span class="s1">parameters = _numeric_param_as_dict(parameters)</span>
+                <span class="s3">return </span><span class="s1">super().execute(sql</span><span class="s4">, </span><span class="s1">parameters)</span>
+
+            <span class="s3">def </span><span class="s1">executemany(self</span><span class="s4">, </span><span class="s1">sql</span><span class="s4">, </span><span class="s1">parameters):</span>
+                <span class="s1">_test_sql(sql)</span>
+                <span class="s3">if </span><span class="s1">first_bind </span><span class="s3">in </span><span class="s1">sql:</span>
+                    <span class="s1">parameters = [</span>
+                        <span class="s1">_numeric_param_as_dict(p) </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">parameters</span>
+                    <span class="s1">]</span>
+                <span class="s3">return </span><span class="s1">super().executemany(sql</span><span class="s4">, </span><span class="s1">parameters)</span>
+
+        <span class="s3">return </span><span class="s1">SQLiteFix99953Connection</span>
+
+
+<span class="s3">class </span><span class="s1">_SQLiteDialect_pysqlite_dollar(_SQLiteDialect_pysqlite_numeric):</span>
+    <span class="s7">&quot;&quot;&quot;numeric dialect that uses $ for testing only 
+ 
+    internal use only.  This dialect is **NOT** supported by SQLAlchemy 
+    and may change at any time. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+    <span class="s1">default_paramstyle = </span><span class="s2">&quot;numeric_dollar&quot;</span>
+    <span class="s1">driver = </span><span class="s2">&quot;pysqlite_dollar&quot;</span>
+
+    <span class="s1">_first_bind = </span><span class="s2">&quot;$1&quot;</span>
+    <span class="s1">_not_in_statement_regexp = re.compile(</span><span class="s2">r&quot;[^\d]:\d+&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">kw.setdefault(</span><span class="s2">&quot;paramstyle&quot;</span><span class="s4">, </span><span class="s2">&quot;numeric_dollar&quot;</span><span class="s1">)</span>
+        <span class="s1">super().__init__(*arg</span><span class="s4">, </span><span class="s1">**kw)</span>
+</pre>
+</body>
+</html>

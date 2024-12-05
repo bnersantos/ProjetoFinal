@@ -1,0 +1,162 @@
+<html>
+<head>
+<title>type_migration_guidelines.txt</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+type_migration_guidelines.txt</font>
+</center></td></tr></table>
+<pre><span class="s0">Rules for Migrating TypeEngine classes to 0.6</span>
+<span class="s0">---------------------------------------------</span>
+
+<span class="s0">1. the TypeEngine classes are used for:</span>
+
+    <span class="s0">a. Specifying behavior which needs to occur for bind parameters</span>
+    <span class="s0">or result row columns.</span>
+
+    <span class="s0">b. Specifying types that are entirely specific to the database</span>
+    <span class="s0">in use and have no analogue in the sqlalchemy.types package.</span>
+
+    <span class="s0">c. Specifying types where there is an analogue in sqlalchemy.types,</span>
+    <span class="s0">but the database in use takes vendor-specific flags for those</span>
+    <span class="s0">types.</span>
+
+    <span class="s0">d. If a TypeEngine class doesn't provide any of this, it should be</span>
+    <span class="s0">*removed* from the dialect.</span>
+
+<span class="s0">2. the TypeEngine classes are *no longer* used for generating DDL.  Dialects</span>
+<span class="s0">now have a TypeCompiler subclass which uses the same visit_XXX model as</span>
+<span class="s0">other compilers.</span>
+
+<span class="s0">3. the &quot;ischema_names&quot; and &quot;colspecs&quot; dictionaries are now required members on</span>
+<span class="s0">the Dialect class.</span>
+
+<span class="s0">4. The names of types within dialects are now important.   If a dialect-specific type</span>
+<span class="s0">is a subclass of an existing generic type and is only provided for bind/result behavior, </span>
+<span class="s0">the current mixed case naming can remain, i.e. _PGNumeric for Numeric - in this case, </span>
+<span class="s0">end users would never need to use _PGNumeric directly.   However, if a dialect-specific </span>
+<span class="s0">type is specifying a type *or* arguments that are not present generically, it should</span>
+<span class="s0">match the real name of the type on that backend, in uppercase.  E.g. postgresql.INET,</span>
+<span class="s0">mysql.ENUM, postgresql.ARRAY.</span>
+
+<span class="s0">Or follow this handy flowchart:</span>
+
+    <span class="s0">is the type meant to provide bind/result                  is the type the same name as an</span>
+    <span class="s0">behavior to a generic type (i.e. MixedCase)  ---- no ---&gt; UPPERCASE type in types.py ?</span>
+    <span class="s0">type in types.py ?                                          |                     |</span>
+                    <span class="s0">|                                           no                    yes</span>
+                   <span class="s0">yes                                          |                     |</span>
+                    <span class="s0">|                                           |             does your type need special</span>
+                    <span class="s0">|                                           +&lt;--- yes --- behavior or arguments ?</span>
+                    <span class="s0">|                                           |                               |</span>
+                    <span class="s0">|                                           |                              no</span>
+           <span class="s0">name the type using                                  |                               |</span>
+           <span class="s0">_MixedCase, i.e.                                     v                               V</span>
+           <span class="s0">_OracleBoolean. it                          name the type                        don't make a</span>
+           <span class="s0">stays private to the dialect                identically as that                  type, make sure the dialect's</span>
+           <span class="s0">and is invoked *only* via                   within the DB,                       base.py imports the types.py</span>
+           <span class="s0">the colspecs dict.                          using UPPERCASE                      UPPERCASE name into its namespace</span>
+                    <span class="s0">|                                  (i.e. BIT, NCHAR, INTERVAL).</span>
+                    <span class="s0">|                                  Users can import it.</span>
+                    <span class="s0">|                                       |</span>
+                    <span class="s0">v                                       v</span>
+           <span class="s0">subclass the closest                        is the name of this type</span>
+           <span class="s0">MixedCase type types.py,                    identical to an UPPERCASE</span>
+           <span class="s0">i.e.                        &lt;--- no ------- name in types.py ?</span>
+           <span class="s0">class _DateTime(types.DateTime),</span>
+           <span class="s0">class DATETIME2(types.DateTime),                   |</span>
+           <span class="s0">class BIT(types.TypeEngine).                      yes</span>
+                                                              <span class="s0">|</span>
+                                                              <span class="s0">v</span>
+                                                        <span class="s0">the type should</span>
+                                                        <span class="s0">subclass the</span>
+                                                        <span class="s0">UPPERCASE</span>
+                                                        <span class="s0">type in types.py</span>
+                                                        <span class="s0">(i.e. class BLOB(types.BLOB))</span>
+
+
+<span class="s0">Example 1.   pysqlite needs bind/result processing for the DateTime type in types.py, </span>
+<span class="s0">which applies to all DateTimes and subclasses.   It's named _SLDateTime and </span>
+<span class="s0">subclasses types.DateTime.</span>
+
+<span class="s0">Example 2.  MS-SQL has a TIME type which takes a non-standard &quot;precision&quot; argument</span>
+<span class="s0">that is rendered within DDL.   So it's named TIME in the MS-SQL dialect's base.py, </span>
+<span class="s0">and subclasses types.TIME.  Users can then say mssql.TIME(precision=10).</span>
+
+<span class="s0">Example 3.  MS-SQL dialects also need special bind/result processing for date </span>
+<span class="s0">But its DATE type doesn't render DDL differently than that of a plain </span>
+<span class="s0">DATE, i.e. it takes no special arguments.  Therefore we are just adding behavior</span>
+<span class="s0">to types.Date, so it's named _MSDate in the MS-SQL dialect's base.py, and subclasses</span>
+<span class="s0">types.Date.</span>
+
+<span class="s0">Example 4.  MySQL has a SET type, there's no analogue for this in types.py. So</span>
+<span class="s0">MySQL names it SET in the dialect's base.py, and it subclasses types.String, since </span>
+<span class="s0">it ultimately deals with strings.</span>
+
+<span class="s0">Example 5.  PostgreSQL has a DATETIME type.  The DBAPIs handle dates correctly,</span>
+<span class="s0">and no special arguments are used in PG's DDL beyond what types.py provides.</span>
+<span class="s0">PostgreSQL dialect therefore imports types.DATETIME into its base.py.</span>
+
+<span class="s0">Ideally one should be able to specify a schema using names imported completely from a </span>
+<span class="s0">dialect, all matching the real name on that backend:</span>
+
+   <span class="s0">from sqlalchemy.dialects.postgresql import base as pg</span>
+
+   <span class="s0">t = Table('mytable', metadata,</span>
+              <span class="s0">Column('id', pg.INTEGER, primary_key=True),</span>
+              <span class="s0">Column('name', pg.VARCHAR(300)),</span>
+              <span class="s0">Column('inetaddr', pg.INET)</span>
+   <span class="s0">)</span>
+
+<span class="s0">where above, the INTEGER and VARCHAR types are ultimately from sqlalchemy.types, </span>
+<span class="s0">but the PG dialect makes them available in its own namespace.</span>
+
+<span class="s0">5. &quot;colspecs&quot; now is a dictionary of generic or uppercased types from sqlalchemy.types</span>
+<span class="s0">linked to types specified in the dialect.   Again, if a type in the dialect does not</span>
+<span class="s0">specify any special behavior for bind_processor() or result_processor() and does not</span>
+<span class="s0">indicate a special type only available in this database, it must be *removed* from the </span>
+<span class="s0">module and from this dictionary.</span>
+
+<span class="s0">6. &quot;ischema_names&quot; indicates string descriptions of types as returned from the database</span>
+<span class="s0">linked to TypeEngine classes.</span>
+
+    <span class="s0">a. The string name should be matched to the most specific type possible within</span>
+    <span class="s0">sqlalchemy.types, unless there is no matching type within sqlalchemy.types in which</span>
+    <span class="s0">case it points to a dialect type.   *It doesn't matter* if the dialect has its </span>
+    <span class="s0">own subclass of that type with special bind/result behavior - reflect to the types.py</span>
+    <span class="s0">UPPERCASE type as much as possible.   With very few exceptions, all types</span>
+    <span class="s0">should reflect to an UPPERCASE type.</span>
+
+    <span class="s0">b. If the dialect contains a matching dialect-specific type that takes extra arguments </span>
+    <span class="s0">which the generic one does not, then point to the dialect-specific type.  E.g.</span>
+    <span class="s0">mssql.VARCHAR takes a &quot;collation&quot; parameter which should be preserved.</span>
+
+<span class="s0">5. DDL, or what was formerly issued by &quot;get_col_spec()&quot;, is now handled exclusively by</span>
+<span class="s0">a subclass of compiler.GenericTypeCompiler.</span>
+
+    <span class="s0">a. your TypeCompiler class will receive generic and uppercase types from </span>
+    <span class="s0">sqlalchemy.types.  Do not assume the presence of dialect-specific attributes on</span>
+    <span class="s0">these types. </span>
+
+    <span class="s0">b. the visit_UPPERCASE methods on GenericTypeCompiler should *not* be overridden with</span>
+    <span class="s0">methods that produce a different DDL name.   Uppercase types don't do any kind of </span>
+    <span class="s0">&quot;guessing&quot; - if visit_TIMESTAMP is called, the DDL should render as TIMESTAMP in</span>
+    <span class="s0">all cases, regardless of whether or not that type is legal on the backend database.</span>
+
+    <span class="s0">c. the visit_UPPERCASE methods *should* be overridden with methods that add additional</span>
+    <span class="s0">arguments and flags to those types.</span>
+
+    <span class="s0">d. the visit_lowercase methods are overridden to provide an interpretation of a generic </span>
+    <span class="s0">type.  E.g.  visit_large_binary() might be overridden to say &quot;return self.visit_BIT(type_)&quot;.</span>
+
+    <span class="s0">e. visit_lowercase methods should *never* render strings directly - it should always</span>
+    <span class="s0">be via calling a visit_UPPERCASE() method.</span>
+</pre>
+</body>
+</html>

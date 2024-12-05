@@ -1,0 +1,597 @@
+<html>
+<head>
+<title>baked.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+baked.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># ext/baked.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">&quot;&quot;&quot;Baked query extension. 
+ 
+Provides a creational pattern for the :class:`.query.Query` object which 
+allows the fully constructed object, Core select statement, and string 
+compiled result to be fully cached. 
+ 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">import </span><span class="s1">collections.abc </span><span class="s3">as </span><span class="s1">collections_abc</span>
+<span class="s3">import </span><span class="s1">logging</span>
+
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">sa_exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..orm </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">orm_exc</span>
+<span class="s3">from </span><span class="s1">..orm.query </span><span class="s3">import </span><span class="s1">Query</span>
+<span class="s3">from </span><span class="s1">..orm.session </span><span class="s3">import </span><span class="s1">Session</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">func</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">literal_column</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">sql_util</span>
+
+
+<span class="s1">log = logging.getLogger(__name__)</span>
+
+
+<span class="s3">class </span><span class="s1">Bakery:</span>
+    <span class="s2">&quot;&quot;&quot;Callable which returns a :class:`.BakedQuery`. 
+ 
+    This object is returned by the class method 
+    :meth:`.BakedQuery.bakery`.  It exists as an object 
+    so that the &quot;cache&quot; can be easily inspected. 
+ 
+    .. versionadded:: 1.2 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = </span><span class="s4">&quot;cls&quot;</span><span class="s5">, </span><span class="s4">&quot;cache&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">cls_</span><span class="s5">, </span><span class="s1">cache):</span>
+        <span class="s1">self.cls = cls_</span>
+        <span class="s1">self.cache = cache</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">initial_fn</span><span class="s5">, </span><span class="s1">*args):</span>
+        <span class="s3">return </span><span class="s1">self.cls(self.cache</span><span class="s5">, </span><span class="s1">initial_fn</span><span class="s5">, </span><span class="s1">args)</span>
+
+
+<span class="s3">class </span><span class="s1">BakedQuery:</span>
+    <span class="s2">&quot;&quot;&quot;A builder object for :class:`.query.Query` objects.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = </span><span class="s4">&quot;steps&quot;</span><span class="s5">, </span><span class="s4">&quot;_bakery&quot;</span><span class="s5">, </span><span class="s4">&quot;_cache_key&quot;</span><span class="s5">, </span><span class="s4">&quot;_spoiled&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">bakery</span><span class="s5">, </span><span class="s1">initial_fn</span><span class="s5">, </span><span class="s1">args=()):</span>
+        <span class="s1">self._cache_key = ()</span>
+        <span class="s1">self._update_cache_key(initial_fn</span><span class="s5">, </span><span class="s1">args)</span>
+        <span class="s1">self.steps = [initial_fn]</span>
+        <span class="s1">self._spoiled = </span><span class="s3">False</span>
+        <span class="s1">self._bakery = bakery</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">bakery(cls</span><span class="s5">, </span><span class="s1">size=</span><span class="s6">200</span><span class="s5">, </span><span class="s1">_size_alert=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Construct a new bakery. 
+ 
+        :return: an instance of :class:`.Bakery` 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">Bakery(cls</span><span class="s5">, </span><span class="s1">util.LRUCache(size</span><span class="s5">, </span><span class="s1">size_alert=_size_alert))</span>
+
+    <span class="s3">def </span><span class="s1">_clone(self):</span>
+        <span class="s1">b1 = BakedQuery.__new__(BakedQuery)</span>
+        <span class="s1">b1._cache_key = self._cache_key</span>
+        <span class="s1">b1.steps = list(self.steps)</span>
+        <span class="s1">b1._bakery = self._bakery</span>
+        <span class="s1">b1._spoiled = self._spoiled</span>
+        <span class="s3">return </span><span class="s1">b1</span>
+
+    <span class="s3">def </span><span class="s1">_update_cache_key(self</span><span class="s5">, </span><span class="s1">fn</span><span class="s5">, </span><span class="s1">args=()):</span>
+        <span class="s1">self._cache_key += (fn.__code__</span><span class="s5">,</span><span class="s1">) + args</span>
+
+    <span class="s3">def </span><span class="s1">__iadd__(self</span><span class="s5">, </span><span class="s1">other):</span>
+        <span class="s3">if </span><span class="s1">isinstance(other</span><span class="s5">, </span><span class="s1">tuple):</span>
+            <span class="s1">self.add_criteria(*other)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.add_criteria(other)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__add__(self</span><span class="s5">, </span><span class="s1">other):</span>
+        <span class="s3">if </span><span class="s1">isinstance(other</span><span class="s5">, </span><span class="s1">tuple):</span>
+            <span class="s3">return </span><span class="s1">self.with_criteria(*other)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.with_criteria(other)</span>
+
+    <span class="s3">def </span><span class="s1">add_criteria(self</span><span class="s5">, </span><span class="s1">fn</span><span class="s5">, </span><span class="s1">*args):</span>
+        <span class="s2">&quot;&quot;&quot;Add a criteria function to this :class:`.BakedQuery`. 
+ 
+        This is equivalent to using the ``+=`` operator to 
+        modify a :class:`.BakedQuery` in-place. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._update_cache_key(fn</span><span class="s5">, </span><span class="s1">args)</span>
+        <span class="s1">self.steps.append(fn)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">with_criteria(self</span><span class="s5">, </span><span class="s1">fn</span><span class="s5">, </span><span class="s1">*args):</span>
+        <span class="s2">&quot;&quot;&quot;Add a criteria function to a :class:`.BakedQuery` cloned from this 
+        one. 
+ 
+        This is equivalent to using the ``+`` operator to 
+        produce a new :class:`.BakedQuery` with modifications. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._clone().add_criteria(fn</span><span class="s5">, </span><span class="s1">*args)</span>
+
+    <span class="s3">def </span><span class="s1">for_session(self</span><span class="s5">, </span><span class="s1">session):</span>
+        <span class="s2">&quot;&quot;&quot;Return a :class:`_baked.Result` object for this 
+        :class:`.BakedQuery`. 
+ 
+        This is equivalent to calling the :class:`.BakedQuery` as a 
+        Python callable, e.g. ``result = my_baked_query(session)``. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">Result(self</span><span class="s5">, </span><span class="s1">session)</span>
+
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s5">, </span><span class="s1">session):</span>
+        <span class="s3">return </span><span class="s1">self.for_session(session)</span>
+
+    <span class="s3">def </span><span class="s1">spoil(self</span><span class="s5">, </span><span class="s1">full=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Cancel any query caching that will occur on this BakedQuery object. 
+ 
+        The BakedQuery can continue to be used normally, however additional 
+        creational functions will not be cached; they will be called 
+        on every invocation. 
+ 
+        This is to support the case where a particular step in constructing 
+        a baked query disqualifies the query from being cacheable, such 
+        as a variant that relies upon some uncacheable value. 
+ 
+        :param full: if False, only functions added to this 
+         :class:`.BakedQuery` object subsequent to the spoil step will be 
+         non-cached; the state of the :class:`.BakedQuery` up until 
+         this point will be pulled from the cache.   If True, then the 
+         entire :class:`_query.Query` object is built from scratch each 
+         time, with all creational functions being called on each 
+         invocation. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">full </span><span class="s3">and not </span><span class="s1">self._spoiled:</span>
+            <span class="s1">_spoil_point = self._clone()</span>
+            <span class="s1">_spoil_point._cache_key += (</span><span class="s4">&quot;_query_only&quot;</span><span class="s5">,</span><span class="s1">)</span>
+            <span class="s1">self.steps = [_spoil_point._retrieve_baked_query]</span>
+        <span class="s1">self._spoiled = </span><span class="s3">True</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_effective_key(self</span><span class="s5">, </span><span class="s1">session):</span>
+        <span class="s2">&quot;&quot;&quot;Return the key that actually goes into the cache dictionary for 
+        this :class:`.BakedQuery`, taking into account the given 
+        :class:`.Session`. 
+ 
+        This basically means we also will include the session's query_class, 
+        as the actual :class:`_query.Query` object is part of what's cached 
+        and needs to match the type of :class:`_query.Query` that a later 
+        session will want to use. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._cache_key + (session._query_cls</span><span class="s5">,</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_with_lazyload_options(self</span><span class="s5">, </span><span class="s1">options</span><span class="s5">, </span><span class="s1">effective_path</span><span class="s5">, </span><span class="s1">cache_path=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Cloning version of _add_lazyload_options.&quot;&quot;&quot;</span>
+        <span class="s1">q = self._clone()</span>
+        <span class="s1">q._add_lazyload_options(options</span><span class="s5">, </span><span class="s1">effective_path</span><span class="s5">, </span><span class="s1">cache_path=cache_path)</span>
+        <span class="s3">return </span><span class="s1">q</span>
+
+    <span class="s3">def </span><span class="s1">_add_lazyload_options(self</span><span class="s5">, </span><span class="s1">options</span><span class="s5">, </span><span class="s1">effective_path</span><span class="s5">, </span><span class="s1">cache_path=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Used by per-state lazy loaders to add options to the 
+        &quot;lazy load&quot; query from a parent query. 
+ 
+        Creates a cache key based on given load path and query options; 
+        if a repeatable cache key cannot be generated, the query is 
+        &quot;spoiled&quot; so that it won't use caching. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">key = ()</span>
+
+        <span class="s3">if not </span><span class="s1">cache_path:</span>
+            <span class="s1">cache_path = effective_path</span>
+
+        <span class="s3">for </span><span class="s1">opt </span><span class="s3">in </span><span class="s1">options:</span>
+            <span class="s3">if </span><span class="s1">opt._is_legacy_option </span><span class="s3">or </span><span class="s1">opt._is_compile_state:</span>
+                <span class="s1">ck = opt._generate_cache_key()</span>
+                <span class="s3">if </span><span class="s1">ck </span><span class="s3">is None</span><span class="s1">:</span>
+                    <span class="s1">self.spoil(full=</span><span class="s3">True</span><span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">assert not </span><span class="s1">ck[</span><span class="s6">1</span><span class="s1">]</span><span class="s5">, </span><span class="s1">(</span>
+                        <span class="s4">&quot;loader options with variable bound parameters &quot;</span>
+                        <span class="s4">&quot;not supported with baked queries.  Please &quot;</span>
+                        <span class="s4">&quot;use new-style select() statements for cached &quot;</span>
+                        <span class="s4">&quot;ORM queries.&quot;</span>
+                    <span class="s1">)</span>
+                    <span class="s1">key += ck[</span><span class="s6">0</span><span class="s1">]</span>
+
+        <span class="s1">self.add_criteria(</span>
+            <span class="s3">lambda </span><span class="s1">q: q._with_current_path(effective_path).options(*options)</span><span class="s5">,</span>
+            <span class="s1">cache_path.path</span><span class="s5">,</span>
+            <span class="s1">key</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_retrieve_baked_query(self</span><span class="s5">, </span><span class="s1">session):</span>
+        <span class="s1">query = self._bakery.get(self._effective_key(session)</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">query </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">query = self._as_query(session)</span>
+            <span class="s1">self._bakery[self._effective_key(session)] = query.with_session(</span>
+                <span class="s3">None</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">query.with_session(session)</span>
+
+    <span class="s3">def </span><span class="s1">_bake(self</span><span class="s5">, </span><span class="s1">session):</span>
+        <span class="s1">query = self._as_query(session)</span>
+        <span class="s1">query.session = </span><span class="s3">None</span>
+
+        <span class="s0"># in 1.4, this is where before_compile() event is</span>
+        <span class="s0"># invoked</span>
+        <span class="s1">statement = query._statement_20()</span>
+
+        <span class="s0"># if the query is not safe to cache, we still do everything as though</span>
+        <span class="s0"># we did cache it, since the receiver of _bake() assumes subqueryload</span>
+        <span class="s0"># context was set up, etc.</span>
+        <span class="s0">#</span>
+        <span class="s0"># note also we want to cache the statement itself because this</span>
+        <span class="s0"># allows the statement itself to hold onto its cache key that is</span>
+        <span class="s0"># used by the Connection, which in itself is more expensive to</span>
+        <span class="s0"># generate than what BakedQuery was able to provide in 1.3 and prior</span>
+
+        <span class="s3">if </span><span class="s1">statement._compile_options._bake_ok:</span>
+            <span class="s1">self._bakery[self._effective_key(session)] = (</span>
+                <span class="s1">query</span><span class="s5">,</span>
+                <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">query</span><span class="s5">, </span><span class="s1">statement</span>
+
+    <span class="s3">def </span><span class="s1">to_query(self</span><span class="s5">, </span><span class="s1">query_or_session):</span>
+        <span class="s2">&quot;&quot;&quot;Return the :class:`_query.Query` object for use as a subquery. 
+ 
+        This method should be used within the lambda callable being used 
+        to generate a step of an enclosing :class:`.BakedQuery`.   The 
+        parameter should normally be the :class:`_query.Query` object that 
+        is passed to the lambda:: 
+ 
+            sub_bq = self.bakery(lambda s: s.query(User.name)) 
+            sub_bq += lambda q: q.filter( 
+                User.id == Address.user_id).correlate(Address) 
+ 
+            main_bq = self.bakery(lambda s: s.query(Address)) 
+            main_bq += lambda q: q.filter( 
+                sub_bq.to_query(q).exists()) 
+ 
+        In the case where the subquery is used in the first callable against 
+        a :class:`.Session`, the :class:`.Session` is also accepted:: 
+ 
+            sub_bq = self.bakery(lambda s: s.query(User.name)) 
+            sub_bq += lambda q: q.filter( 
+                User.id == Address.user_id).correlate(Address) 
+ 
+            main_bq = self.bakery( 
+                lambda s: s.query( 
+                Address.id, sub_bq.to_query(q).scalar_subquery()) 
+            ) 
+ 
+        :param query_or_session: a :class:`_query.Query` object or a class 
+         :class:`.Session` object, that is assumed to be within the context 
+         of an enclosing :class:`.BakedQuery` callable. 
+ 
+ 
+         .. versionadded:: 1.3 
+ 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">isinstance(query_or_session</span><span class="s5">, </span><span class="s1">Session):</span>
+            <span class="s1">session = query_or_session</span>
+        <span class="s3">elif </span><span class="s1">isinstance(query_or_session</span><span class="s5">, </span><span class="s1">Query):</span>
+            <span class="s1">session = query_or_session.session</span>
+            <span class="s3">if </span><span class="s1">session </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">&quot;Given Query needs to be associated with a Session&quot;</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">TypeError(</span>
+                <span class="s4">&quot;Query or Session object expected, got %r.&quot;</span>
+                <span class="s1">% type(query_or_session)</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self._as_query(session)</span>
+
+    <span class="s3">def </span><span class="s1">_as_query(self</span><span class="s5">, </span><span class="s1">session):</span>
+        <span class="s1">query = self.steps[</span><span class="s6">0</span><span class="s1">](session)</span>
+
+        <span class="s3">for </span><span class="s1">step </span><span class="s3">in </span><span class="s1">self.steps[</span><span class="s6">1</span><span class="s1">:]:</span>
+            <span class="s1">query = step(query)</span>
+
+        <span class="s3">return </span><span class="s1">query</span>
+
+
+<span class="s3">class </span><span class="s1">Result:</span>
+    <span class="s2">&quot;&quot;&quot;Invokes a :class:`.BakedQuery` against a :class:`.Session`. 
+ 
+    The :class:`_baked.Result` object is where the actual :class:`.query.Query` 
+    object gets created, or retrieved from the cache, 
+    against a target :class:`.Session`, and is then invoked for results. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = </span><span class="s4">&quot;bq&quot;</span><span class="s5">, </span><span class="s4">&quot;session&quot;</span><span class="s5">, </span><span class="s4">&quot;_params&quot;</span><span class="s5">, </span><span class="s4">&quot;_post_criteria&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">bq</span><span class="s5">, </span><span class="s1">session):</span>
+        <span class="s1">self.bq = bq</span>
+        <span class="s1">self.session = session</span>
+        <span class="s1">self._params = {}</span>
+        <span class="s1">self._post_criteria = []</span>
+
+    <span class="s3">def </span><span class="s1">params(self</span><span class="s5">, </span><span class="s1">*args</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s2">&quot;&quot;&quot;Specify parameters to be replaced into the string SQL statement.&quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">len(args) == </span><span class="s6">1</span><span class="s1">:</span>
+            <span class="s1">kw.update(args[</span><span class="s6">0</span><span class="s1">])</span>
+        <span class="s3">elif </span><span class="s1">len(args) &gt; </span><span class="s6">0</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s4">&quot;params() takes zero or one positional argument, &quot;</span>
+                <span class="s4">&quot;which is a dictionary.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">self._params.update(kw)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_using_post_criteria(self</span><span class="s5">, </span><span class="s1">fns):</span>
+        <span class="s3">if </span><span class="s1">fns:</span>
+            <span class="s1">self._post_criteria.extend(fns)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">with_post_criteria(self</span><span class="s5">, </span><span class="s1">fn):</span>
+        <span class="s2">&quot;&quot;&quot;Add a criteria function that will be applied post-cache. 
+ 
+        This adds a function that will be run against the 
+        :class:`_query.Query` object after it is retrieved from the 
+        cache.    This currently includes **only** the 
+        :meth:`_query.Query.params` and :meth:`_query.Query.execution_options` 
+        methods. 
+ 
+        .. warning::  :meth:`_baked.Result.with_post_criteria` 
+           functions are applied 
+           to the :class:`_query.Query` 
+           object **after** the query's SQL statement 
+           object has been retrieved from the cache.   Only 
+           :meth:`_query.Query.params` and 
+           :meth:`_query.Query.execution_options` 
+           methods should be used. 
+ 
+ 
+        .. versionadded:: 1.2 
+ 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._using_post_criteria([fn])</span>
+
+    <span class="s3">def </span><span class="s1">_as_query(self):</span>
+        <span class="s1">q = self.bq._as_query(self.session).params(self._params)</span>
+        <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">self._post_criteria:</span>
+            <span class="s1">q = fn(q)</span>
+        <span class="s3">return </span><span class="s1">q</span>
+
+    <span class="s3">def </span><span class="s1">__str__(self):</span>
+        <span class="s3">return </span><span class="s1">str(self._as_query())</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self):</span>
+        <span class="s3">return </span><span class="s1">self._iter().__iter__()</span>
+
+    <span class="s3">def </span><span class="s1">_iter(self):</span>
+        <span class="s1">bq = self.bq</span>
+
+        <span class="s3">if not </span><span class="s1">self.session.enable_baked_queries </span><span class="s3">or </span><span class="s1">bq._spoiled:</span>
+            <span class="s3">return </span><span class="s1">self._as_query()._iter()</span>
+
+        <span class="s1">query</span><span class="s5">, </span><span class="s1">statement = bq._bakery.get(</span>
+            <span class="s1">bq._effective_key(self.session)</span><span class="s5">, </span><span class="s1">(</span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">query </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">query</span><span class="s5">, </span><span class="s1">statement = bq._bake(self.session)</span>
+
+        <span class="s3">if </span><span class="s1">self._params:</span>
+            <span class="s1">q = query.params(self._params)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">q = query</span>
+        <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">self._post_criteria:</span>
+            <span class="s1">q = fn(q)</span>
+
+        <span class="s1">params = q._params</span>
+        <span class="s1">execution_options = dict(q._execution_options)</span>
+        <span class="s1">execution_options.update(</span>
+            <span class="s1">{</span>
+                <span class="s4">&quot;_sa_orm_load_options&quot;</span><span class="s1">: q.load_options</span><span class="s5">,</span>
+                <span class="s4">&quot;compiled_cache&quot;</span><span class="s1">: bq._bakery</span><span class="s5">,</span>
+            <span class="s1">}</span>
+        <span class="s1">)</span>
+
+        <span class="s1">result = self.session.execute(</span>
+            <span class="s1">statement</span><span class="s5">, </span><span class="s1">params</span><span class="s5">, </span><span class="s1">execution_options=execution_options</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">result._attributes.get(</span><span class="s4">&quot;is_single_entity&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s1">result = result.scalars()</span>
+
+        <span class="s3">if </span><span class="s1">result._attributes.get(</span><span class="s4">&quot;filtered&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s1">result = result.unique()</span>
+
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">count(self):</span>
+        <span class="s2">&quot;&quot;&quot;return the 'count'. 
+ 
+        Equivalent to :meth:`_query.Query.count`. 
+ 
+        Note this uses a subquery to ensure an accurate count regardless 
+        of the structure of the original statement. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">col = func.count(literal_column(</span><span class="s4">&quot;*&quot;</span><span class="s1">))</span>
+        <span class="s1">bq = self.bq.with_criteria(</span><span class="s3">lambda </span><span class="s1">q: q._legacy_from_self(col))</span>
+        <span class="s3">return </span><span class="s1">bq.for_session(self.session).params(self._params).scalar()</span>
+
+    <span class="s3">def </span><span class="s1">scalar(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return the first element of the first result or None 
+        if no rows present.  If multiple rows are returned, 
+        raises MultipleResultsFound. 
+ 
+        Equivalent to :meth:`_query.Query.scalar`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">ret = self.one()</span>
+            <span class="s3">if not </span><span class="s1">isinstance(ret</span><span class="s5">, </span><span class="s1">collections_abc.Sequence):</span>
+                <span class="s3">return </span><span class="s1">ret</span>
+            <span class="s3">return </span><span class="s1">ret[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s3">except </span><span class="s1">orm_exc.NoResultFound:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">first(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return the first row. 
+ 
+        Equivalent to :meth:`_query.Query.first`. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">bq = self.bq.with_criteria(</span><span class="s3">lambda </span><span class="s1">q: q.slice(</span><span class="s6">0</span><span class="s5">, </span><span class="s6">1</span><span class="s1">))</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">bq.for_session(self.session)</span>
+            <span class="s1">.params(self._params)</span>
+            <span class="s1">._using_post_criteria(self._post_criteria)</span>
+            <span class="s1">._iter()</span>
+            <span class="s1">.first()</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">one(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return exactly one result or raise an exception. 
+ 
+        Equivalent to :meth:`_query.Query.one`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._iter().one()</span>
+
+    <span class="s3">def </span><span class="s1">one_or_none(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return one or zero results, or raise an exception for multiple 
+        rows. 
+ 
+        Equivalent to :meth:`_query.Query.one_or_none`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._iter().one_or_none()</span>
+
+    <span class="s3">def </span><span class="s1">all(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return all rows. 
+ 
+        Equivalent to :meth:`_query.Query.all`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._iter().all()</span>
+
+    <span class="s3">def </span><span class="s1">get(self</span><span class="s5">, </span><span class="s1">ident):</span>
+        <span class="s2">&quot;&quot;&quot;Retrieve an object based on identity. 
+ 
+        Equivalent to :meth:`_query.Query.get`. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">query = self.bq.steps[</span><span class="s6">0</span><span class="s1">](self.session)</span>
+        <span class="s3">return </span><span class="s1">query._get_impl(ident</span><span class="s5">, </span><span class="s1">self._load_on_pk_identity)</span>
+
+    <span class="s3">def </span><span class="s1">_load_on_pk_identity(self</span><span class="s5">, </span><span class="s1">session</span><span class="s5">, </span><span class="s1">query</span><span class="s5">, </span><span class="s1">primary_key_identity</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s2">&quot;&quot;&quot;Load the given primary key identity from the database.&quot;&quot;&quot;</span>
+
+        <span class="s1">mapper = query._raw_columns[</span><span class="s6">0</span><span class="s1">]._annotations[</span><span class="s4">&quot;parententity&quot;</span><span class="s1">]</span>
+
+        <span class="s1">_get_clause</span><span class="s5">, </span><span class="s1">_get_params = mapper._get_clause</span>
+
+        <span class="s3">def </span><span class="s1">setup(query):</span>
+            <span class="s1">_lcl_get_clause = _get_clause</span>
+            <span class="s1">q = query._clone()</span>
+            <span class="s1">q._get_condition()</span>
+            <span class="s1">q._order_by = </span><span class="s3">None</span>
+
+            <span class="s0"># None present in ident - turn those comparisons</span>
+            <span class="s0"># into &quot;IS NULL&quot;</span>
+            <span class="s3">if None in </span><span class="s1">primary_key_identity:</span>
+                <span class="s1">nones = {</span>
+                    <span class="s1">_get_params[col].key</span>
+                    <span class="s3">for </span><span class="s1">col</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">zip(</span>
+                        <span class="s1">mapper.primary_key</span><span class="s5">, </span><span class="s1">primary_key_identity</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">value </span><span class="s3">is None</span>
+                <span class="s1">}</span>
+                <span class="s1">_lcl_get_clause = sql_util.adapt_criterion_to_null(</span>
+                    <span class="s1">_lcl_get_clause</span><span class="s5">, </span><span class="s1">nones</span>
+                <span class="s1">)</span>
+
+            <span class="s0"># TODO: can mapper._get_clause be pre-adapted?</span>
+            <span class="s1">q._where_criteria = (</span>
+                <span class="s1">sql_util._deep_annotate(_lcl_get_clause</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;_orm_adapt&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">})</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">self._post_criteria:</span>
+                <span class="s1">q = fn(q)</span>
+            <span class="s3">return </span><span class="s1">q</span>
+
+        <span class="s0"># cache the query against a key that includes</span>
+        <span class="s0"># which positions in the primary key are NULL</span>
+        <span class="s0"># (remember, we can map to an OUTER JOIN)</span>
+        <span class="s1">bq = self.bq</span>
+
+        <span class="s0"># add the clause we got from mapper._get_clause to the cache</span>
+        <span class="s0"># key so that if a race causes multiple calls to _get_clause,</span>
+        <span class="s0"># we've cached on ours</span>
+        <span class="s1">bq = bq._clone()</span>
+        <span class="s1">bq._cache_key += (_get_clause</span><span class="s5">,</span><span class="s1">)</span>
+
+        <span class="s1">bq = bq.with_criteria(</span>
+            <span class="s1">setup</span><span class="s5">, </span><span class="s1">tuple(elem </span><span class="s3">is None for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">primary_key_identity)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">params = {</span>
+            <span class="s1">_get_params[primary_key].key: id_val</span>
+            <span class="s3">for </span><span class="s1">id_val</span><span class="s5">, </span><span class="s1">primary_key </span><span class="s3">in </span><span class="s1">zip(</span>
+                <span class="s1">primary_key_identity</span><span class="s5">, </span><span class="s1">mapper.primary_key</span>
+            <span class="s1">)</span>
+        <span class="s1">}</span>
+
+        <span class="s1">result = list(bq.for_session(self.session).params(**params))</span>
+        <span class="s1">l = len(result)</span>
+        <span class="s3">if </span><span class="s1">l &gt; </span><span class="s6">1</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">orm_exc.MultipleResultsFound()</span>
+        <span class="s3">elif </span><span class="s1">l:</span>
+            <span class="s3">return </span><span class="s1">result[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+
+<span class="s1">bakery = BakedQuery.bakery</span>
+</pre>
+</body>
+</html>

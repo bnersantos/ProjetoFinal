@@ -1,0 +1,432 @@
+<html>
+<head>
+<title>collections.pyx</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+collections.pyx</font>
+</center></td></tr></table>
+<pre><span class="s0"># cyextension/collections.pyx</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s2">cimport </span><span class="s1">cython</span>
+<span class="s2">from </span><span class="s1">cpython.long </span><span class="s2">cimport </span><span class="s1">PyLong_FromLongLong</span>
+<span class="s2">from </span><span class="s1">cpython.set </span><span class="s2">cimport </span><span class="s1">PySet_Add</span>
+
+<span class="s2">from </span><span class="s1">collections.abc </span><span class="s2">import </span><span class="s1">Collection</span>
+<span class="s2">from </span><span class="s1">itertools </span><span class="s2">import </span><span class="s1">filterfalse</span>
+
+<span class="s2">cdef </span><span class="s1">bint add_not_present(set seen</span><span class="s3">, </span><span class="s1">object item</span><span class="s3">, </span><span class="s1">hashfunc):</span>
+    <span class="s1">hash_value = hashfunc(item)</span>
+    <span class="s2">if </span><span class="s1">hash_value </span><span class="s2">not in </span><span class="s1">seen:</span>
+        <span class="s1">PySet_Add(seen</span><span class="s3">, </span><span class="s1">hash_value)</span>
+        <span class="s2">return True</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return False</span>
+
+<span class="s2">cdef </span><span class="s1">list cunique_list(seq</span><span class="s3">, </span><span class="s1">hashfunc=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s2">cdef </span><span class="s1">set seen = set()</span>
+    <span class="s2">if not </span><span class="s1">hashfunc:</span>
+        <span class="s2">return </span><span class="s1">[x </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">seq </span><span class="s2">if </span><span class="s1">x </span><span class="s2">not in </span><span class="s1">seen </span><span class="s2">and not </span><span class="s1">PySet_Add(seen</span><span class="s3">, </span><span class="s1">x)]</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">[x </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">seq </span><span class="s2">if </span><span class="s1">add_not_present(seen</span><span class="s3">, </span><span class="s1">x</span><span class="s3">, </span><span class="s1">hashfunc)]</span>
+
+<span class="s2">def </span><span class="s1">unique_list(seq</span><span class="s3">, </span><span class="s1">hashfunc=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s2">return </span><span class="s1">cunique_list(seq</span><span class="s3">, </span><span class="s1">hashfunc)</span>
+
+<span class="s2">cdef class </span><span class="s1">OrderedSet(set):</span>
+
+    <span class="s2">cdef </span><span class="s1">list _list</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">__class_getitem__(cls</span><span class="s3">, </span><span class="s1">key):</span>
+        <span class="s2">return </span><span class="s1">cls</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">d=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">set.__init__(self)</span>
+        <span class="s2">if </span><span class="s1">d </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self._list = cunique_list(d)</span>
+            <span class="s1">set.update(self</span><span class="s3">, </span><span class="s1">self._list)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._list = []</span>
+
+    <span class="s2">cpdef </span><span class="s1">OrderedSet copy(self):</span>
+        <span class="s2">cdef </span><span class="s1">OrderedSet cp = OrderedSet.__new__(OrderedSet)</span>
+        <span class="s1">cp._list = list(self._list)</span>
+        <span class="s1">set.update(cp</span><span class="s3">, </span><span class="s1">cp._list)</span>
+        <span class="s2">return </span><span class="s1">cp</span>
+
+    <span class="s1">@cython.final</span>
+    <span class="s2">cdef </span><span class="s1">OrderedSet _from_list(self</span><span class="s3">, </span><span class="s1">list new_list):</span>
+        <span class="s2">cdef </span><span class="s1">OrderedSet new = OrderedSet.__new__(OrderedSet)</span>
+        <span class="s1">new._list = new_list</span>
+        <span class="s1">set.update(new</span><span class="s3">, </span><span class="s1">new_list)</span>
+        <span class="s2">return </span><span class="s1">new</span>
+
+    <span class="s2">def </span><span class="s1">add(self</span><span class="s3">, </span><span class="s1">element):</span>
+        <span class="s2">if </span><span class="s1">element </span><span class="s2">not in </span><span class="s1">self:</span>
+            <span class="s1">self._list.append(element)</span>
+            <span class="s1">PySet_Add(self</span><span class="s3">, </span><span class="s1">element)</span>
+
+    <span class="s2">def </span><span class="s1">remove(self</span><span class="s3">, </span><span class="s1">element):</span>
+        <span class="s0"># set.remove will raise if element is not in self</span>
+        <span class="s1">set.remove(self</span><span class="s3">, </span><span class="s1">element)</span>
+        <span class="s1">self._list.remove(element)</span>
+
+    <span class="s2">def </span><span class="s1">pop(self):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">value = self._list.pop()</span>
+        <span class="s2">except </span><span class="s1">IndexError:</span>
+            <span class="s2">raise </span><span class="s1">KeyError(</span><span class="s4">&quot;pop from an empty set&quot;</span><span class="s1">) </span><span class="s2">from None</span>
+        <span class="s1">set.remove(self</span><span class="s3">, </span><span class="s1">value)</span>
+        <span class="s2">return </span><span class="s1">value</span>
+
+    <span class="s2">def </span><span class="s1">insert(self</span><span class="s3">, </span><span class="s1">Py_ssize_t pos</span><span class="s3">, </span><span class="s1">element):</span>
+        <span class="s2">if </span><span class="s1">element </span><span class="s2">not in </span><span class="s1">self:</span>
+            <span class="s1">self._list.insert(pos</span><span class="s3">, </span><span class="s1">element)</span>
+            <span class="s1">PySet_Add(self</span><span class="s3">, </span><span class="s1">element)</span>
+
+    <span class="s2">def </span><span class="s1">discard(self</span><span class="s3">, </span><span class="s1">element):</span>
+        <span class="s2">if </span><span class="s1">element </span><span class="s2">in </span><span class="s1">self:</span>
+            <span class="s1">set.remove(self</span><span class="s3">, </span><span class="s1">element)</span>
+            <span class="s1">self._list.remove(element)</span>
+
+    <span class="s2">def </span><span class="s1">clear(self):</span>
+        <span class="s1">set.clear(self)</span>
+        <span class="s1">self._list = []</span>
+
+    <span class="s2">def </span><span class="s1">__getitem__(self</span><span class="s3">, </span><span class="s1">key):</span>
+        <span class="s2">return </span><span class="s1">self._list[key]</span>
+
+    <span class="s2">def </span><span class="s1">__iter__(self):</span>
+        <span class="s2">return </span><span class="s1">iter(self._list)</span>
+
+    <span class="s2">def </span><span class="s1">__add__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.union(other)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self):</span>
+        <span class="s2">return </span><span class="s4">&quot;%s(%r)&quot; </span><span class="s1">% (self.__class__.__name__</span><span class="s3">, </span><span class="s1">self._list)</span>
+
+    <span class="s1">__str__ = __repr__</span>
+
+    <span class="s2">def </span><span class="s1">update(self</span><span class="s3">, </span><span class="s1">*iterables):</span>
+        <span class="s2">for </span><span class="s1">iterable </span><span class="s2">in </span><span class="s1">iterables:</span>
+            <span class="s2">for </span><span class="s1">e </span><span class="s2">in </span><span class="s1">iterable:</span>
+                <span class="s2">if </span><span class="s1">e </span><span class="s2">not in </span><span class="s1">self:</span>
+                    <span class="s1">self._list.append(e)</span>
+                    <span class="s1">set.add(self</span><span class="s3">, </span><span class="s1">e)</span>
+
+    <span class="s2">def </span><span class="s1">__ior__(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s1">self.update(iterable)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">union(self</span><span class="s3">, </span><span class="s1">*other):</span>
+        <span class="s1">result = self.copy()</span>
+        <span class="s1">result.update(*other)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__or__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.union(other)</span>
+
+    <span class="s2">def </span><span class="s1">intersection(self</span><span class="s3">, </span><span class="s1">*other):</span>
+        <span class="s2">cdef </span><span class="s1">set other_set = set.intersection(self</span><span class="s3">, </span><span class="s1">*other)</span>
+        <span class="s2">return </span><span class="s1">self._from_list([a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">other_set])</span>
+
+    <span class="s2">def </span><span class="s1">__and__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.intersection(other)</span>
+
+    <span class="s2">def </span><span class="s1">symmetric_difference(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">cdef </span><span class="s1">set other_set</span>
+        <span class="s2">if </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">set):</span>
+            <span class="s1">other_set = &lt;set&gt; other</span>
+            <span class="s1">collection = other_set</span>
+        <span class="s2">elif </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">Collection):</span>
+            <span class="s1">collection = other</span>
+            <span class="s1">other_set = set(other)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">collection = list(other)</span>
+            <span class="s1">other_set = set(collection)</span>
+        <span class="s1">result = self._from_list([a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">not in </span><span class="s1">other_set])</span>
+        <span class="s1">result.update(a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">collection </span><span class="s2">if </span><span class="s1">a </span><span class="s2">not in </span><span class="s1">self)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__xor__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.symmetric_difference(other)</span>
+
+    <span class="s2">def </span><span class="s1">difference(self</span><span class="s3">, </span><span class="s1">*other):</span>
+        <span class="s2">cdef </span><span class="s1">set other_set = set.difference(self</span><span class="s3">, </span><span class="s1">*other)</span>
+        <span class="s2">return </span><span class="s1">self._from_list([a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">other_set])</span>
+
+    <span class="s2">def </span><span class="s1">__sub__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.difference(other)</span>
+
+    <span class="s2">def </span><span class="s1">intersection_update(self</span><span class="s3">, </span><span class="s1">*other):</span>
+        <span class="s1">set.intersection_update(self</span><span class="s3">, </span><span class="s1">*other)</span>
+        <span class="s1">self._list = [a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self]</span>
+
+    <span class="s2">def </span><span class="s1">__iand__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s1">self.intersection_update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">cpdef </span><span class="s1">symmetric_difference_update(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s1">collection = other </span><span class="s2">if </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">Collection) </span><span class="s2">else </span><span class="s1">list(other)</span>
+        <span class="s1">set.symmetric_difference_update(self</span><span class="s3">, </span><span class="s1">collection)</span>
+        <span class="s1">self._list = [a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self]</span>
+        <span class="s1">self._list += [a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">collection </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self]</span>
+
+    <span class="s2">def </span><span class="s1">__ixor__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s1">self.symmetric_difference_update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">difference_update(self</span><span class="s3">, </span><span class="s1">*other):</span>
+        <span class="s1">set.difference_update(self</span><span class="s3">, </span><span class="s1">*other)</span>
+        <span class="s1">self._list = [a </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self._list </span><span class="s2">if </span><span class="s1">a </span><span class="s2">in </span><span class="s1">self]</span>
+
+    <span class="s2">def </span><span class="s1">__isub__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s1">self.difference_update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+<span class="s2">cdef </span><span class="s1">object cy_id(object item):</span>
+    <span class="s2">return </span><span class="s1">PyLong_FromLongLong(&lt;long long&gt; (&lt;void *&gt;item))</span>
+
+<span class="s0"># NOTE: cython 0.x will call __add__, __sub__, etc with the parameter swapped</span>
+<span class="s0"># instead of the __rmeth__, so they need to check that also self is of the</span>
+<span class="s0"># correct type. This is fixed in cython 3.x. See:</span>
+<span class="s0"># https://docs.cython.org/en/latest/src/userguide/special_methods.html#arithmetic-methods</span>
+<span class="s2">cdef class </span><span class="s1">IdentitySet:</span>
+    <span class="s5">&quot;&quot;&quot;A set that considers only object id() for uniqueness. 
+ 
+    This strategy has edge cases for builtin types- it's possible to have 
+    two 'foo' strings in one of these sets, for example.  Use sparingly. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">cdef </span><span class="s1">dict _members</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">iterable=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">self._members = {}</span>
+        <span class="s2">if </span><span class="s1">iterable:</span>
+            <span class="s1">self.update(iterable)</span>
+
+    <span class="s2">def </span><span class="s1">add(self</span><span class="s3">, </span><span class="s1">value):</span>
+        <span class="s1">self._members[cy_id(value)] = value</span>
+
+    <span class="s2">def </span><span class="s1">__contains__(self</span><span class="s3">, </span><span class="s1">value):</span>
+        <span class="s2">return </span><span class="s1">cy_id(value) </span><span class="s2">in </span><span class="s1">self._members</span>
+
+    <span class="s2">cpdef </span><span class="s1">remove(self</span><span class="s3">, </span><span class="s1">value):</span>
+        <span class="s2">del </span><span class="s1">self._members[cy_id(value)]</span>
+
+    <span class="s2">def </span><span class="s1">discard(self</span><span class="s3">, </span><span class="s1">value):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.remove(value)</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">pop(self):</span>
+        <span class="s2">cdef </span><span class="s1">tuple pair</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">pair = self._members.popitem()</span>
+            <span class="s2">return </span><span class="s1">pair[</span><span class="s6">1</span><span class="s1">]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">raise </span><span class="s1">KeyError(</span><span class="s4">&quot;pop from an empty set&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">clear(self):</span>
+        <span class="s1">self._members.clear()</span>
+
+    <span class="s2">def </span><span class="s1">__eq__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet other_</span>
+        <span class="s2">if </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s1">other_ = other</span>
+            <span class="s2">return </span><span class="s1">self._members == other_._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return False</span>
+
+    <span class="s2">def </span><span class="s1">__ne__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet other_</span>
+        <span class="s2">if </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s1">other_ = other</span>
+            <span class="s2">return </span><span class="s1">self._members != other_._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return True</span>
+
+    <span class="s2">cpdef </span><span class="s1">issubset(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet other</span>
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s3">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = iterable</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = self.__class__(iterable)</span>
+
+        <span class="s2">if </span><span class="s1">len(self) &gt; len(other):</span>
+            <span class="s2">return False</span>
+        <span class="s2">for </span><span class="s1">m </span><span class="s2">in </span><span class="s1">filterfalse(other._members.__contains__</span><span class="s3">, </span><span class="s1">self._members):</span>
+            <span class="s2">return False</span>
+        <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">__le__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.issubset(other)</span>
+
+    <span class="s2">def </span><span class="s1">__lt__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">len(self) &lt; len(other) </span><span class="s2">and </span><span class="s1">self.issubset(other)</span>
+
+    <span class="s2">cpdef </span><span class="s1">issuperset(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet other</span>
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s3">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = iterable</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = self.__class__(iterable)</span>
+
+        <span class="s2">if </span><span class="s1">len(self) &lt; len(other):</span>
+            <span class="s2">return False</span>
+        <span class="s2">for </span><span class="s1">m </span><span class="s2">in </span><span class="s1">filterfalse(self._members.__contains__</span><span class="s3">, </span><span class="s1">other._members):</span>
+            <span class="s2">return False</span>
+        <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">__ge__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.issuperset(other)</span>
+
+    <span class="s2">def </span><span class="s1">__gt__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">len(self) &gt; len(other) </span><span class="s2">and </span><span class="s1">self.issuperset(other)</span>
+
+    <span class="s2">cpdef </span><span class="s1">IdentitySet union(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet result = self.__class__()</span>
+        <span class="s1">result._members.update(self._members)</span>
+        <span class="s1">result.update(iterable)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__or__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet) </span><span class="s2">or not </span><span class="s1">isinstance(self</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.union(other)</span>
+
+    <span class="s2">cpdef </span><span class="s1">update(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">for </span><span class="s1">obj </span><span class="s2">in </span><span class="s1">iterable:</span>
+            <span class="s1">self._members[cy_id(obj)] = obj</span>
+
+    <span class="s2">def </span><span class="s1">__ior__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s1">self.update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">cpdef </span><span class="s1">IdentitySet difference(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet result = self.__new__(self.__class__)</span>
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s3">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = (&lt;IdentitySet&gt;iterable)._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = {cy_id(obj) </span><span class="s2">for </span><span class="s1">obj </span><span class="s2">in </span><span class="s1">iterable}</span>
+        <span class="s1">result._members = {k:v </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self._members.items() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">other}</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__sub__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet) </span><span class="s2">or not </span><span class="s1">isinstance(self</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.difference(other)</span>
+
+    <span class="s2">cpdef </span><span class="s1">difference_update(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet other = self.difference(iterable)</span>
+        <span class="s1">self._members = other._members</span>
+
+    <span class="s2">def </span><span class="s1">__isub__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s1">self.difference_update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">cpdef </span><span class="s1">IdentitySet intersection(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet result = self.__new__(self.__class__)</span>
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s3">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = (&lt;IdentitySet&gt;iterable)._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = {cy_id(obj) </span><span class="s2">for </span><span class="s1">obj </span><span class="s2">in </span><span class="s1">iterable}</span>
+        <span class="s1">result._members = {k: v </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self._members.items() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">other}</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__and__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet) </span><span class="s2">or not </span><span class="s1">isinstance(self</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.intersection(other)</span>
+
+    <span class="s2">cpdef </span><span class="s1">intersection_update(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet other = self.intersection(iterable)</span>
+        <span class="s1">self._members = other._members</span>
+
+    <span class="s2">def </span><span class="s1">__iand__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s1">self.intersection_update(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">cpdef </span><span class="s1">IdentitySet symmetric_difference(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet result = self.__new__(self.__class__)</span>
+        <span class="s2">cdef </span><span class="s1">dict other</span>
+        <span class="s2">if </span><span class="s1">isinstance(iterable</span><span class="s3">, </span><span class="s1">self.__class__):</span>
+            <span class="s1">other = (&lt;IdentitySet&gt;iterable)._members</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">other = {cy_id(obj): obj </span><span class="s2">for </span><span class="s1">obj </span><span class="s2">in </span><span class="s1">iterable}</span>
+        <span class="s1">result._members = {k: v </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self._members.items() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">other}</span>
+        <span class="s1">result._members.update(</span>
+            <span class="s1">[(k</span><span class="s3">, </span><span class="s1">v) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">other.items() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">self._members]</span>
+        <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__xor__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet) </span><span class="s2">or not </span><span class="s1">isinstance(self</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s2">return </span><span class="s1">self.symmetric_difference(other)</span>
+
+    <span class="s2">cpdef </span><span class="s1">symmetric_difference_update(self</span><span class="s3">, </span><span class="s1">iterable):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet other = self.symmetric_difference(iterable)</span>
+        <span class="s1">self._members = other._members</span>
+
+    <span class="s2">def </span><span class="s1">__ixor__(self</span><span class="s3">, </span><span class="s1">other):</span>
+        <span class="s2">if not </span><span class="s1">isinstance(other</span><span class="s3">, </span><span class="s1">IdentitySet):</span>
+            <span class="s2">return </span><span class="s1">NotImplemented</span>
+        <span class="s1">self.symmetric_difference(other)</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">cpdef </span><span class="s1">IdentitySet copy(self):</span>
+        <span class="s2">cdef </span><span class="s1">IdentitySet cp = self.__new__(self.__class__)</span>
+        <span class="s1">cp._members = self._members.copy()</span>
+        <span class="s2">return </span><span class="s1">cp</span>
+
+    <span class="s2">def </span><span class="s1">__copy__(self):</span>
+        <span class="s2">return </span><span class="s1">self.copy()</span>
+
+    <span class="s2">def </span><span class="s1">__len__(self):</span>
+        <span class="s2">return </span><span class="s1">len(self._members)</span>
+
+    <span class="s2">def </span><span class="s1">__iter__(self):</span>
+        <span class="s2">return </span><span class="s1">iter(self._members.values())</span>
+
+    <span class="s2">def </span><span class="s1">__hash__(self):</span>
+        <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;set objects are unhashable&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self):</span>
+        <span class="s2">return </span><span class="s4">&quot;%s(%r)&quot; </span><span class="s1">% (type(self).__name__</span><span class="s3">, </span><span class="s1">list(self._members.values()))</span>
+</pre>
+</body>
+</html>

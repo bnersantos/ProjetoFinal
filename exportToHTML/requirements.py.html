@@ -1,0 +1,1840 @@
+<html>
+<head>
+<title>requirements.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+requirements.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/requirements.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">&quot;&quot;&quot;Global database feature support policy. 
+ 
+Provides decorators to mark tests requiring specific feature support from the 
+target database. 
+ 
+External dialect test suites should subclass SuiteRequirements 
+to provide specific inclusion/exclusions. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">platform</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">asyncio </span><span class="s3">as </span><span class="s1">_test_asyncio</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exclusions</span>
+<span class="s3">from </span><span class="s1">.exclusions </span><span class="s3">import </span><span class="s1">only_on</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">create_engine</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..pool </span><span class="s3">import </span><span class="s1">QueuePool</span>
+
+
+<span class="s3">class </span><span class="s1">Requirements:</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">SuiteRequirements(Requirements):</span>
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">create_table(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform can emit basic CreateTable DDL.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">drop_table(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform can emit basic DropTable DDL.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">table_ddl_if_exists(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports IF NOT EXISTS / IF EXISTS for tables.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">index_ddl_if_exists(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports IF NOT EXISTS / IF EXISTS for indexes.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">uuid_data_type(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return databases that support the UUID datatype.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">foreign_keys(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support foreign keys.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">foreign_keys_reflect_as_index(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database creates an index that's reflected for 
+        foreign keys.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unique_index_reflect_as_unique_constraints(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database reflects unique indexes as unique constrains.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unique_constraints_reflect_as_index(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database reflects unique constraints as indexes.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">table_value_constructor(self):</span>
+        <span class="s2">&quot;&quot;&quot;Database / dialect supports a query like:: 
+ 
+             SELECT * FROM VALUES ( (c1, c2), (c1, c2), ...) 
+             AS some_table(col1, col2) 
+ 
+        SQLAlchemy generates this with the :func:`_sql.values` function. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">standard_cursor_sql(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database passes SQL-92 style statements to cursor.execute() 
+        when a statement like select() or insert() is run. 
+ 
+        A very small portion of dialect-level tests will ensure that certain 
+        conditions are present in SQL strings, and these tests use very basic 
+        SQL that will work on any SQL-like platform in order to assert results. 
+ 
+        It's normally a given for any pep-249 DBAPI that a statement like 
+        &quot;SELECT id, name FROM table WHERE some_table.id=5&quot; will work. 
+        However, there are dialects that don't actually produce SQL Strings 
+        and instead may work with symbolic objects instead, or dialects that 
+        aren't working with SQL, so for those this requirement can be marked 
+        as excluded. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">on_update_cascade(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database must support ON UPDATE..CASCADE behavior in 
+        foreign keys.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">non_updating_cascade(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database must *not* support ON UPDATE..CASCADE behavior in 
+        foreign keys.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">deferrable_fks(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">on_update_or_deferrable_fks(self):</span>
+        <span class="s0"># TODO: exclusions should be composable,</span>
+        <span class="s0"># somehow only_if([x, y]) isn't working here, negation/conjunctions</span>
+        <span class="s0"># getting confused.</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda</span><span class="s1">: self.on_update_cascade.enabled</span>
+            <span class="s3">or </span><span class="s1">self.deferrable_fks.enabled</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">queue_pool(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database is using QueuePool&quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">go(config):</span>
+            <span class="s3">return </span><span class="s1">isinstance(config.db.pool</span><span class="s4">, </span><span class="s1">QueuePool)</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(go)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">self_referential_foreign_keys(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support self-referential foreign keys.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">foreign_key_ddl(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support the DDL phrases for FOREIGN KEY.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">named_constraints(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database must support names for constraints.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">implicitly_named_constraints(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database must apply names to unnamed constraints.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unusual_column_name_characters(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database allows column names that have unusual characters 
+        in them, such as dots, spaces, slashes, or percent signs. 
+ 
+        The column names are as always in such a case quoted, however the 
+        DB still needs to support those characters in the name somehow. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">subqueries(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support subqueries.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">offset(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database can render OFFSET, or an equivalent, in a 
+        SELECT. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">bound_limit_offset(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database can render LIMIT and/or OFFSET using a bound 
+        parameter 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">sql_expression_limit_offset(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database can render LIMIT and/or OFFSET with a complete 
+        SQL expression, such as one that uses the addition operator. 
+        parameter 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">parens_in_union_contained_select_w_limit_offset(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support parenthesized SELECT in UNION 
+        when LIMIT/OFFSET is specifically present. 
+ 
+        E.g. (SELECT ...) UNION (SELECT ..) 
+ 
+        This is known to fail on SQLite. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">parens_in_union_contained_select_wo_limit_offset(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support parenthesized SELECT in UNION 
+        when OFFSET/LIMIT is specifically not present. 
+ 
+        E.g. (SELECT ... LIMIT ..) UNION (SELECT .. OFFSET ..) 
+ 
+        This is known to fail on SQLite.  It also fails on Oracle 
+        because without LIMIT/OFFSET, there is currently no step that 
+        creates an additional subquery. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">boolean_col_expressions(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support boolean expressions as columns&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">nullable_booleans(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database allows boolean columns to store NULL.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">nullsordering(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target backends that support nulls ordering.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">standalone_binds(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database/driver supports bound parameters as column 
+        expressions without being in the context of a typed column. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">standalone_null_binds_whereclause(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database/driver supports bound parameters with NULL in the 
+        WHERE clause, in situations where it has to be typed. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">intersect(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support INTERSECT or equivalent.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">except_(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support EXCEPT or equivalent (i.e. MINUS).&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">window_functions(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support window functions.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">ctes(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database supports CTEs&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">ctes_with_update_delete(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports CTES that ride on top of a normal UPDATE 
+        or DELETE statement which refers to the CTE in a correlated subquery. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">ctes_on_dml(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports CTES which consist of INSERT, UPDATE 
+        or DELETE *within* the CTE, e.g. WITH x AS (UPDATE....)&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">autoincrement_insert(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform generates new surrogate integer primary key values 
+        when insert() is executed, excluding the pk column.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fetch_rows_post_commit(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform will allow cursor.fetchone() to proceed after a 
+        COMMIT. 
+ 
+        Typically this refers to an INSERT statement with RETURNING which 
+        is invoked within &quot;autocommit&quot;.   If the row can be returned 
+        after the autocommit, then this rule can be open. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">group_by_complex_expression(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports SQL expressions in GROUP BY 
+ 
+        e.g. 
+ 
+        SELECT x + y AS somelabel FROM table GROUP BY x + y 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">sane_rowcount(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: </span><span class="s3">not </span><span class="s1">config.db.dialect.supports_sane_rowcount</span><span class="s4">,</span>
+            <span class="s5">&quot;driver doesn't support 'sane' rowcount&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">sane_multi_rowcount(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.fails_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: </span><span class="s3">not </span><span class="s1">config.db.dialect.supports_sane_multi_rowcount</span><span class="s4">,</span>
+            <span class="s5">&quot;driver %(driver)s %(doesnt_support)s 'sane' multi row count&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">sane_rowcount_w_returning(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.fails_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: </span><span class="s3">not </span><span class="s1">(</span>
+                <span class="s1">config.db.dialect.supports_sane_rowcount_returning</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s5">&quot;driver doesn't support 'sane' rowcount when returning is on&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">empty_inserts(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports INSERT with no values, i.e. 
+        INSERT DEFAULT VALUES or equivalent.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: config.db.dialect.supports_empty_insert</span>
+            <span class="s3">or </span><span class="s1">config.db.dialect.supports_default_values</span>
+            <span class="s3">or </span><span class="s1">config.db.dialect.supports_default_metavalue</span><span class="s4">,</span>
+            <span class="s5">&quot;empty inserts not supported&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">empty_inserts_executemany(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports INSERT with no values, i.e. 
+        INSERT DEFAULT VALUES or equivalent, within executemany()&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">self.empty_inserts</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">insert_from_select(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports INSERT from a SELECT.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">delete_returning(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports DELETE ... RETURNING.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: config.db.dialect.delete_returning</span><span class="s4">,</span>
+            <span class="s5">&quot;%(database)s %(does_support)s 'DELETE ... RETURNING'&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">insert_returning(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports INSERT ... RETURNING.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: config.db.dialect.insert_returning</span><span class="s4">,</span>
+            <span class="s5">&quot;%(database)s %(does_support)s 'INSERT ... RETURNING'&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">update_returning(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports UPDATE ... RETURNING.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: config.db.dialect.update_returning</span><span class="s4">,</span>
+            <span class="s5">&quot;%(database)s %(does_support)s 'UPDATE ... RETURNING'&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">insert_executemany_returning(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports RETURNING when INSERT is used with 
+        executemany(), e.g. multiple parameter sets, indicating 
+        as many rows come back as do parameter sets were passed. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: config.db.dialect.insert_executemany_returning</span><span class="s4">,</span>
+            <span class="s5">&quot;%(database)s %(does_support)s 'RETURNING of &quot;</span>
+            <span class="s5">&quot;multiple rows with INSERT executemany'&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">insertmanyvalues(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: config.db.dialect.supports_multivalues_insert</span>
+            <span class="s3">and </span><span class="s1">config.db.dialect.insert_returning</span>
+            <span class="s3">and </span><span class="s1">config.db.dialect.use_insertmanyvalues</span><span class="s4">,</span>
+            <span class="s5">&quot;%(database)s %(does_support)s 'insertmanyvalues functionality&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">tuple_in(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target platform supports the syntax 
+        &quot;(x, y) IN ((x1, y1), (x2, y2), ...)&quot; 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">tuple_in_w_empty(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target platform tuple IN w/ empty set&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.tuple_in</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">duplicate_names_in_cursor_description(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports a SELECT statement that has 
+        the same name repeated more than once in the columns list.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">denormalized_names(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must have 'denormalized', i.e. 
+        UPPERCASE as case insensitive names.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: </span><span class="s3">not </span><span class="s1">config.db.dialect.requires_name_normalize</span><span class="s4">,</span>
+            <span class="s5">&quot;Backend does not require denormalized names.&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">multivalues_inserts(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database must support multiple VALUES clauses in an 
+        INSERT statement.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: </span><span class="s3">not </span><span class="s1">config.db.dialect.supports_multivalues_insert</span><span class="s4">,</span>
+            <span class="s5">&quot;Backend does not support multirow inserts.&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">implements_get_lastrowid(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect implements the executioncontext.get_lastrowid() 
+        method without reliance on RETURNING. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">arraysize(self):</span>
+        <span class="s2">&quot;&quot;&quot;dialect includes the required pep-249 attribute 
+        ``cursor.arraysize``&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">emulated_lastrowid(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect retrieves cursor.lastrowid, or fetches 
+        from a database-side function after an insert() construct executes, 
+        within the get_lastrowid() method. 
+ 
+        Only dialects that &quot;pre-execute&quot;, or need RETURNING to get last 
+        inserted id, would return closed/fail/skip for this. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">emulated_lastrowid_even_with_sequences(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect retrieves cursor.lastrowid or an equivalent 
+        after an insert() construct executes, even if the table has a 
+        Sequence on it. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">dbapi_lastrowid(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform includes a 'lastrowid' accessor on the DBAPI 
+        cursor object. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">views(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support VIEWs.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">schemas(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support external schemas, and have one 
+        named 'test_schema'.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">only_on(</span><span class="s3">lambda </span><span class="s1">config: config.db.dialect.supports_schemas)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">cross_schema_fk_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;target system must support reflection of inter-schema 
+        foreign keys&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">foreign_key_constraint_name_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target supports reflection of FOREIGN KEY constraints and 
+        will return the name of the constraint that was used in the 
+        &quot;CONSTRAINT &lt;name&gt; FOREIGN KEY&quot; DDL. 
+ 
+        MySQL prior to version 8 and MariaDB prior to version 10.5 
+        don't support this. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">implicit_default_schema(self):</span>
+        <span class="s2">&quot;&quot;&quot;target system has a strong concept of 'default' schema that can 
+        be referred to implicitly. 
+ 
+        basically, PostgreSQL. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">default_schema_name_switch(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect implements provisioning module including 
+        set_default_schema_on_connection&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">server_side_cursors(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target dialect must support server side cursors.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s1">[</span><span class="s3">lambda </span><span class="s1">config: config.db.dialect.supports_server_side_cursors]</span><span class="s4">,</span>
+            <span class="s5">&quot;no server side cursors support&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">sequences(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support SEQUENCEs.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s1">[</span><span class="s3">lambda </span><span class="s1">config: config.db.dialect.supports_sequences]</span><span class="s4">,</span>
+            <span class="s5">&quot;no sequence support&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">no_sequences(self):</span>
+        <span class="s2">&quot;&quot;&quot;the opposite of &quot;sequences&quot;, DB does not support sequences at 
+        all.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.NotPredicate(self.sequences)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">sequences_optional(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database supports sequences, but also optionally 
+        as a means of generating new PK values.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s1">[</span>
+                <span class="s3">lambda </span><span class="s1">config: config.db.dialect.supports_sequences</span>
+                <span class="s3">and </span><span class="s1">config.db.dialect.sequences_optional</span>
+            <span class="s1">]</span><span class="s4">,</span>
+            <span class="s5">&quot;no sequence support, or sequences not optional&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">supports_lastrowid(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database / driver supports cursor.lastrowid as a means 
+        of retrieving the last inserted primary key value. 
+ 
+        note that if the target DB supports sequences also, this is still 
+        assumed to work.  This is a new use case brought on by MariaDB 10.3. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s1">[</span><span class="s3">lambda </span><span class="s1">config: config.db.dialect.postfetch_lastrowid]</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">no_lastrowid_support(self):</span>
+        <span class="s2">&quot;&quot;&quot;the opposite of supports_lastrowid&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s1">[</span><span class="s3">lambda </span><span class="s1">config: </span><span class="s3">not </span><span class="s1">config.db.dialect.postfetch_lastrowid]</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">reflects_pk_names(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">table_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database has general support for table reflection&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">reflect_tables_no_columns(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports creation and reflection of tables with no 
+        columns, or at least tables that seem to have no columns.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">comment_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;Indicates if the database support table comment reflection&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">comment_reflection_full_unicode(self):</span>
+        <span class="s2">&quot;&quot;&quot;Indicates if the database support table comment reflection in the 
+        full unicode range, including emoji etc. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">constraint_comment_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;indicates if the database support comments on constraints 
+        and their reflection&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">view_column_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database must support retrieval of the columns in a view, 
+        similarly to how a table is inspected. 
+ 
+        This does not include the full CREATE VIEW definition. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.views</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">view_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database must support inspection of the full CREATE VIEW 
+        definition.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.views</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">schema_reflection(self):</span>
+        <span class="s3">return </span><span class="s1">self.schemas</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">schema_create_delete(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports schema create and dropped with 
+        'CREATE SCHEMA' and 'DROP SCHEMA'&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">primary_key_constraint_reflection(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">foreign_key_constraint_reflection(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">foreign_key_constraint_option_reflection_ondelete(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fk_constraint_option_reflection_ondelete_restrict(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fk_constraint_option_reflection_ondelete_noaction(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">foreign_key_constraint_option_reflection_onupdate(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fk_constraint_option_reflection_onupdate_restrict(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">temp_table_reflection(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">temp_table_reflect_indexes(self):</span>
+        <span class="s3">return </span><span class="s1">self.temp_table_reflection</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">temp_table_names(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports listing of temporary table names&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">has_temp_table(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports checking a single temp table name&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">temporary_tables(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports temporary tables&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">temporary_views(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports temporary views&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">index_reflection(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">index_reflects_included_columns(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">indexes_with_ascdesc(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports CREATE INDEX with per-column ASC/DESC.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">reflect_indexes_with_ascdesc(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports reflecting INDEX with per-column 
+        ASC/DESC.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">reflect_indexes_with_ascdesc_as_expression(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports reflecting INDEX with per-column 
+        ASC/DESC but reflects them as expressions (like oracle).&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">indexes_with_expressions(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports CREATE INDEX against SQL expressions.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">reflect_indexes_with_expressions(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports reflection of indexes with 
+        SQL expressions.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unique_constraint_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports reflection of unique constraints&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">inline_check_constraint_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports reflection of inline check constraints&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">check_constraint_reflection(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports reflection of check constraints&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">duplicate_key_raises_integrity_error(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect raises IntegrityError when reporting an INSERT 
+        with a primary key violation.  (hint: it should) 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unbounded_varchar(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support VARCHAR with no length&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unicode_data_no_special_types(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database/dialect can receive / deliver / compare data with 
+        non-ASCII characters in plain VARCHAR, TEXT columns, without the need 
+        for special &quot;national&quot; datatypes like NVARCHAR or similar. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unicode_data(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database/dialect must support Python unicode objects with 
+        non-ASCII characters represented, delivered as bound parameters 
+        as well as in result rows. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unicode_ddl(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target driver must support some degree of non-ascii symbol 
+        names. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">symbol_names_w_double_quote(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target driver can create tables with a name like 'some &quot; table'&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">datetime_interval(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports rendering of a datetime.timedelta as a 
+        literal string, e.g. via the TypeEngine.literal_processor() method. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">datetime_literals(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports rendering of a date, time, or datetime as a 
+        literal string, e.g. via the TypeEngine.literal_processor() method. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">datetime(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.datetime() objects.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">datetime_timezone(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.datetime() with tzinfo with DateTime(timezone=True).&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">time_timezone(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.time() with tzinfo with Time(timezone=True).&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">date_implicit_bound(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect when given a date object will bind it such 
+        that the database server knows the object is a date, and not 
+        a plain string. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">time_implicit_bound(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect when given a time object will bind it such 
+        that the database server knows the object is a time, and not 
+        a plain string. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">datetime_implicit_bound(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect when given a datetime object will bind it such 
+        that the database server knows the object is a datetime, and not 
+        a plain string. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">datetime_microseconds(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.datetime() with microsecond objects.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">timestamp_microseconds(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.datetime() with microsecond objects but only 
+        if TIMESTAMP is used.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">timestamp_microseconds_implicit_bound(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect when given a datetime object which also includes 
+        a microseconds portion when using the TIMESTAMP data type 
+        will bind it such that the database server knows 
+        the object is a datetime with microseconds, and not a plain string. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.timestamp_microseconds</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">datetime_historic(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.datetime() objects with historic (pre 1970) values.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">date(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.date() objects.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">date_coerces_from_datetime(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect accepts a datetime object as the target 
+        of a date column.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">date_historic(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.datetime() objects with historic (pre 1970) values.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">time(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.time() objects.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">time_microseconds(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports representation of Python 
+        datetime.time() with microsecond objects.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">binary_comparisons(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database/driver can allow BLOB/BINARY fields to be compared 
+        against a bound parameter value. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">binary_literals(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend supports simple binary literals, e.g. an 
+        expression like:: 
+ 
+            SELECT CAST('foo' AS BINARY) 
+ 
+        Where ``BINARY`` is the type emitted from :class:`.LargeBinary`, 
+        e.g. it could be ``BLOB`` or similar. 
+ 
+        Basically fails on Oracle. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">autocommit(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports 'AUTOCOMMIT' as an isolation_level&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">isolation_level(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports general isolation level settings. 
+ 
+        Note that this requirement, when enabled, also requires that 
+        the get_isolation_levels() method be implemented. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s3">def </span><span class="s1">get_isolation_levels(self</span><span class="s4">, </span><span class="s1">config):</span>
+        <span class="s2">&quot;&quot;&quot;Return a structure of supported isolation levels for the current 
+        testing dialect. 
+ 
+        The structure indicates to the testing suite what the expected 
+        &quot;default&quot; isolation should be, as well as the other values that 
+        are accepted.  The dictionary has two keys, &quot;default&quot; and &quot;supported&quot;. 
+        The &quot;supported&quot; key refers to a list of all supported levels and 
+        it should include AUTOCOMMIT if the dialect supports it. 
+ 
+        If the :meth:`.DefaultRequirements.isolation_level` requirement is 
+        not open, then this method has no return value. 
+ 
+        E.g.:: 
+ 
+            &gt;&gt;&gt; testing.requirements.get_isolation_levels() 
+            { 
+                &quot;default&quot;: &quot;READ_COMMITTED&quot;, 
+                &quot;supported&quot;: [ 
+                    &quot;SERIALIZABLE&quot;, &quot;READ UNCOMMITTED&quot;, 
+                    &quot;READ COMMITTED&quot;, &quot;REPEATABLE READ&quot;, 
+                    &quot;AUTOCOMMIT&quot; 
+                ] 
+            } 
+        &quot;&quot;&quot;</span>
+        <span class="s3">with </span><span class="s1">config.db.connect() </span><span class="s3">as </span><span class="s1">conn:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">supported = conn.dialect.get_isolation_level_values(</span>
+                    <span class="s1">conn.connection.dbapi_connection</span>
+                <span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">NotImplementedError:</span>
+                <span class="s3">return None</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">{</span>
+                    <span class="s5">&quot;default&quot;</span><span class="s1">: conn.dialect.default_isolation_level</span><span class="s4">,</span>
+                    <span class="s5">&quot;supported&quot;</span><span class="s1">: supported</span><span class="s4">,</span>
+                <span class="s1">}</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">get_isolation_level_values(self):</span>
+        <span class="s2">&quot;&quot;&quot;target dialect supports the 
+        :meth:`_engine.Dialect.get_isolation_level_values` 
+        method added in SQLAlchemy 2.0. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">go(config):</span>
+            <span class="s3">with </span><span class="s1">config.db.connect() </span><span class="s3">as </span><span class="s1">conn:</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">conn.dialect.get_isolation_level_values(</span>
+                        <span class="s1">conn.connection.dbapi_connection</span>
+                    <span class="s1">)</span>
+                <span class="s3">except </span><span class="s1">NotImplementedError:</span>
+                    <span class="s3">return False</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">return True</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(go)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">dialect_level_isolation_level_param(self):</span>
+        <span class="s2">&quot;&quot;&quot;test that the dialect allows the 'isolation_level' argument 
+        to be handled by DefaultDialect&quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">go(config):</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">e = create_engine(</span>
+                    <span class="s1">config.db.url</span><span class="s4">, </span><span class="s1">isolation_level=</span><span class="s5">&quot;READ COMMITTED&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">except</span><span class="s1">:</span>
+                <span class="s3">return False</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">(</span>
+                    <span class="s1">e.dialect._on_connect_isolation_level == </span><span class="s5">&quot;READ COMMITTED&quot;</span>
+                <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(go)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">array_type(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target platform implements a native ARRAY type&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">json_type(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform implements a native JSON type.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">json_array_indexes(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform supports numeric array indexes 
+        within a JSON structure&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">self.json_type</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">json_index_supplementary_unicode_element(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">legacy_unconditional_json_extract(self):</span>
+        <span class="s2">&quot;&quot;&quot;Backend has a JSON_EXTRACT or similar function that returns a 
+        valid JSON string in all cases. 
+ 
+        Used to test a legacy feature and is not needed. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">precision_numerics_general(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend has general support for moderately high-precision 
+        numerics.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">precision_numerics_enotation_small(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend supports Decimal() objects using E notation 
+        to represent very small values.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">precision_numerics_enotation_large(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend supports Decimal() objects using E notation 
+        to represent very large values.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">precision_numerics_many_significant_digits(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend supports values with many digits on both sides, 
+        such as 319438950232418390.273596, 87673.594069654243 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">cast_precision_numerics_many_significant_digits(self):</span>
+        <span class="s2">&quot;&quot;&quot;same as precision_numerics_many_significant_digits but within the 
+        context of a CAST statement (hello MySQL) 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.precision_numerics_many_significant_digits</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">implicit_decimal_binds(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend will return a selected Decimal as a Decimal, not 
+        a string. 
+ 
+        e.g.:: 
+ 
+            expr = decimal.Decimal(&quot;15.7563&quot;) 
+ 
+            value = e.scalar( 
+                select(literal(expr)) 
+            ) 
+ 
+            assert value == expr 
+ 
+        See :ticket:`4036` 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">numeric_received_as_decimal_untyped(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend will return result columns that are explicitly 
+        against NUMERIC or similar precision-numeric datatypes (not including 
+        FLOAT or INT types) as Python Decimal objects, and not as floats 
+        or ints, including when no SQLAlchemy-side typing information is 
+        associated with the statement (e.g. such as a raw SQL string). 
+ 
+        This should be enabled if either the DBAPI itself returns Decimal 
+        objects, or if the dialect has set up DBAPI-specific return type 
+        handlers such that Decimal objects come back automatically. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">nested_aggregates(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database can select an aggregate from a subquery that's 
+        also using an aggregate 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">recursive_fk_cascade(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database must support ON DELETE CASCADE on a self-referential 
+        foreign key 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">precision_numerics_retains_significant_digits(self):</span>
+        <span class="s2">&quot;&quot;&quot;A precision numeric type will return empty significant digits, 
+        i.e. a value such as 10.000 will come back in Decimal form with 
+        the .000 maintained.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">infinity_floats(self):</span>
+        <span class="s2">&quot;&quot;&quot;The Float type can persist and load float('inf'), float('-inf').&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">float_or_double_precision_behaves_generically(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">precision_generic_float_type(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend will return native floating point numbers with at 
+        least seven decimal places when using the generic Float type. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">literal_float_coercion(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend will return the exact float value 15.7563 
+        with only four significant digits from this statement: 
+ 
+        SELECT :param 
+ 
+        where :param is the Python float 15.7563 
+ 
+        i.e. it does not return 15.75629997253418 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">floats_to_four_decimals(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend can return a floating-point number with four 
+        significant digits (such as 15.7563) accurately 
+        (i.e. without FP inaccuracies, such as 15.75629997253418). 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fetch_null_from_numeric(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend doesn't crash when you try to select a NUMERIC 
+        value that has a value of NULL. 
+ 
+        Added to support Pyodbc bug #351. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">float_is_numeric(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend uses Numeric for Float/Dual&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">text_type(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support an unbounded Text() &quot; 
+        &quot;type such as TEXT or CLOB&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">empty_strings_varchar(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database can persist/return an empty string with a 
+        varchar. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">empty_strings_text(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database can persist/return an empty string with an 
+        unbounded text.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">expressions_against_unbounded_text(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports use of an unbounded textual field in a 
+        WHERE clause.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">selectone(self):</span>
+        <span class="s2">&quot;&quot;&quot;target driver must support the literal statement 'select 1'&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">savepoints(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support savepoints.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">two_phase_transactions(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support two-phase transactions.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">update_from(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target must support UPDATE..FROM syntax&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">delete_from(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target must support DELETE FROM..FROM or DELETE..USING syntax&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">update_where_target_in_subquery(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target must support UPDATE (or DELETE) where the same table is 
+        present in a subquery in the WHERE clause. 
+ 
+        This is an ANSI-standard syntax that apparently MySQL can't handle, 
+        such as:: 
+ 
+            UPDATE documents SET flag=1 WHERE documents.title IN 
+                (SELECT max(documents.title) AS title 
+                    FROM documents GROUP BY documents.user_id 
+                ) 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">mod_operator_as_percent_sign(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database must use a plain percent '%' as the 'modulus' 
+        operator.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">percent_schema_names(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend supports weird identifiers with percent signs 
+        in them, e.g. 'some % column'. 
+ 
+        this is a very weird use case but often has problems because of 
+        DBAPIs that use python formatting.  It's not a critical use 
+        case either. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">order_by_col_from_union(self):</span>
+        <span class="s2">&quot;&quot;&quot;target database supports ordering by a column from a SELECT 
+        inside of a UNION 
+ 
+        E.g.  (SELECT id, ...) UNION (SELECT id, ...) ORDER BY id 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">order_by_label_with_expression(self):</span>
+        <span class="s2">&quot;&quot;&quot;target backend supports ORDER BY a column label within an 
+        expression. 
+ 
+        Basically this:: 
+ 
+            select data as foo from test order by foo || 'bar' 
+ 
+        Lots of databases including PostgreSQL don't support this, 
+        so this is off by default. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">order_by_collation(self):</span>
+        <span class="s3">def </span><span class="s1">check(config):</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">self.get_order_by_collation(config)</span>
+                <span class="s3">return False</span>
+            <span class="s3">except </span><span class="s1">NotImplementedError:</span>
+                <span class="s3">return True</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(check)</span>
+
+    <span class="s3">def </span><span class="s1">get_order_by_collation(self</span><span class="s4">, </span><span class="s1">config):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unicode_connections(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target driver must support non-ASCII characters being passed at 
+        all. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">graceful_disconnects(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target driver must raise a DBAPI-level exception, such as 
+        InterfaceError, when the underlying connection has been closed 
+        and the execute() method is called. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">independent_connections(self):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Target must support simultaneous, independent database connections. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">independent_readonly_connections(self):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Target must support simultaneous, independent database connections 
+        that will be used in a readonly fashion. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">skip_mysql_on_windows(self):</span>
+        <span class="s2">&quot;&quot;&quot;Catchall for a large variety of MySQL on Windows failures&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">ad_hoc_engines(self):</span>
+        <span class="s2">&quot;&quot;&quot;Test environment must allow ad-hoc engine/connection creation. 
+ 
+        DBs that scale poorly for many connections, even when closed, i.e. 
+        Oracle, may use the &quot;--low-connections&quot; option which flags this 
+        requirement as not present. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: config.options.low_connections</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">no_windows(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(self._running_on_windows())</span>
+
+    <span class="s3">def </span><span class="s1">_running_on_windows(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.LambdaPredicate(</span>
+            <span class="s3">lambda</span><span class="s1">: platform.system() == </span><span class="s5">&quot;Windows&quot;</span><span class="s4">,</span>
+            <span class="s1">description=</span><span class="s5">&quot;running on Windows&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">timing_intensive(self):</span>
+        <span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">config</span>
+
+        <span class="s3">return </span><span class="s1">config.add_to_marker.timing_intensive</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">memory_intensive(self):</span>
+        <span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">config</span>
+
+        <span class="s3">return </span><span class="s1">config.add_to_marker.memory_intensive</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">threading_with_mock(self):</span>
+        <span class="s2">&quot;&quot;&quot;Mark tests that use threading and mock at the same time - stability 
+        issues have been observed with coverage 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: config.options.has_coverage</span><span class="s4">,</span>
+            <span class="s5">&quot;Stability issues with coverage&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">sqlalchemy2_stubs(self):</span>
+        <span class="s3">def </span><span class="s1">check(config):</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">__import__(</span><span class="s5">&quot;sqlalchemy-stubs.ext.mypy&quot;</span><span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">ImportError:</span>
+                <span class="s3">return False</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return True</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(check)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">no_sqlalchemy2_stubs(self):</span>
+        <span class="s3">def </span><span class="s1">check(config):</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">__import__(</span><span class="s5">&quot;sqlalchemy-stubs.ext.mypy&quot;</span><span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">ImportError:</span>
+                <span class="s3">return False</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return True</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(check)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">python38(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda</span><span class="s1">: util.py38</span><span class="s4">, </span><span class="s5">&quot;Python 3.8 or above required&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">python39(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda</span><span class="s1">: util.py39</span><span class="s4">, </span><span class="s5">&quot;Python 3.9 or above required&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">python310(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda</span><span class="s1">: util.py310</span><span class="s4">, </span><span class="s5">&quot;Python 3.10 or above required&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">python311(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda</span><span class="s1">: util.py311</span><span class="s4">, </span><span class="s5">&quot;Python 3.11 or above required&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">python312(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda</span><span class="s1">: util.py312</span><span class="s4">, </span><span class="s5">&quot;Python 3.12 or above required&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">cpython(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span>
+            <span class="s3">lambda</span><span class="s1">: util.cpython</span><span class="s4">, </span><span class="s5">&quot;cPython interpreter needed&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">is64bit(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.only_if(</span><span class="s3">lambda</span><span class="s1">: util.is64bit</span><span class="s4">, </span><span class="s5">&quot;64bit required&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">patch_library(self):</span>
+        <span class="s3">def </span><span class="s1">check_lib():</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">__import__(</span><span class="s5">&quot;patch&quot;</span><span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">ImportError:</span>
+                <span class="s3">return False</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return True</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(check_lib</span><span class="s4">, </span><span class="s5">&quot;patch library needed&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">predictable_gc(self):</span>
+        <span class="s2">&quot;&quot;&quot;target platform must remove all cycles unconditionally when 
+        gc.collect() is called, as well as clean out unreferenced subclasses. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.cpython</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">no_coverage(self):</span>
+        <span class="s2">&quot;&quot;&quot;Test should be skipped if coverage is enabled. 
+ 
+        This is to block tests that exercise libraries that seem to be 
+        sensitive to coverage, such as PostgreSQL notice logging. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: config.options.has_coverage</span><span class="s4">,</span>
+            <span class="s5">&quot;Issues observed when coverage is enabled&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_has_mysql_on_windows(self</span><span class="s4">, </span><span class="s1">config):</span>
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">_has_mysql_fully_case_sensitive(self</span><span class="s4">, </span><span class="s1">config):</span>
+        <span class="s3">return False</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">sqlite(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(</span><span class="s3">lambda</span><span class="s1">: </span><span class="s3">not </span><span class="s1">self._has_sqlite())</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">cextensions(self):</span>
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(</span>
+            <span class="s3">lambda</span><span class="s1">: </span><span class="s3">not </span><span class="s1">util.has_compiled_ext()</span><span class="s4">,</span>
+            <span class="s5">&quot;Cython extensions not installed&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_has_sqlite(self):</span>
+        <span class="s3">from </span><span class="s1">sqlalchemy </span><span class="s3">import </span><span class="s1">create_engine</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">create_engine(</span><span class="s5">&quot;sqlite://&quot;</span><span class="s1">)</span>
+            <span class="s3">return True</span>
+        <span class="s3">except </span><span class="s1">ImportError:</span>
+            <span class="s3">return False</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">async_dialect(self):</span>
+        <span class="s2">&quot;&quot;&quot;dialect makes use of await_() to invoke operations on the DBAPI.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">asyncio(self):</span>
+        <span class="s3">return </span><span class="s1">self.greenlet</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">no_greenlet(self):</span>
+        <span class="s3">def </span><span class="s1">go(config):</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s3">import </span><span class="s1">greenlet  </span><span class="s0"># noqa: F401</span>
+            <span class="s3">except </span><span class="s1">ImportError:</span>
+                <span class="s3">return True</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return False</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(go)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">greenlet(self):</span>
+        <span class="s3">def </span><span class="s1">go(config):</span>
+            <span class="s3">if not </span><span class="s1">_test_asyncio.ENABLE_ASYNCIO:</span>
+                <span class="s3">return False</span>
+
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s3">import </span><span class="s1">greenlet  </span><span class="s0"># noqa: F401</span>
+            <span class="s3">except </span><span class="s1">ImportError:</span>
+                <span class="s3">return False</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return True</span>
+
+        <span class="s3">return </span><span class="s1">exclusions.only_if(go)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">computed_columns(self):</span>
+        <span class="s2">&quot;Supports computed columns&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">computed_columns_stored(self):</span>
+        <span class="s2">&quot;Supports computed columns with `persisted=True`&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">computed_columns_virtual(self):</span>
+        <span class="s2">&quot;Supports computed columns with `persisted=False`&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">computed_columns_default_persisted(self):</span>
+        <span class="s2">&quot;&quot;&quot;If the default persistence is virtual or stored when `persisted` 
+        is omitted&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">computed_columns_reflect_persisted(self):</span>
+        <span class="s2">&quot;&quot;&quot;If persistence information is returned by the reflection of 
+        computed columns&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">supports_distinct_on(self):</span>
+        <span class="s2">&quot;&quot;&quot;If a backend supports the DISTINCT ON in a select&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">supports_is_distinct_from(self):</span>
+        <span class="s2">&quot;&quot;&quot;Supports some form of &quot;x IS [NOT] DISTINCT FROM y&quot; construct. 
+        Different dialects will implement their own flavour, e.g., 
+        sqlite will emit &quot;x IS NOT y&quot; instead of &quot;x IS DISTINCT FROM y&quot;. 
+ 
+        .. seealso:: 
+ 
+            :meth:`.ColumnOperators.is_distinct_from` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.skip_if(</span>
+            <span class="s3">lambda </span><span class="s1">config: </span><span class="s3">not </span><span class="s1">config.db.dialect.supports_is_distinct_from</span><span class="s4">,</span>
+            <span class="s5">&quot;driver doesn't support an IS DISTINCT FROM construct&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">identity_columns(self):</span>
+        <span class="s2">&quot;&quot;&quot;If a backend supports GENERATED { ALWAYS | BY DEFAULT } 
+        AS IDENTITY&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">identity_columns_standard(self):</span>
+        <span class="s2">&quot;&quot;&quot;If a backend supports GENERATED { ALWAYS | BY DEFAULT } 
+        AS IDENTITY with a standard syntax. 
+        This is mainly to exclude MSSql. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">regexp_match(self):</span>
+        <span class="s2">&quot;&quot;&quot;backend supports the regexp_match operator.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">regexp_replace(self):</span>
+        <span class="s2">&quot;&quot;&quot;backend supports the regexp_replace operator.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fetch_first(self):</span>
+        <span class="s2">&quot;&quot;&quot;backend supports the fetch first clause.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fetch_percent(self):</span>
+        <span class="s2">&quot;&quot;&quot;backend supports the fetch first clause with percent.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fetch_ties(self):</span>
+        <span class="s2">&quot;&quot;&quot;backend supports the fetch first clause with ties.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fetch_no_order_by(self):</span>
+        <span class="s2">&quot;&quot;&quot;backend supports the fetch first without order by&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fetch_offset_with_options(self):</span>
+        <span class="s2">&quot;&quot;&quot;backend supports the offset when using fetch first with percent 
+        or ties. basically this is &quot;not mssql&quot; 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">fetch_expression(self):</span>
+        <span class="s2">&quot;&quot;&quot;backend supports fetch / offset with expression in them, like 
+ 
+        SELECT * FROM some_table 
+        OFFSET 1 + 1 ROWS FETCH FIRST 1 + 1 ROWS ONLY 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">autoincrement_without_sequence(self):</span>
+        <span class="s2">&quot;&quot;&quot;If autoincrement=True on a column does not require an explicit 
+        sequence. This should be false only for oracle. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">generic_classes(self):</span>
+        <span class="s2">&quot;If X[Y] can be implemented with ``__class_getitem__``. py3.7+&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.open()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">json_deserializer_binary(self):</span>
+        <span class="s2">&quot;indicates if the json_deserializer function is called with bytes&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">reflect_table_options(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support reflecting table_options.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">materialized_views(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database must support MATERIALIZED VIEWs.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">materialized_views_reflect_pk(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database reflect MATERIALIZED VIEWs pks.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">supports_bitwise_or(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database supports bitwise or&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">supports_bitwise_and(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database supports bitwise and&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">supports_bitwise_not(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database supports bitwise not&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">supports_bitwise_xor(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database supports bitwise xor&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">supports_bitwise_shift(self):</span>
+        <span class="s2">&quot;&quot;&quot;Target database supports bitwise left or right shift&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">exclusions.closed()</span>
+</pre>
+</body>
+</html>

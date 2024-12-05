@@ -1,0 +1,235 @@
+<html>
+<head>
+<title>naming.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+naming.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/naming.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">&quot;&quot;&quot;Establish constraint and index naming conventions. 
+ 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">re</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">events  </span><span class="s0"># noqa</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_NONE_NAME</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">conv </span><span class="s3">as </span><span class="s1">conv</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">CheckConstraint</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">Column</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">Constraint</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">ForeignKeyConstraint</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">Index</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">PrimaryKeyConstraint</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">Table</span>
+<span class="s3">from </span><span class="s1">.schema </span><span class="s3">import </span><span class="s1">UniqueConstraint</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">event</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+
+
+<span class="s3">class </span><span class="s1">ConventionDict:</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">const</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">convention):</span>
+        <span class="s1">self.const = const</span>
+        <span class="s1">self._is_fk = isinstance(const</span><span class="s4">, </span><span class="s1">ForeignKeyConstraint)</span>
+        <span class="s1">self.table = table</span>
+        <span class="s1">self.convention = convention</span>
+        <span class="s1">self._const_name = const.name</span>
+
+    <span class="s3">def </span><span class="s1">_key_table_name(self):</span>
+        <span class="s3">return </span><span class="s1">self.table.name</span>
+
+    <span class="s3">def </span><span class="s1">_column_X(self</span><span class="s4">, </span><span class="s1">idx</span><span class="s4">, </span><span class="s1">attrname):</span>
+        <span class="s3">if </span><span class="s1">self._is_fk:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">fk = self.const.elements[idx]</span>
+            <span class="s3">except </span><span class="s1">IndexError:</span>
+                <span class="s3">return </span><span class="s5">&quot;&quot;</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">getattr(fk.parent</span><span class="s4">, </span><span class="s1">attrname)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">cols = list(self.const.columns)</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">col = cols[idx]</span>
+            <span class="s3">except </span><span class="s1">IndexError:</span>
+                <span class="s3">return </span><span class="s5">&quot;&quot;</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">getattr(col</span><span class="s4">, </span><span class="s1">attrname)</span>
+
+    <span class="s3">def </span><span class="s1">_key_constraint_name(self):</span>
+        <span class="s3">if </span><span class="s1">self._const_name </span><span class="s3">in </span><span class="s1">(</span><span class="s3">None</span><span class="s4">, </span><span class="s1">_NONE_NAME):</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s5">&quot;Naming convention including &quot;</span>
+                <span class="s5">&quot;%(constraint_name)s token requires that &quot;</span>
+                <span class="s5">&quot;constraint is explicitly named.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">if not </span><span class="s1">isinstance(self._const_name</span><span class="s4">, </span><span class="s1">conv):</span>
+            <span class="s1">self.const.name = </span><span class="s3">None</span>
+        <span class="s3">return </span><span class="s1">self._const_name</span>
+
+    <span class="s3">def </span><span class="s1">_key_column_X_key(self</span><span class="s4">, </span><span class="s1">idx):</span>
+        <span class="s0"># note this method was missing before</span>
+        <span class="s0"># [ticket:3989], meaning tokens like ``%(column_0_key)s`` weren't</span>
+        <span class="s0"># working even though documented.</span>
+        <span class="s3">return </span><span class="s1">self._column_X(idx</span><span class="s4">, </span><span class="s5">&quot;key&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_key_column_X_name(self</span><span class="s4">, </span><span class="s1">idx):</span>
+        <span class="s3">return </span><span class="s1">self._column_X(idx</span><span class="s4">, </span><span class="s5">&quot;name&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_key_column_X_label(self</span><span class="s4">, </span><span class="s1">idx):</span>
+        <span class="s3">return </span><span class="s1">self._column_X(idx</span><span class="s4">, </span><span class="s5">&quot;_ddl_label&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_key_referred_table_name(self):</span>
+        <span class="s1">fk = self.const.elements[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s1">refs = fk.target_fullname.split(</span><span class="s5">&quot;.&quot;</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">len(refs) == </span><span class="s6">3</span><span class="s1">:</span>
+            <span class="s1">refschema</span><span class="s4">, </span><span class="s1">reftable</span><span class="s4">, </span><span class="s1">refcol = refs</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">reftable</span><span class="s4">, </span><span class="s1">refcol = refs</span>
+        <span class="s3">return </span><span class="s1">reftable</span>
+
+    <span class="s3">def </span><span class="s1">_key_referred_column_X_name(self</span><span class="s4">, </span><span class="s1">idx):</span>
+        <span class="s1">fk = self.const.elements[idx]</span>
+        <span class="s0"># note that before [ticket:3989], this method was returning</span>
+        <span class="s0"># the specification for the :class:`.ForeignKey` itself, which normally</span>
+        <span class="s0"># would be using the ``.key`` of the column, not the name.</span>
+        <span class="s3">return </span><span class="s1">fk.column.name</span>
+
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s4">, </span><span class="s1">key):</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.convention:</span>
+            <span class="s3">return </span><span class="s1">self.convention[key](self.const</span><span class="s4">, </span><span class="s1">self.table)</span>
+        <span class="s3">elif </span><span class="s1">hasattr(self</span><span class="s4">, </span><span class="s5">&quot;_key_%s&quot; </span><span class="s1">% key):</span>
+            <span class="s3">return </span><span class="s1">getattr(self</span><span class="s4">, </span><span class="s5">&quot;_key_%s&quot; </span><span class="s1">% key)()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">col_template = re.match(</span><span class="s5">r&quot;.*_?column_(\d+)(_?N)?_.+&quot;</span><span class="s4">, </span><span class="s1">key)</span>
+            <span class="s3">if </span><span class="s1">col_template:</span>
+                <span class="s1">idx = col_template.group(</span><span class="s6">1</span><span class="s1">)</span>
+                <span class="s1">multiples = col_template.group(</span><span class="s6">2</span><span class="s1">)</span>
+
+                <span class="s3">if </span><span class="s1">multiples:</span>
+                    <span class="s3">if </span><span class="s1">self._is_fk:</span>
+                        <span class="s1">elems = self.const.elements</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">elems = list(self.const.columns)</span>
+                    <span class="s1">tokens = []</span>
+                    <span class="s3">for </span><span class="s1">idx</span><span class="s4">, </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">enumerate(elems):</span>
+                        <span class="s1">attr = </span><span class="s5">&quot;_key_&quot; </span><span class="s1">+ key.replace(</span><span class="s5">&quot;0&quot; </span><span class="s1">+ multiples</span><span class="s4">, </span><span class="s5">&quot;X&quot;</span><span class="s1">)</span>
+                        <span class="s3">try</span><span class="s1">:</span>
+                            <span class="s1">tokens.append(getattr(self</span><span class="s4">, </span><span class="s1">attr)(idx))</span>
+                        <span class="s3">except </span><span class="s1">AttributeError:</span>
+                            <span class="s3">raise </span><span class="s1">KeyError(key)</span>
+                    <span class="s1">sep = </span><span class="s5">&quot;_&quot; </span><span class="s3">if </span><span class="s1">multiples.startswith(</span><span class="s5">&quot;_&quot;</span><span class="s1">) </span><span class="s3">else </span><span class="s5">&quot;&quot;</span>
+                    <span class="s3">return </span><span class="s1">sep.join(tokens)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">attr = </span><span class="s5">&quot;_key_&quot; </span><span class="s1">+ key.replace(idx</span><span class="s4">, </span><span class="s5">&quot;X&quot;</span><span class="s1">)</span>
+                    <span class="s1">idx = int(idx)</span>
+                    <span class="s3">if </span><span class="s1">hasattr(self</span><span class="s4">, </span><span class="s1">attr):</span>
+                        <span class="s3">return </span><span class="s1">getattr(self</span><span class="s4">, </span><span class="s1">attr)(idx)</span>
+        <span class="s3">raise </span><span class="s1">KeyError(key)</span>
+
+
+<span class="s1">_prefix_dict = {</span>
+    <span class="s1">Index: </span><span class="s5">&quot;ix&quot;</span><span class="s4">,</span>
+    <span class="s1">PrimaryKeyConstraint: </span><span class="s5">&quot;pk&quot;</span><span class="s4">,</span>
+    <span class="s1">CheckConstraint: </span><span class="s5">&quot;ck&quot;</span><span class="s4">,</span>
+    <span class="s1">UniqueConstraint: </span><span class="s5">&quot;uq&quot;</span><span class="s4">,</span>
+    <span class="s1">ForeignKeyConstraint: </span><span class="s5">&quot;fk&quot;</span><span class="s4">,</span>
+<span class="s1">}</span>
+
+
+<span class="s3">def </span><span class="s1">_get_convention(dict_</span><span class="s4">, </span><span class="s1">key):</span>
+    <span class="s3">for </span><span class="s1">super_ </span><span class="s3">in </span><span class="s1">key.__mro__:</span>
+        <span class="s3">if </span><span class="s1">super_ </span><span class="s3">in </span><span class="s1">_prefix_dict </span><span class="s3">and </span><span class="s1">_prefix_dict[super_] </span><span class="s3">in </span><span class="s1">dict_:</span>
+            <span class="s3">return </span><span class="s1">dict_[_prefix_dict[super_]]</span>
+        <span class="s3">elif </span><span class="s1">super_ </span><span class="s3">in </span><span class="s1">dict_:</span>
+            <span class="s3">return </span><span class="s1">dict_[super_]</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">def </span><span class="s1">_constraint_name_for_table(const</span><span class="s4">, </span><span class="s1">table):</span>
+    <span class="s1">metadata = table.metadata</span>
+    <span class="s1">convention = _get_convention(metadata.naming_convention</span><span class="s4">, </span><span class="s1">type(const))</span>
+
+    <span class="s3">if </span><span class="s1">isinstance(const.name</span><span class="s4">, </span><span class="s1">conv):</span>
+        <span class="s3">return </span><span class="s1">const.name</span>
+    <span class="s3">elif </span><span class="s1">(</span>
+        <span class="s1">convention </span><span class="s3">is not None</span>
+        <span class="s3">and not </span><span class="s1">isinstance(const.name</span><span class="s4">, </span><span class="s1">conv)</span>
+        <span class="s3">and </span><span class="s1">(</span>
+            <span class="s1">const.name </span><span class="s3">is None</span>
+            <span class="s3">or </span><span class="s5">&quot;constraint_name&quot; </span><span class="s3">in </span><span class="s1">convention</span>
+            <span class="s3">or </span><span class="s1">const.name </span><span class="s3">is </span><span class="s1">_NONE_NAME</span>
+        <span class="s1">)</span>
+    <span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">conv(</span>
+            <span class="s1">convention</span>
+            <span class="s1">% ConventionDict(const</span><span class="s4">, </span><span class="s1">table</span><span class="s4">, </span><span class="s1">metadata.naming_convention)</span>
+        <span class="s1">)</span>
+    <span class="s3">elif </span><span class="s1">convention </span><span class="s3">is </span><span class="s1">_NONE_NAME:</span>
+        <span class="s3">return None</span>
+
+
+<span class="s1">@event.listens_for(</span>
+    <span class="s1">PrimaryKeyConstraint</span><span class="s4">, </span><span class="s5">&quot;_sa_event_column_added_to_pk_constraint&quot;</span>
+<span class="s1">)</span>
+<span class="s3">def </span><span class="s1">_column_added_to_pk_constraint(pk_constraint</span><span class="s4">, </span><span class="s1">col):</span>
+    <span class="s3">if </span><span class="s1">pk_constraint._implicit_generated:</span>
+        <span class="s0"># only operate upon the &quot;implicit&quot; pk constraint for now,</span>
+        <span class="s0"># as we have to force the name to None to reset it.  the</span>
+        <span class="s0"># &quot;implicit&quot; constraint will only have a naming convention name</span>
+        <span class="s0"># if at all.</span>
+        <span class="s1">table = pk_constraint.table</span>
+        <span class="s1">pk_constraint.name = </span><span class="s3">None</span>
+        <span class="s1">newname = _constraint_name_for_table(pk_constraint</span><span class="s4">, </span><span class="s1">table)</span>
+        <span class="s3">if </span><span class="s1">newname:</span>
+            <span class="s1">pk_constraint.name = newname</span>
+
+
+<span class="s1">@event.listens_for(Constraint</span><span class="s4">, </span><span class="s5">&quot;after_parent_attach&quot;</span><span class="s1">)</span>
+<span class="s1">@event.listens_for(Index</span><span class="s4">, </span><span class="s5">&quot;after_parent_attach&quot;</span><span class="s1">)</span>
+<span class="s3">def </span><span class="s1">_constraint_name(const</span><span class="s4">, </span><span class="s1">table):</span>
+    <span class="s3">if </span><span class="s1">isinstance(table</span><span class="s4">, </span><span class="s1">Column):</span>
+        <span class="s0"># this path occurs for a CheckConstraint linked to a Column</span>
+
+        <span class="s0"># for column-attached constraint, set another event</span>
+        <span class="s0"># to link the column attached to the table as this constraint</span>
+        <span class="s0"># associated with the table.</span>
+        <span class="s1">event.listen(</span>
+            <span class="s1">table</span><span class="s4">,</span>
+            <span class="s5">&quot;after_parent_attach&quot;</span><span class="s4">,</span>
+            <span class="s3">lambda </span><span class="s1">col</span><span class="s4">, </span><span class="s1">table: _constraint_name(const</span><span class="s4">, </span><span class="s1">table)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">elif </span><span class="s1">isinstance(table</span><span class="s4">, </span><span class="s1">Table):</span>
+        <span class="s3">if </span><span class="s1">isinstance(const.name</span><span class="s4">, </span><span class="s1">conv) </span><span class="s3">or </span><span class="s1">const.name </span><span class="s3">is </span><span class="s1">_NONE_NAME:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">newname = _constraint_name_for_table(const</span><span class="s4">, </span><span class="s1">table)</span>
+        <span class="s3">if </span><span class="s1">newname:</span>
+            <span class="s1">const.name = newname</span>
+</pre>
+</body>
+</html>

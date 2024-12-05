@@ -1,0 +1,163 @@
+<html>
+<head>
+<title>expression.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #717ed3; font-style: italic;}
+.s5 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+expression.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/mysql/expression.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">exc</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">coercions</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">elements</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">operators</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">roles</span>
+<span class="s2">from </span><span class="s1">...sql.base </span><span class="s2">import </span><span class="s1">_generative</span>
+<span class="s2">from </span><span class="s1">...sql.base </span><span class="s2">import </span><span class="s1">Generative</span>
+<span class="s2">from </span><span class="s1">...util.typing </span><span class="s2">import </span><span class="s1">Self</span>
+
+
+<span class="s2">class </span><span class="s1">match(Generative</span><span class="s3">, </span><span class="s1">elements.BinaryExpression):</span>
+    <span class="s4">&quot;&quot;&quot;Produce a ``MATCH (X, Y) AGAINST ('TEXT')`` clause. 
+ 
+    E.g.:: 
+ 
+        from sqlalchemy import desc 
+        from sqlalchemy.dialects.mysql import match 
+ 
+        match_expr = match( 
+            users_table.c.firstname, 
+            users_table.c.lastname, 
+            against=&quot;Firstname Lastname&quot;, 
+        ) 
+ 
+        stmt = ( 
+            select(users_table) 
+            .where(match_expr.in_boolean_mode()) 
+            .order_by(desc(match_expr)) 
+        ) 
+ 
+    Would produce SQL resembling:: 
+ 
+        SELECT id, firstname, lastname 
+        FROM user 
+        WHERE MATCH(firstname, lastname) AGAINST (:param_1 IN BOOLEAN MODE) 
+        ORDER BY MATCH(firstname, lastname) AGAINST (:param_2) DESC 
+ 
+    The :func:`_mysql.match` function is a standalone version of the 
+    :meth:`_sql.ColumnElement.match` method available on all 
+    SQL expressions, as when :meth:`_expression.ColumnElement.match` is 
+    used, but allows to pass multiple columns 
+ 
+    :param cols: column expressions to match against 
+ 
+    :param against: expression to be compared towards 
+ 
+    :param in_boolean_mode: boolean, set &quot;boolean mode&quot; to true 
+ 
+    :param in_natural_language_mode: boolean , set &quot;natural language&quot; to true 
+ 
+    :param with_query_expansion: boolean, set &quot;query expansion&quot; to true 
+ 
+    .. versionadded:: 1.4.19 
+ 
+    .. seealso:: 
+ 
+        :meth:`_expression.ColumnElement.match` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;mysql_match&quot;</span>
+
+    <span class="s1">inherit_cache = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">*cols</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s2">if not </span><span class="s1">cols:</span>
+            <span class="s2">raise </span><span class="s1">exc.ArgumentError(</span><span class="s5">&quot;columns are required&quot;</span><span class="s1">)</span>
+
+        <span class="s1">against = kw.pop(</span><span class="s5">&quot;against&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">against </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">exc.ArgumentError(</span><span class="s5">&quot;against is required&quot;</span><span class="s1">)</span>
+        <span class="s1">against = coercions.expect(</span>
+            <span class="s1">roles.ExpressionElementRole</span><span class="s3">,</span>
+            <span class="s1">against</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">left = elements.BooleanClauseList._construct_raw(</span>
+            <span class="s1">operators.comma_op</span><span class="s3">,</span>
+            <span class="s1">clauses=cols</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">left.group = </span><span class="s2">False</span>
+
+        <span class="s1">flags = util.immutabledict(</span>
+            <span class="s1">{</span>
+                <span class="s5">&quot;mysql_boolean_mode&quot;</span><span class="s1">: kw.pop(</span><span class="s5">&quot;in_boolean_mode&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span><span class="s3">,</span>
+                <span class="s5">&quot;mysql_natural_language&quot;</span><span class="s1">: kw.pop(</span>
+                    <span class="s5">&quot;in_natural_language_mode&quot;</span><span class="s3">, </span><span class="s2">False</span>
+                <span class="s1">)</span><span class="s3">,</span>
+                <span class="s5">&quot;mysql_query_expansion&quot;</span><span class="s1">: kw.pop(</span><span class="s5">&quot;with_query_expansion&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">}</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">kw:</span>
+            <span class="s2">raise </span><span class="s1">exc.ArgumentError(</span><span class="s5">&quot;unknown arguments: %s&quot; </span><span class="s1">% (</span><span class="s5">&quot;, &quot;</span><span class="s1">.join(kw)))</span>
+
+        <span class="s1">super().__init__(left</span><span class="s3">, </span><span class="s1">against</span><span class="s3">, </span><span class="s1">operators.match_op</span><span class="s3">, </span><span class="s1">modifiers=flags)</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s2">def </span><span class="s1">in_boolean_mode(self) -&gt; Self:</span>
+        <span class="s4">&quot;&quot;&quot;Apply the &quot;IN BOOLEAN MODE&quot; modifier to the MATCH expression. 
+ 
+        :return: a new :class:`_mysql.match` instance with modifications 
+         applied. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">self.modifiers = self.modifiers.union({</span><span class="s5">&quot;mysql_boolean_mode&quot;</span><span class="s1">: </span><span class="s2">True</span><span class="s1">})</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s2">def </span><span class="s1">in_natural_language_mode(self) -&gt; Self:</span>
+        <span class="s4">&quot;&quot;&quot;Apply the &quot;IN NATURAL LANGUAGE MODE&quot; modifier to the MATCH 
+        expression. 
+ 
+        :return: a new :class:`_mysql.match` instance with modifications 
+         applied. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">self.modifiers = self.modifiers.union({</span><span class="s5">&quot;mysql_natural_language&quot;</span><span class="s1">: </span><span class="s2">True</span><span class="s1">})</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s2">def </span><span class="s1">with_query_expansion(self) -&gt; Self:</span>
+        <span class="s4">&quot;&quot;&quot;Apply the &quot;WITH QUERY EXPANSION&quot; modifier to the MATCH expression. 
+ 
+        :return: a new :class:`_mysql.match` instance with modifications 
+         applied. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">self.modifiers = self.modifiers.union({</span><span class="s5">&quot;mysql_query_expansion&quot;</span><span class="s1">: </span><span class="s2">True</span><span class="s1">})</span>
+        <span class="s2">return </span><span class="s1">self</span>
+</pre>
+</body>
+</html>

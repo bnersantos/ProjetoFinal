@@ -1,0 +1,125 @@
+<html>
+<head>
+<title>resultproxy.pyx</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #717ed3; font-style: italic;}
+.s5 { color: #96bf7d;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+resultproxy.pyx</font>
+</center></td></tr></table>
+<pre><span class="s0"># cyextension/resultproxy.pyx</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s2">import </span><span class="s1">operator</span>
+
+<span class="s2">cdef class </span><span class="s1">BaseRow:</span>
+    <span class="s2">cdef </span><span class="s1">readonly object _parent</span>
+    <span class="s2">cdef </span><span class="s1">readonly dict _key_to_index</span>
+    <span class="s2">cdef </span><span class="s1">readonly tuple _data</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">object parent</span><span class="s3">, </span><span class="s1">object processors</span><span class="s3">, </span><span class="s1">dict key_to_index</span><span class="s3">, </span><span class="s1">object data):</span>
+        <span class="s4">&quot;&quot;&quot;Row objects are constructed by CursorResult objects.&quot;&quot;&quot;</span>
+
+        <span class="s1">self._parent = parent</span>
+
+        <span class="s1">self._key_to_index = key_to_index</span>
+
+        <span class="s2">if </span><span class="s1">processors:</span>
+            <span class="s1">self._data = _apply_processors(processors</span><span class="s3">, </span><span class="s1">data)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._data = tuple(data)</span>
+
+    <span class="s2">def </span><span class="s1">__reduce__(self):</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">rowproxy_reconstructor</span><span class="s3">,</span>
+            <span class="s1">(self.__class__</span><span class="s3">, </span><span class="s1">self.__getstate__())</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__getstate__(self):</span>
+        <span class="s2">return </span><span class="s1">{</span><span class="s5">&quot;_parent&quot;</span><span class="s1">: self._parent</span><span class="s3">, </span><span class="s5">&quot;_data&quot;</span><span class="s1">: self._data}</span>
+
+    <span class="s2">def </span><span class="s1">__setstate__(self</span><span class="s3">, </span><span class="s1">dict state):</span>
+        <span class="s1">parent = state[</span><span class="s5">&quot;_parent&quot;</span><span class="s1">]</span>
+        <span class="s1">self._parent = parent</span>
+        <span class="s1">self._data = state[</span><span class="s5">&quot;_data&quot;</span><span class="s1">]</span>
+        <span class="s1">self._key_to_index = parent._key_to_index</span>
+
+    <span class="s2">def </span><span class="s1">_values_impl(self):</span>
+        <span class="s2">return </span><span class="s1">list(self)</span>
+
+    <span class="s2">def </span><span class="s1">__iter__(self):</span>
+        <span class="s2">return </span><span class="s1">iter(self._data)</span>
+
+    <span class="s2">def </span><span class="s1">__len__(self):</span>
+        <span class="s2">return </span><span class="s1">len(self._data)</span>
+
+    <span class="s2">def </span><span class="s1">__hash__(self):</span>
+        <span class="s2">return </span><span class="s1">hash(self._data)</span>
+
+    <span class="s2">def </span><span class="s1">__getitem__(self</span><span class="s3">, </span><span class="s1">index):</span>
+        <span class="s2">return </span><span class="s1">self._data[index]</span>
+
+    <span class="s2">def </span><span class="s1">_get_by_key_impl_mapping(self</span><span class="s3">, </span><span class="s1">key):</span>
+        <span class="s2">return </span><span class="s1">self._get_by_key_impl(key</span><span class="s3">, </span><span class="s6">0</span><span class="s1">)</span>
+
+    <span class="s2">cdef </span><span class="s1">_get_by_key_impl(self</span><span class="s3">, </span><span class="s1">object key</span><span class="s3">, </span><span class="s1">int attr_err):</span>
+        <span class="s1">index = self._key_to_index.get(key)</span>
+        <span class="s2">if </span><span class="s1">index </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self._data[&lt;int&gt;index]</span>
+        <span class="s1">self._parent._key_not_found(key</span><span class="s3">, </span><span class="s1">attr_err != </span><span class="s6">0</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__(self</span><span class="s3">, </span><span class="s1">name):</span>
+        <span class="s2">return </span><span class="s1">self._get_by_key_impl(name</span><span class="s3">, </span><span class="s6">1</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_to_tuple_instance(self):</span>
+        <span class="s2">return </span><span class="s1">self._data</span>
+
+
+<span class="s2">cdef </span><span class="s1">tuple _apply_processors(proc</span><span class="s3">, </span><span class="s1">data):</span>
+    <span class="s1">res = []</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(len(proc)):</span>
+        <span class="s1">p = proc[i]</span>
+        <span class="s2">if </span><span class="s1">p </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">res.append(data[i])</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">res.append(p(data[i]))</span>
+    <span class="s2">return </span><span class="s1">tuple(res)</span>
+
+
+<span class="s2">def </span><span class="s1">rowproxy_reconstructor(cls</span><span class="s3">, </span><span class="s1">state):</span>
+    <span class="s1">obj = cls.__new__(cls)</span>
+    <span class="s1">obj.__setstate__(state)</span>
+    <span class="s2">return </span><span class="s1">obj</span>
+
+
+<span class="s2">cdef </span><span class="s1">int is_contiguous(tuple indexes):</span>
+    <span class="s2">cdef </span><span class="s1">int i</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s6">1</span><span class="s3">, </span><span class="s1">len(indexes)):</span>
+        <span class="s2">if </span><span class="s1">indexes[i-</span><span class="s6">1</span><span class="s1">] != indexes[i] -</span><span class="s6">1</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s6">0</span>
+    <span class="s2">return </span><span class="s6">1</span>
+
+
+<span class="s2">def </span><span class="s1">tuplegetter(*indexes):</span>
+    <span class="s2">if </span><span class="s1">len(indexes) == </span><span class="s6">1 </span><span class="s2">or </span><span class="s1">is_contiguous(indexes) != </span><span class="s6">0</span><span class="s1">:</span>
+        <span class="s0"># slice form is faster but returns a list if input is list</span>
+        <span class="s2">return </span><span class="s1">operator.itemgetter(slice(indexes[</span><span class="s6">0</span><span class="s1">]</span><span class="s3">, </span><span class="s1">indexes[-</span><span class="s6">1</span><span class="s1">] + </span><span class="s6">1</span><span class="s1">))</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">operator.itemgetter(*indexes)</span>
+</pre>
+</body>
+</html>

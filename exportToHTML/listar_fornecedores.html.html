@@ -1,0 +1,55 @@
+<html>
+<head>
+<title>listar_fornecedores.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+.s1 { color: #e8bf6a;}
+.s2 { color: #bababa;}
+.s3 { color: #a5c261;}
+.s4 { color: #5d69bb;}
+.s5 { color: #cc8b60;}
+.s6 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+listar_fornecedores.html</font>
+</center></td></tr></table>
+<pre><span class="s0">{% extends 'modelo_base2.html' %}</span>
+
+<span class="s0">{% block conteudo %}</span>
+    <span class="s1">&lt;h2&gt;</span><span class="s0">Lista de Fornecedores</span><span class="s1">&lt;/h2&gt;</span>
+
+    <span class="s1">&lt;table </span><span class="s2">class</span><span class="s3">=&quot;tabela-fornecedores&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;thead&gt;</span>
+            <span class="s1">&lt;tr&gt;</span>
+                <span class="s1">&lt;th&gt;</span><span class="s0">ID</span><span class="s1">&lt;/th&gt;</span>
+                <span class="s1">&lt;th&gt;</span><span class="s0">Nome</span><span class="s1">&lt;/th&gt;</span>
+                <span class="s1">&lt;th&gt;</span><span class="s0">Email</span><span class="s1">&lt;/th&gt;</span>
+                <span class="s1">&lt;th&gt;</span><span class="s0">Telefone</span><span class="s1">&lt;/th&gt;</span>
+                <span class="s1">&lt;th&gt;</span><span class="s0">Ações</span><span class="s1">&lt;/th&gt; </span><span class="s4">&lt;!-- Coluna extra para ações --&gt;</span>
+            <span class="s1">&lt;/tr&gt;</span>
+        <span class="s1">&lt;/thead&gt;</span>
+        <span class="s1">&lt;tbody&gt;</span>
+            <span class="s0">{% for fornecedor in fornecedores %}</span>
+                <span class="s1">&lt;tr&gt;</span>
+                    <span class="s1">&lt;td&gt;</span><span class="s0">{{ fornecedor.id }}</span><span class="s1">&lt;/td&gt;  </span><span class="s4">&lt;!-- Corrigido para 'id' --&gt;</span>
+                    <span class="s1">&lt;td&gt;</span><span class="s0">{{ fornecedor.nome_fornecedor }}</span><span class="s1">&lt;/td&gt;</span>
+                    <span class="s1">&lt;td&gt;</span><span class="s0">{{ fornecedor.email_fornecedor }}</span><span class="s1">&lt;/td&gt;</span>
+                    <span class="s1">&lt;td&gt;</span><span class="s0">{{ fornecedor.telefone_fornecedor }}</span><span class="s1">&lt;/td&gt;</span>
+                    <span class="s1">&lt;td&gt;</span>
+                        <span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('editar_fornecedor', id=fornecedor.id) }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn2 editar&quot;</span><span class="s1">&gt;</span><span class="s0">Editar</span><span class="s1">&lt;/a&gt;  </span><span class="s4">&lt;!-- Corrigido para 'id' --&gt;</span>
+                        <span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('deletar_fornecedor', id=fornecedor.id) }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn2 deletar&quot; </span><span class="s2">onclick</span><span class="s3">=&quot;</span><span class="s5">return </span><span class="s0">confirm(</span><span class="s6">'Tem certeza que deseja deletar?'</span><span class="s0">)</span><span class="s3">&quot;</span><span class="s1">&gt;</span><span class="s0">Deletar</span><span class="s1">&lt;/a&gt;  </span><span class="s4">&lt;!-- Corrigido para 'id' --&gt;</span>
+                    <span class="s1">&lt;/td&gt;</span>
+                <span class="s1">&lt;/tr&gt;</span>
+            <span class="s0">{% endfor %}</span>
+        <span class="s1">&lt;/tbody&gt;</span>
+    <span class="s1">&lt;/table&gt;</span>
+    <span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('gerenciar_fornecedores') }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn3 voltar&quot;</span><span class="s1">&gt;</span><span class="s0">Voltar</span><span class="s1">&lt;/a&gt;</span>
+<span class="s0">{% endblock %}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,607 @@
+<html>
+<head>
+<title>annotation.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+annotation.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/annotation.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;The :class:`.Annotated` class and related routines; creates hash-equivalent 
+copies of SQL constructs which contain context-specific markers and 
+associations. 
+ 
+Note that the :class:`.Annotated` concept as implemented in this module is not 
+related in any way to the pep-593 concept of &quot;Annotated&quot;. 
+ 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">FrozenSet</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">operators</span>
+<span class="s3">from </span><span class="s1">.cache_key </span><span class="s3">import </span><span class="s1">HasCacheKey</span>
+<span class="s3">from </span><span class="s1">.visitors </span><span class="s3">import </span><span class="s1">anon_map</span>
+<span class="s3">from </span><span class="s1">.visitors </span><span class="s3">import </span><span class="s1">ExternallyTraversible</span>
+<span class="s3">from </span><span class="s1">.visitors </span><span class="s3">import </span><span class="s1">InternalTraversal</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Self</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_EntityNamespace</span>
+    <span class="s3">from </span><span class="s1">.visitors </span><span class="s3">import </span><span class="s1">_TraverseInternalsType</span>
+
+<span class="s1">_AnnotationDict = Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span>
+
+<span class="s1">EMPTY_ANNOTATIONS: util.immutabledict[str</span><span class="s4">, </span><span class="s1">Any] = util.EMPTY_DICT</span>
+
+
+<span class="s3">class </span><span class="s1">SupportsAnnotations(ExternallyTraversible):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_annotations: util.immutabledict[str</span><span class="s4">, </span><span class="s1">Any] = EMPTY_ANNOTATIONS</span>
+
+    <span class="s1">proxy_set: util.generic_fn_descriptor[FrozenSet[Any]]</span>
+
+    <span class="s1">_is_immutable: bool</span>
+
+    <span class="s3">def </span><span class="s1">_annotate(self</span><span class="s4">, </span><span class="s1">values: _AnnotationDict) -&gt; Self:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Literal[</span><span class="s3">None</span><span class="s1">] = ...</span><span class="s4">,</span>
+        <span class="s1">clone: bool = ...</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Self: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Sequence[str] = ...</span><span class="s4">,</span>
+        <span class="s1">clone: bool = ...</span><span class="s4">,</span>
+    <span class="s1">) -&gt; SupportsAnnotations: ...</span>
+
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Optional[Sequence[str]] = </span><span class="s3">None</span><span class="s4">,</span>
+        <span class="s1">clone: bool = </span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">) -&gt; SupportsAnnotations:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_annotations_cache_key(self) -&gt; Tuple[Any</span><span class="s4">, </span><span class="s1">...]:</span>
+        <span class="s1">anon_map_ = anon_map()</span>
+
+        <span class="s3">return </span><span class="s1">self._gen_annotations_cache_key(anon_map_)</span>
+
+    <span class="s3">def </span><span class="s1">_gen_annotations_cache_key(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">anon_map: anon_map</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s4">, </span><span class="s1">...]:</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s5">&quot;_annotations&quot;</span><span class="s4">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">(</span>
+                    <span class="s1">key</span><span class="s4">,</span>
+                    <span class="s1">(</span>
+                        <span class="s1">value._gen_cache_key(anon_map</span><span class="s4">, </span><span class="s1">[])</span>
+                        <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">HasCacheKey)</span>
+                        <span class="s3">else </span><span class="s1">value</span>
+                    <span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">[</span>
+                    <span class="s1">(key</span><span class="s4">, </span><span class="s1">self._annotations[key])</span>
+                    <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">sorted(self._annotations)</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">SupportsWrappingAnnotations(SupportsAnnotations):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_constructor: Callable[...</span><span class="s4">, </span><span class="s1">SupportsWrappingAnnotations]</span>
+
+    <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s1">@util.ro_non_memoized_property</span>
+        <span class="s3">def </span><span class="s1">entity_namespace(self) -&gt; _EntityNamespace: ...</span>
+
+    <span class="s3">def </span><span class="s1">_annotate(self</span><span class="s4">, </span><span class="s1">values: _AnnotationDict) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;return a copy of this ClauseElement with annotations 
+        updated by the given dictionary. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">Annotated._as_annotated_instance(self</span><span class="s4">, </span><span class="s1">values)  </span><span class="s0"># type: ignore</span>
+
+    <span class="s3">def </span><span class="s1">_with_annotations(self</span><span class="s4">, </span><span class="s1">values: _AnnotationDict) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;return a copy of this ClauseElement with annotations 
+        replaced by the given dictionary. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">Annotated._as_annotated_instance(self</span><span class="s4">, </span><span class="s1">values)  </span><span class="s0"># type: ignore</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Literal[</span><span class="s3">None</span><span class="s1">] = ...</span><span class="s4">,</span>
+        <span class="s1">clone: bool = ...</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Self: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Sequence[str] = ...</span><span class="s4">,</span>
+        <span class="s1">clone: bool = ...</span><span class="s4">,</span>
+    <span class="s1">) -&gt; SupportsAnnotations: ...</span>
+
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Optional[Sequence[str]] = </span><span class="s3">None</span><span class="s4">,</span>
+        <span class="s1">clone: bool = </span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">) -&gt; SupportsAnnotations:</span>
+        <span class="s2">&quot;&quot;&quot;return a copy of this :class:`_expression.ClauseElement` 
+        with annotations 
+        removed. 
+ 
+        :param values: optional tuple of individual values 
+         to remove. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">clone:</span>
+            <span class="s1">s = self._clone()</span>
+            <span class="s3">return </span><span class="s1">s</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+
+
+<span class="s3">class </span><span class="s1">SupportsCloneAnnotations(SupportsWrappingAnnotations):</span>
+    <span class="s0"># SupportsCloneAnnotations extends from SupportsWrappingAnnotations</span>
+    <span class="s0"># to support the structure of having the base ClauseElement</span>
+    <span class="s0"># be a subclass of SupportsWrappingAnnotations.  Any ClauseElement</span>
+    <span class="s0"># subclass that wants to extend from SupportsCloneAnnotations</span>
+    <span class="s0"># will inherently also be subclassing SupportsWrappingAnnotations, so</span>
+    <span class="s0"># make that specific here.</span>
+
+    <span class="s3">if not </span><span class="s1">typing.TYPE_CHECKING:</span>
+        <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_clone_annotations_traverse_internals: _TraverseInternalsType = [</span>
+        <span class="s1">(</span><span class="s5">&quot;_annotations&quot;</span><span class="s4">, </span><span class="s1">InternalTraversal.dp_annotations_key)</span>
+    <span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">_annotate(self</span><span class="s4">, </span><span class="s1">values: _AnnotationDict) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;return a copy of this ClauseElement with annotations 
+        updated by the given dictionary. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">new = self._clone()</span>
+        <span class="s1">new._annotations = new._annotations.union(values)</span>
+        <span class="s1">new.__dict__.pop(</span><span class="s5">&quot;_annotations_cache_key&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">new.__dict__.pop(</span><span class="s5">&quot;_generate_cache_key&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">new</span>
+
+    <span class="s3">def </span><span class="s1">_with_annotations(self</span><span class="s4">, </span><span class="s1">values: _AnnotationDict) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;return a copy of this ClauseElement with annotations 
+        replaced by the given dictionary. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">new = self._clone()</span>
+        <span class="s1">new._annotations = util.immutabledict(values)</span>
+        <span class="s1">new.__dict__.pop(</span><span class="s5">&quot;_annotations_cache_key&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">new.__dict__.pop(</span><span class="s5">&quot;_generate_cache_key&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">new</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Literal[</span><span class="s3">None</span><span class="s1">] = ...</span><span class="s4">,</span>
+        <span class="s1">clone: bool = ...</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Self: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Sequence[str] = ...</span><span class="s4">,</span>
+        <span class="s1">clone: bool = ...</span><span class="s4">,</span>
+    <span class="s1">) -&gt; SupportsAnnotations: ...</span>
+
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Optional[Sequence[str]] = </span><span class="s3">None</span><span class="s4">,</span>
+        <span class="s1">clone: bool = </span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">) -&gt; SupportsAnnotations:</span>
+        <span class="s2">&quot;&quot;&quot;return a copy of this :class:`_expression.ClauseElement` 
+        with annotations 
+        removed. 
+ 
+        :param values: optional tuple of individual values 
+         to remove. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">clone </span><span class="s3">or </span><span class="s1">self._annotations:</span>
+            <span class="s0"># clone is used when we are also copying</span>
+            <span class="s0"># the expression for a deep deannotation</span>
+            <span class="s1">new = self._clone()</span>
+            <span class="s1">new._annotations = util.immutabledict()</span>
+            <span class="s1">new.__dict__.pop(</span><span class="s5">&quot;_annotations_cache_key&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">new</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+
+
+<span class="s3">class </span><span class="s1">Annotated(SupportsAnnotations):</span>
+    <span class="s2">&quot;&quot;&quot;clones a SupportsAnnotations and applies an 'annotations' dictionary. 
+ 
+    Unlike regular clones, this clone also mimics __hash__() and 
+    __eq__() of the original element so that it takes its place 
+    in hashed collections. 
+ 
+    A reference to the original element is maintained, for the important 
+    reason of keeping its hash value current.  When GC'ed, the 
+    hash value may be reused, causing conflicts. 
+ 
+    .. note::  The rationale for Annotated producing a brand new class, 
+       rather than placing the functionality directly within ClauseElement, 
+       is **performance**.  The __hash__() method is absent on plain 
+       ClauseElement which leads to significantly reduced function call 
+       overhead, as the use of sets and dictionaries against ClauseElement 
+       objects is prevalent, but most are not &quot;annotated&quot;. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_is_column_operators = </span><span class="s3">False</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_as_annotated_instance(</span>
+        <span class="s1">cls</span><span class="s4">, </span><span class="s1">element: SupportsWrappingAnnotations</span><span class="s4">, </span><span class="s1">values: _AnnotationDict</span>
+    <span class="s1">) -&gt; Annotated:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">cls = annotated_classes[element.__class__]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s1">cls = _new_annotation_type(element.__class__</span><span class="s4">, </span><span class="s1">cls)</span>
+        <span class="s3">return </span><span class="s1">cls(element</span><span class="s4">, </span><span class="s1">values)</span>
+
+    <span class="s1">_annotations: util.immutabledict[str</span><span class="s4">, </span><span class="s1">Any]</span>
+    <span class="s1">__element: SupportsWrappingAnnotations</span>
+    <span class="s1">_hash: int</span>
+
+    <span class="s3">def </span><span class="s1">__new__(cls: Type[Self]</span><span class="s4">, </span><span class="s1">*args: Any) -&gt; Self:</span>
+        <span class="s3">return </span><span class="s1">object.__new__(cls)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">element: SupportsWrappingAnnotations</span><span class="s4">, </span><span class="s1">values: _AnnotationDict</span>
+    <span class="s1">):</span>
+        <span class="s1">self.__dict__ = element.__dict__.copy()</span>
+        <span class="s1">self.__dict__.pop(</span><span class="s5">&quot;_annotations_cache_key&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">self.__dict__.pop(</span><span class="s5">&quot;_generate_cache_key&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">self.__element = element</span>
+        <span class="s1">self._annotations = util.immutabledict(values)</span>
+        <span class="s1">self._hash = hash(element)</span>
+
+    <span class="s3">def </span><span class="s1">_annotate(self</span><span class="s4">, </span><span class="s1">values: _AnnotationDict) -&gt; Self:</span>
+        <span class="s1">_values = self._annotations.union(values)</span>
+        <span class="s1">new = self._with_annotations(_values)</span>
+        <span class="s3">return </span><span class="s1">new</span>
+
+    <span class="s3">def </span><span class="s1">_with_annotations(self</span><span class="s4">, </span><span class="s1">values: _AnnotationDict) -&gt; Self:</span>
+        <span class="s1">clone = self.__class__.__new__(self.__class__)</span>
+        <span class="s1">clone.__dict__ = self.__dict__.copy()</span>
+        <span class="s1">clone.__dict__.pop(</span><span class="s5">&quot;_annotations_cache_key&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">clone.__dict__.pop(</span><span class="s5">&quot;_generate_cache_key&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">clone._annotations = util.immutabledict(values)</span>
+        <span class="s3">return </span><span class="s1">clone</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Literal[</span><span class="s3">None</span><span class="s1">] = ...</span><span class="s4">,</span>
+        <span class="s1">clone: bool = ...</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Self: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Sequence[str] = ...</span><span class="s4">,</span>
+        <span class="s1">clone: bool = ...</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Annotated: ...</span>
+
+    <span class="s3">def </span><span class="s1">_deannotate(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">values: Optional[Sequence[str]] = </span><span class="s3">None</span><span class="s4">,</span>
+        <span class="s1">clone: bool = </span><span class="s3">True</span><span class="s4">,</span>
+    <span class="s1">) -&gt; SupportsAnnotations:</span>
+        <span class="s3">if </span><span class="s1">values </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.__element</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._with_annotations(</span>
+                <span class="s1">util.immutabledict(</span>
+                    <span class="s1">{</span>
+                        <span class="s1">key: value</span>
+                        <span class="s3">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">self._annotations.items()</span>
+                        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">values</span>
+                    <span class="s1">}</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+    <span class="s3">if not </span><span class="s1">typing.TYPE_CHECKING:</span>
+        <span class="s0"># manually proxy some methods that need extra attention</span>
+        <span class="s3">def </span><span class="s1">_compiler_dispatch(self</span><span class="s4">, </span><span class="s1">visitor: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; Any:</span>
+            <span class="s3">return </span><span class="s1">self.__element.__class__._compiler_dispatch(</span>
+                <span class="s1">self</span><span class="s4">, </span><span class="s1">visitor</span><span class="s4">, </span><span class="s1">**kw</span>
+            <span class="s1">)</span>
+
+        <span class="s1">@property</span>
+        <span class="s3">def </span><span class="s1">_constructor(self):</span>
+            <span class="s3">return </span><span class="s1">self.__element._constructor</span>
+
+    <span class="s3">def </span><span class="s1">_clone(self</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; Self:</span>
+        <span class="s1">clone = self.__element._clone(**kw)</span>
+        <span class="s3">if </span><span class="s1">clone </span><span class="s3">is </span><span class="s1">self.__element:</span>
+            <span class="s0"># detect immutable, don't change anything</span>
+            <span class="s3">return </span><span class="s1">self</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># update the clone with any changes that have occurred</span>
+            <span class="s0"># to this object's __dict__.</span>
+            <span class="s1">clone.__dict__.update(self.__dict__)</span>
+            <span class="s3">return </span><span class="s1">self.__class__(clone</span><span class="s4">, </span><span class="s1">self._annotations)</span>
+
+    <span class="s3">def </span><span class="s1">__reduce__(self) -&gt; Tuple[Type[Annotated]</span><span class="s4">, </span><span class="s1">Tuple[Any</span><span class="s4">, </span><span class="s1">...]]:</span>
+        <span class="s3">return </span><span class="s1">self.__class__</span><span class="s4">, </span><span class="s1">(self.__element</span><span class="s4">, </span><span class="s1">self._annotations)</span>
+
+    <span class="s3">def </span><span class="s1">__hash__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">self._hash</span>
+
+    <span class="s3">def </span><span class="s1">__eq__(self</span><span class="s4">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s3">if </span><span class="s1">self._is_column_operators:</span>
+            <span class="s3">return </span><span class="s1">self.__element.__class__.__eq__(self</span><span class="s4">, </span><span class="s1">other)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">hash(other) == hash(self)</span>
+
+    <span class="s1">@util.ro_non_memoized_property</span>
+    <span class="s3">def </span><span class="s1">entity_namespace(self) -&gt; _EntityNamespace:</span>
+        <span class="s3">if </span><span class="s5">&quot;entity_namespace&quot; </span><span class="s3">in </span><span class="s1">self._annotations:</span>
+            <span class="s3">return </span><span class="s1">cast(</span>
+                <span class="s1">SupportsWrappingAnnotations</span><span class="s4">,</span>
+                <span class="s1">self._annotations[</span><span class="s5">&quot;entity_namespace&quot;</span><span class="s1">]</span><span class="s4">,</span>
+            <span class="s1">).entity_namespace</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.__element.entity_namespace</span>
+
+
+<span class="s0"># hard-generate Annotated subclasses.  this technique</span>
+<span class="s0"># is used instead of on-the-fly types (i.e. type.__new__())</span>
+<span class="s0"># so that the resulting objects are pickleable; additionally, other</span>
+<span class="s0"># decisions can be made up front about the type of object being annotated</span>
+<span class="s0"># just once per class rather than per-instance.</span>
+<span class="s1">annotated_classes: Dict[Type[SupportsWrappingAnnotations]</span><span class="s4">, </span><span class="s1">Type[Annotated]] = (</span>
+    <span class="s1">{}</span>
+<span class="s1">)</span>
+
+<span class="s1">_SA = TypeVar(</span><span class="s5">&quot;_SA&quot;</span><span class="s4">, </span><span class="s1">bound=</span><span class="s5">&quot;SupportsAnnotations&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_safe_annotate(to_annotate: _SA</span><span class="s4">, </span><span class="s1">annotations: _AnnotationDict) -&gt; _SA:</span>
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">_annotate = to_annotate._annotate</span>
+    <span class="s3">except </span><span class="s1">AttributeError:</span>
+        <span class="s0"># skip objects that don't actually have an `_annotate`</span>
+        <span class="s0"># attribute, namely QueryableAttribute inside of a join</span>
+        <span class="s0"># condition</span>
+        <span class="s3">return </span><span class="s1">to_annotate</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">_annotate(annotations)</span>
+
+
+<span class="s3">def </span><span class="s1">_deep_annotate(</span>
+    <span class="s1">element: _SA</span><span class="s4">,</span>
+    <span class="s1">annotations: _AnnotationDict</span><span class="s4">,</span>
+    <span class="s1">exclude: Optional[Sequence[SupportsAnnotations]] = </span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">*</span><span class="s4">,</span>
+    <span class="s1">detect_subquery_cols: bool = </span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">ind_cols_on_fromclause: bool = </span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">annotate_callable: Optional[</span>
+        <span class="s1">Callable[[SupportsAnnotations</span><span class="s4">, </span><span class="s1">_AnnotationDict]</span><span class="s4">, </span><span class="s1">SupportsAnnotations]</span>
+    <span class="s1">] = </span><span class="s3">None</span><span class="s4">,</span>
+<span class="s1">) -&gt; _SA:</span>
+    <span class="s2">&quot;&quot;&quot;Deep copy the given ClauseElement, annotating each element 
+    with the given annotations dictionary. 
+ 
+    Elements within the exclude collection will be cloned but not annotated. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># annotated objects hack the __hash__() method so if we want to</span>
+    <span class="s0"># uniquely process them we have to use id()</span>
+
+    <span class="s1">cloned_ids: Dict[int</span><span class="s4">, </span><span class="s1">SupportsAnnotations] = {}</span>
+
+    <span class="s3">def </span><span class="s1">clone(elem: SupportsAnnotations</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; SupportsAnnotations:</span>
+        <span class="s0"># ind_cols_on_fromclause means make sure an AnnotatedFromClause</span>
+        <span class="s0"># has its own .c collection independent of that which its proxying.</span>
+        <span class="s0"># this is used specifically by orm.LoaderCriteriaOption to break</span>
+        <span class="s0"># a reference cycle that it's otherwise prone to building,</span>
+        <span class="s0"># see test_relationship_criteria-&gt;</span>
+        <span class="s0"># test_loader_criteria_subquery_w_same_entity.  logic here was</span>
+        <span class="s0"># changed for #8796 and made explicit; previously it occurred</span>
+        <span class="s0"># by accident</span>
+
+        <span class="s1">kw[</span><span class="s5">&quot;detect_subquery_cols&quot;</span><span class="s1">] = detect_subquery_cols</span>
+        <span class="s1">id_ = id(elem)</span>
+
+        <span class="s3">if </span><span class="s1">id_ </span><span class="s3">in </span><span class="s1">cloned_ids:</span>
+            <span class="s3">return </span><span class="s1">cloned_ids[id_]</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">exclude</span>
+            <span class="s3">and </span><span class="s1">hasattr(elem</span><span class="s4">, </span><span class="s5">&quot;proxy_set&quot;</span><span class="s1">)</span>
+            <span class="s3">and </span><span class="s1">elem.proxy_set.intersection(exclude)</span>
+        <span class="s1">):</span>
+            <span class="s1">newelem = elem._clone(clone=clone</span><span class="s4">, </span><span class="s1">**kw)</span>
+        <span class="s3">elif </span><span class="s1">annotations != elem._annotations:</span>
+            <span class="s3">if </span><span class="s1">detect_subquery_cols </span><span class="s3">and </span><span class="s1">elem._is_immutable:</span>
+                <span class="s1">to_annotate = elem._clone(clone=clone</span><span class="s4">, </span><span class="s1">**kw)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">to_annotate = elem</span>
+            <span class="s3">if </span><span class="s1">annotate_callable:</span>
+                <span class="s1">newelem = annotate_callable(to_annotate</span><span class="s4">, </span><span class="s1">annotations)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">newelem = _safe_annotate(to_annotate</span><span class="s4">, </span><span class="s1">annotations)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">newelem = elem</span>
+
+        <span class="s1">newelem._copy_internals(</span>
+            <span class="s1">clone=clone</span><span class="s4">, </span><span class="s1">ind_cols_on_fromclause=ind_cols_on_fromclause</span>
+        <span class="s1">)</span>
+
+        <span class="s1">cloned_ids[id_] = newelem</span>
+        <span class="s3">return </span><span class="s1">newelem</span>
+
+    <span class="s3">if </span><span class="s1">element </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">element = cast(_SA</span><span class="s4">, </span><span class="s1">clone(element))</span>
+    <span class="s1">clone = </span><span class="s3">None  </span><span class="s0"># type: ignore  # remove gc cycles</span>
+    <span class="s3">return </span><span class="s1">element</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_deep_deannotate(</span>
+    <span class="s1">element: Literal[</span><span class="s3">None</span><span class="s1">]</span><span class="s4">, </span><span class="s1">values: Optional[Sequence[str]] = </span><span class="s3">None</span>
+<span class="s1">) -&gt; Literal[</span><span class="s3">None</span><span class="s1">]: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_deep_deannotate(</span>
+    <span class="s1">element: _SA</span><span class="s4">, </span><span class="s1">values: Optional[Sequence[str]] = </span><span class="s3">None</span>
+<span class="s1">) -&gt; _SA: ...</span>
+
+
+<span class="s3">def </span><span class="s1">_deep_deannotate(</span>
+    <span class="s1">element: Optional[_SA]</span><span class="s4">, </span><span class="s1">values: Optional[Sequence[str]] = </span><span class="s3">None</span>
+<span class="s1">) -&gt; Optional[_SA]:</span>
+    <span class="s2">&quot;&quot;&quot;Deep copy the given element, removing annotations.&quot;&quot;&quot;</span>
+
+    <span class="s1">cloned: Dict[Any</span><span class="s4">, </span><span class="s1">SupportsAnnotations] = {}</span>
+
+    <span class="s3">def </span><span class="s1">clone(elem: SupportsAnnotations</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; SupportsAnnotations:</span>
+        <span class="s1">key: Any</span>
+        <span class="s3">if </span><span class="s1">values:</span>
+            <span class="s1">key = id(elem)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">key = elem</span>
+
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">cloned:</span>
+            <span class="s1">newelem = elem._deannotate(values=values</span><span class="s4">, </span><span class="s1">clone=</span><span class="s3">True</span><span class="s1">)</span>
+            <span class="s1">newelem._copy_internals(clone=clone)</span>
+            <span class="s1">cloned[key] = newelem</span>
+            <span class="s3">return </span><span class="s1">newelem</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">cloned[key]</span>
+
+    <span class="s3">if </span><span class="s1">element </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">element = cast(_SA</span><span class="s4">, </span><span class="s1">clone(element))</span>
+    <span class="s1">clone = </span><span class="s3">None  </span><span class="s0"># type: ignore  # remove gc cycles</span>
+    <span class="s3">return </span><span class="s1">element</span>
+
+
+<span class="s3">def </span><span class="s1">_shallow_annotate(element: _SA</span><span class="s4">, </span><span class="s1">annotations: _AnnotationDict) -&gt; _SA:</span>
+    <span class="s2">&quot;&quot;&quot;Annotate the given ClauseElement and copy its internals so that 
+    internal objects refer to the new annotated object. 
+ 
+    Basically used to apply a &quot;don't traverse&quot; annotation to a 
+    selectable, without digging throughout the whole 
+    structure wasting time. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">element = element._annotate(annotations)</span>
+    <span class="s1">element._copy_internals()</span>
+    <span class="s3">return </span><span class="s1">element</span>
+
+
+<span class="s3">def </span><span class="s1">_new_annotation_type(</span>
+    <span class="s1">cls: Type[SupportsWrappingAnnotations]</span><span class="s4">, </span><span class="s1">base_cls: Type[Annotated]</span>
+<span class="s1">) -&gt; Type[Annotated]:</span>
+    <span class="s2">&quot;&quot;&quot;Generates a new class that subclasses Annotated and proxies a given 
+    element type. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">issubclass(cls</span><span class="s4">, </span><span class="s1">Annotated):</span>
+        <span class="s3">return </span><span class="s1">cls</span>
+    <span class="s3">elif </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">annotated_classes:</span>
+        <span class="s3">return </span><span class="s1">annotated_classes[cls]</span>
+
+    <span class="s3">for </span><span class="s1">super_ </span><span class="s3">in </span><span class="s1">cls.__mro__:</span>
+        <span class="s0"># check if an Annotated subclass more specific than</span>
+        <span class="s0"># the given base_cls is already registered, such</span>
+        <span class="s0"># as AnnotatedColumnElement.</span>
+        <span class="s3">if </span><span class="s1">super_ </span><span class="s3">in </span><span class="s1">annotated_classes:</span>
+            <span class="s1">base_cls = annotated_classes[super_]</span>
+            <span class="s3">break</span>
+
+    <span class="s1">annotated_classes[cls] = anno_cls = cast(</span>
+        <span class="s1">Type[Annotated]</span><span class="s4">,</span>
+        <span class="s1">type(</span><span class="s5">&quot;Annotated%s&quot; </span><span class="s1">% cls.__name__</span><span class="s4">, </span><span class="s1">(base_cls</span><span class="s4">, </span><span class="s1">cls)</span><span class="s4">, </span><span class="s1">{})</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">globals()[</span><span class="s5">&quot;Annotated%s&quot; </span><span class="s1">% cls.__name__] = anno_cls</span>
+
+    <span class="s3">if </span><span class="s5">&quot;_traverse_internals&quot; </span><span class="s3">in </span><span class="s1">cls.__dict__:</span>
+        <span class="s1">anno_cls._traverse_internals = list(cls._traverse_internals) + [</span>
+            <span class="s1">(</span><span class="s5">&quot;_annotations&quot;</span><span class="s4">, </span><span class="s1">InternalTraversal.dp_annotations_key)</span>
+        <span class="s1">]</span>
+    <span class="s3">elif </span><span class="s1">cls.__dict__.get(</span><span class="s5">&quot;inherit_cache&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s1">anno_cls._traverse_internals = list(cls._traverse_internals) + [</span>
+            <span class="s1">(</span><span class="s5">&quot;_annotations&quot;</span><span class="s4">, </span><span class="s1">InternalTraversal.dp_annotations_key)</span>
+        <span class="s1">]</span>
+
+    <span class="s0"># some classes include this even if they have traverse_internals</span>
+    <span class="s0"># e.g. BindParameter, add it if present.</span>
+    <span class="s3">if </span><span class="s1">cls.__dict__.get(</span><span class="s5">&quot;inherit_cache&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s1">anno_cls.inherit_cache = </span><span class="s3">True  </span><span class="s0"># type: ignore</span>
+    <span class="s3">elif </span><span class="s5">&quot;inherit_cache&quot; </span><span class="s3">in </span><span class="s1">cls.__dict__:</span>
+        <span class="s1">anno_cls.inherit_cache = cls.__dict__[</span><span class="s5">&quot;inherit_cache&quot;</span><span class="s1">]  </span><span class="s0"># type: ignore</span>
+
+    <span class="s1">anno_cls._is_column_operators = issubclass(cls</span><span class="s4">, </span><span class="s1">operators.ColumnOperators)</span>
+
+    <span class="s3">return </span><span class="s1">anno_cls</span>
+
+
+<span class="s3">def </span><span class="s1">_prepare_annotations(</span>
+    <span class="s1">target_hierarchy: Type[SupportsWrappingAnnotations]</span><span class="s4">,</span>
+    <span class="s1">base_cls: Type[Annotated]</span><span class="s4">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s3">for </span><span class="s1">cls </span><span class="s3">in </span><span class="s1">util.walk_subclasses(target_hierarchy):</span>
+        <span class="s1">_new_annotation_type(cls</span><span class="s4">, </span><span class="s1">base_cls)</span>
+</pre>
+</body>
+</html>

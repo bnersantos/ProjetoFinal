@@ -1,0 +1,439 @@
+<html>
+<head>
+<title>orderinglist.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+orderinglist.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># ext/orderinglist.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">&quot;&quot;&quot;A custom list that manages index/position information for contained 
+elements. 
+ 
+:author: Jason Kirtland 
+ 
+``orderinglist`` is a helper for mutable ordered relationships.  It will 
+intercept list operations performed on a :func:`_orm.relationship`-managed 
+collection and 
+automatically synchronize changes in list position onto a target scalar 
+attribute. 
+ 
+Example: A ``slide`` table, where each row refers to zero or more entries 
+in a related ``bullet`` table.   The bullets within a slide are 
+displayed in order based on the value of the ``position`` column in the 
+``bullet`` table.   As entries are reordered in memory, the value of the 
+``position`` attribute should be updated to reflect the new sort order:: 
+ 
+ 
+    Base = declarative_base() 
+ 
+    class Slide(Base): 
+        __tablename__ = 'slide' 
+ 
+        id = Column(Integer, primary_key=True) 
+        name = Column(String) 
+ 
+        bullets = relationship(&quot;Bullet&quot;, order_by=&quot;Bullet.position&quot;) 
+ 
+    class Bullet(Base): 
+        __tablename__ = 'bullet' 
+        id = Column(Integer, primary_key=True) 
+        slide_id = Column(Integer, ForeignKey('slide.id')) 
+        position = Column(Integer) 
+        text = Column(String) 
+ 
+The standard relationship mapping will produce a list-like attribute on each 
+``Slide`` containing all related ``Bullet`` objects, 
+but coping with changes in ordering is not handled automatically. 
+When appending a ``Bullet`` into ``Slide.bullets``, the ``Bullet.position`` 
+attribute will remain unset until manually assigned.   When the ``Bullet`` 
+is inserted into the middle of the list, the following ``Bullet`` objects 
+will also need to be renumbered. 
+ 
+The :class:`.OrderingList` object automates this task, managing the 
+``position`` attribute on all ``Bullet`` objects in the collection.  It is 
+constructed using the :func:`.ordering_list` factory:: 
+ 
+    from sqlalchemy.ext.orderinglist import ordering_list 
+ 
+    Base = declarative_base() 
+ 
+    class Slide(Base): 
+        __tablename__ = 'slide' 
+ 
+        id = Column(Integer, primary_key=True) 
+        name = Column(String) 
+ 
+        bullets = relationship(&quot;Bullet&quot;, order_by=&quot;Bullet.position&quot;, 
+                                collection_class=ordering_list('position')) 
+ 
+    class Bullet(Base): 
+        __tablename__ = 'bullet' 
+        id = Column(Integer, primary_key=True) 
+        slide_id = Column(Integer, ForeignKey('slide.id')) 
+        position = Column(Integer) 
+        text = Column(String) 
+ 
+With the above mapping the ``Bullet.position`` attribute is managed:: 
+ 
+    s = Slide() 
+    s.bullets.append(Bullet()) 
+    s.bullets.append(Bullet()) 
+    s.bullets[1].position 
+    &gt;&gt;&gt; 1 
+    s.bullets.insert(1, Bullet()) 
+    s.bullets[2].position 
+    &gt;&gt;&gt; 2 
+ 
+The :class:`.OrderingList` construct only works with **changes** to a 
+collection, and not the initial load from the database, and requires that the 
+list be sorted when loaded.  Therefore, be sure to specify ``order_by`` on the 
+:func:`_orm.relationship` against the target ordering attribute, so that the 
+ordering is correct when first loaded. 
+ 
+.. warning:: 
+ 
+  :class:`.OrderingList` only provides limited functionality when a primary 
+  key column or unique column is the target of the sort.  Operations 
+  that are unsupported or are problematic include: 
+ 
+    * two entries must trade values.  This is not supported directly in the 
+      case of a primary key or unique constraint because it means at least 
+      one row would need to be temporarily removed first, or changed to 
+      a third, neutral value while the switch occurs. 
+ 
+    * an entry must be deleted in order to make room for a new entry. 
+      SQLAlchemy's unit of work performs all INSERTs before DELETEs within a 
+      single flush.  In the case of a primary key, it will trade 
+      an INSERT/DELETE of the same primary key for an UPDATE statement in order 
+      to lessen the impact of this limitation, however this does not take place 
+      for a UNIQUE column. 
+      A future feature will allow the &quot;DELETE before INSERT&quot; behavior to be 
+      possible, alleviating this limitation, though this feature will require 
+      explicit configuration at the mapper level for sets of columns that 
+      are to be handled in this way. 
+ 
+:func:`.ordering_list` takes the name of the related object's ordering 
+attribute as an argument.  By default, the zero-based integer index of the 
+object's position in the :func:`.ordering_list` is synchronized with the 
+ordering attribute: index 0 will get position 0, index 1 position 1, etc.  To 
+start numbering at 1 or some other integer, provide ``count_from=1``. 
+ 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+
+<span class="s3">from </span><span class="s1">..orm.collections </span><span class="s3">import </span><span class="s1">collection</span>
+<span class="s3">from </span><span class="s1">..orm.collections </span><span class="s3">import </span><span class="s1">collection_adapter</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s1">)</span>
+<span class="s1">OrderingFunc = Callable[[int</span><span class="s5">, </span><span class="s1">Sequence[_T]]</span><span class="s5">, </span><span class="s1">int]</span>
+
+
+<span class="s1">__all__ = [</span><span class="s4">&quot;ordering_list&quot;</span><span class="s1">]</span>
+
+
+<span class="s3">def </span><span class="s1">ordering_list(</span>
+    <span class="s1">attr: str</span><span class="s5">,</span>
+    <span class="s1">count_from: Optional[int] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">ordering_func: Optional[OrderingFunc] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">reorder_on_append: bool = </span><span class="s3">False</span><span class="s5">,</span>
+<span class="s1">) -&gt; Callable[[]</span><span class="s5">, </span><span class="s1">OrderingList]:</span>
+    <span class="s2">&quot;&quot;&quot;Prepares an :class:`OrderingList` factory for use in mapper definitions. 
+ 
+    Returns an object suitable for use as an argument to a Mapper 
+    relationship's ``collection_class`` option.  e.g.:: 
+ 
+        from sqlalchemy.ext.orderinglist import ordering_list 
+ 
+        class Slide(Base): 
+            __tablename__ = 'slide' 
+ 
+            id = Column(Integer, primary_key=True) 
+            name = Column(String) 
+ 
+            bullets = relationship(&quot;Bullet&quot;, order_by=&quot;Bullet.position&quot;, 
+                                    collection_class=ordering_list('position')) 
+ 
+    :param attr: 
+      Name of the mapped attribute to use for storage and retrieval of 
+      ordering information 
+ 
+    :param count_from: 
+      Set up an integer-based ordering, starting at ``count_from``.  For 
+      example, ``ordering_list('pos', count_from=1)`` would create a 1-based 
+      list in SQL, storing the value in the 'pos' column.  Ignored if 
+      ``ordering_func`` is supplied. 
+ 
+    Additional arguments are passed to the :class:`.OrderingList` constructor. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">kw = _unsugar_count_from(</span>
+        <span class="s1">count_from=count_from</span><span class="s5">,</span>
+        <span class="s1">ordering_func=ordering_func</span><span class="s5">,</span>
+        <span class="s1">reorder_on_append=reorder_on_append</span><span class="s5">,</span>
+    <span class="s1">)</span>
+    <span class="s3">return lambda</span><span class="s1">: OrderingList(attr</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+
+<span class="s0"># Ordering utility functions</span>
+
+
+<span class="s3">def </span><span class="s1">count_from_0(index</span><span class="s5">, </span><span class="s1">collection):</span>
+    <span class="s2">&quot;&quot;&quot;Numbering function: consecutive integers starting at 0.&quot;&quot;&quot;</span>
+
+    <span class="s3">return </span><span class="s1">index</span>
+
+
+<span class="s3">def </span><span class="s1">count_from_1(index</span><span class="s5">, </span><span class="s1">collection):</span>
+    <span class="s2">&quot;&quot;&quot;Numbering function: consecutive integers starting at 1.&quot;&quot;&quot;</span>
+
+    <span class="s3">return </span><span class="s1">index + </span><span class="s6">1</span>
+
+
+<span class="s3">def </span><span class="s1">count_from_n_factory(start):</span>
+    <span class="s2">&quot;&quot;&quot;Numbering function: consecutive integers starting at arbitrary start.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">f(index</span><span class="s5">, </span><span class="s1">collection):</span>
+        <span class="s3">return </span><span class="s1">index + start</span>
+
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">f.__name__ = </span><span class="s4">&quot;count_from_%i&quot; </span><span class="s1">% start</span>
+    <span class="s3">except </span><span class="s1">TypeError:</span>
+        <span class="s3">pass</span>
+    <span class="s3">return </span><span class="s1">f</span>
+
+
+<span class="s3">def </span><span class="s1">_unsugar_count_from(**kw):</span>
+    <span class="s2">&quot;&quot;&quot;Builds counting functions from keyword arguments. 
+ 
+    Keyword argument filter, prepares a simple ``ordering_func`` from a 
+    ``count_from`` argument, otherwise passes ``ordering_func`` on unchanged. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">count_from = kw.pop(</span><span class="s4">&quot;count_from&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+    <span class="s3">if </span><span class="s1">kw.get(</span><span class="s4">&quot;ordering_func&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">) </span><span class="s3">is None and </span><span class="s1">count_from </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">count_from == </span><span class="s6">0</span><span class="s1">:</span>
+            <span class="s1">kw[</span><span class="s4">&quot;ordering_func&quot;</span><span class="s1">] = count_from_0</span>
+        <span class="s3">elif </span><span class="s1">count_from == </span><span class="s6">1</span><span class="s1">:</span>
+            <span class="s1">kw[</span><span class="s4">&quot;ordering_func&quot;</span><span class="s1">] = count_from_1</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">kw[</span><span class="s4">&quot;ordering_func&quot;</span><span class="s1">] = count_from_n_factory(count_from)</span>
+    <span class="s3">return </span><span class="s1">kw</span>
+
+
+<span class="s3">class </span><span class="s1">OrderingList(List[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;A custom list that manages position information for its children. 
+ 
+    The :class:`.OrderingList` object is normally set up using the 
+    :func:`.ordering_list` factory function, used in conjunction with 
+    the :func:`_orm.relationship` function. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">ordering_attr: str</span>
+    <span class="s1">ordering_func: OrderingFunc</span>
+    <span class="s1">reorder_on_append: bool</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">ordering_attr: Optional[str] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">ordering_func: Optional[OrderingFunc] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">reorder_on_append: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;A custom list that manages position information for its children. 
+ 
+        ``OrderingList`` is a ``collection_class`` list implementation that 
+        syncs position in a Python list with a position attribute on the 
+        mapped objects. 
+ 
+        This implementation relies on the list starting in the proper order, 
+        so be **sure** to put an ``order_by`` on your relationship. 
+ 
+        :param ordering_attr: 
+          Name of the attribute that stores the object's order in the 
+          relationship. 
+ 
+        :param ordering_func: Optional.  A function that maps the position in 
+          the Python list to a value to store in the 
+          ``ordering_attr``.  Values returned are usually (but need not be!) 
+          integers. 
+ 
+          An ``ordering_func`` is called with two positional parameters: the 
+          index of the element in the list, and the list itself. 
+ 
+          If omitted, Python list indexes are used for the attribute values. 
+          Two basic pre-built numbering functions are provided in this module: 
+          ``count_from_0`` and ``count_from_1``.  For more exotic examples 
+          like stepped numbering, alphabetical and Fibonacci numbering, see 
+          the unit tests. 
+ 
+        :param reorder_on_append: 
+          Default False.  When appending an object with an existing (non-None) 
+          ordering value, that value will be left untouched unless 
+          ``reorder_on_append`` is true.  This is an optimization to avoid a 
+          variety of dangerous unexpected database writes. 
+ 
+          SQLAlchemy will add instances to the list via append() when your 
+          object loads.  If for some reason the result set from the database 
+          skips a step in the ordering (say, row '1' is missing but you get 
+          '2', '3', and '4'), reorder_on_append=True would immediately 
+          renumber the items to '1', '2', '3'.  If you have multiple sessions 
+          making changes, any of whom happen to load this collection even in 
+          passing, all of the sessions would try to &quot;clean up&quot; the numbering 
+          in their commits, possibly causing all but one to fail with a 
+          concurrent modification error. 
+ 
+          Recommend leaving this with the default of False, and just call 
+          ``reorder()`` if you're doing ``append()`` operations with 
+          previously ordered instances or when doing some housekeeping after 
+          manual sql operations. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.ordering_attr = ordering_attr</span>
+        <span class="s3">if </span><span class="s1">ordering_func </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">ordering_func = count_from_0</span>
+        <span class="s1">self.ordering_func = ordering_func</span>
+        <span class="s1">self.reorder_on_append = reorder_on_append</span>
+
+    <span class="s0"># More complex serialization schemes (multi column, e.g.) are possible by</span>
+    <span class="s0"># subclassing and reimplementing these two methods.</span>
+    <span class="s3">def </span><span class="s1">_get_order_value(self</span><span class="s5">, </span><span class="s1">entity):</span>
+        <span class="s3">return </span><span class="s1">getattr(entity</span><span class="s5">, </span><span class="s1">self.ordering_attr)</span>
+
+    <span class="s3">def </span><span class="s1">_set_order_value(self</span><span class="s5">, </span><span class="s1">entity</span><span class="s5">, </span><span class="s1">value):</span>
+        <span class="s1">setattr(entity</span><span class="s5">, </span><span class="s1">self.ordering_attr</span><span class="s5">, </span><span class="s1">value)</span>
+
+    <span class="s3">def </span><span class="s1">reorder(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Synchronize ordering for the entire collection. 
+ 
+        Sweeps through the list and ensures that each object has accurate 
+        ordering information set. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">for </span><span class="s1">index</span><span class="s5">, </span><span class="s1">entity </span><span class="s3">in </span><span class="s1">enumerate(self):</span>
+            <span class="s1">self._order_entity(index</span><span class="s5">, </span><span class="s1">entity</span><span class="s5">, </span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s0"># As of 0.5, _reorder is no longer semi-private</span>
+    <span class="s1">_reorder = reorder</span>
+
+    <span class="s3">def </span><span class="s1">_order_entity(self</span><span class="s5">, </span><span class="s1">index</span><span class="s5">, </span><span class="s1">entity</span><span class="s5">, </span><span class="s1">reorder=</span><span class="s3">True</span><span class="s1">):</span>
+        <span class="s1">have = self._get_order_value(entity)</span>
+
+        <span class="s0"># Don't disturb existing ordering if reorder is False</span>
+        <span class="s3">if </span><span class="s1">have </span><span class="s3">is not None and not </span><span class="s1">reorder:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">should_be = self.ordering_func(index</span><span class="s5">, </span><span class="s1">self)</span>
+        <span class="s3">if </span><span class="s1">have != should_be:</span>
+            <span class="s1">self._set_order_value(entity</span><span class="s5">, </span><span class="s1">should_be)</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s5">, </span><span class="s1">entity):</span>
+        <span class="s1">super().append(entity)</span>
+        <span class="s1">self._order_entity(len(self) - </span><span class="s6">1</span><span class="s5">, </span><span class="s1">entity</span><span class="s5">, </span><span class="s1">self.reorder_on_append)</span>
+
+    <span class="s3">def </span><span class="s1">_raw_append(self</span><span class="s5">, </span><span class="s1">entity):</span>
+        <span class="s2">&quot;&quot;&quot;Append without any ordering behavior.&quot;&quot;&quot;</span>
+
+        <span class="s1">super().append(entity)</span>
+
+    <span class="s1">_raw_append = collection.adds(</span><span class="s6">1</span><span class="s1">)(_raw_append)</span>
+
+    <span class="s3">def </span><span class="s1">insert(self</span><span class="s5">, </span><span class="s1">index</span><span class="s5">, </span><span class="s1">entity):</span>
+        <span class="s1">super().insert(index</span><span class="s5">, </span><span class="s1">entity)</span>
+        <span class="s1">self._reorder()</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">entity):</span>
+        <span class="s1">super().remove(entity)</span>
+
+        <span class="s1">adapter = collection_adapter(self)</span>
+        <span class="s3">if </span><span class="s1">adapter </span><span class="s3">and </span><span class="s1">adapter._referenced_by_owner:</span>
+            <span class="s1">self._reorder()</span>
+
+    <span class="s3">def </span><span class="s1">pop(self</span><span class="s5">, </span><span class="s1">index=-</span><span class="s6">1</span><span class="s1">):</span>
+        <span class="s1">entity = super().pop(index)</span>
+        <span class="s1">self._reorder()</span>
+        <span class="s3">return </span><span class="s1">entity</span>
+
+    <span class="s3">def </span><span class="s1">__setitem__(self</span><span class="s5">, </span><span class="s1">index</span><span class="s5">, </span><span class="s1">entity):</span>
+        <span class="s3">if </span><span class="s1">isinstance(index</span><span class="s5">, </span><span class="s1">slice):</span>
+            <span class="s1">step = index.step </span><span class="s3">or </span><span class="s6">1</span>
+            <span class="s1">start = index.start </span><span class="s3">or </span><span class="s6">0</span>
+            <span class="s3">if </span><span class="s1">start &lt; </span><span class="s6">0</span><span class="s1">:</span>
+                <span class="s1">start += len(self)</span>
+            <span class="s1">stop = index.stop </span><span class="s3">or </span><span class="s1">len(self)</span>
+            <span class="s3">if </span><span class="s1">stop &lt; </span><span class="s6">0</span><span class="s1">:</span>
+                <span class="s1">stop += len(self)</span>
+
+            <span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">range(start</span><span class="s5">, </span><span class="s1">stop</span><span class="s5">, </span><span class="s1">step):</span>
+                <span class="s1">self.__setitem__(i</span><span class="s5">, </span><span class="s1">entity[i])</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._order_entity(index</span><span class="s5">, </span><span class="s1">entity</span><span class="s5">, </span><span class="s3">True</span><span class="s1">)</span>
+            <span class="s1">super().__setitem__(index</span><span class="s5">, </span><span class="s1">entity)</span>
+
+    <span class="s3">def </span><span class="s1">__delitem__(self</span><span class="s5">, </span><span class="s1">index):</span>
+        <span class="s1">super().__delitem__(index)</span>
+        <span class="s1">self._reorder()</span>
+
+    <span class="s3">def </span><span class="s1">__setslice__(self</span><span class="s5">, </span><span class="s1">start</span><span class="s5">, </span><span class="s1">end</span><span class="s5">, </span><span class="s1">values):</span>
+        <span class="s1">super().__setslice__(start</span><span class="s5">, </span><span class="s1">end</span><span class="s5">, </span><span class="s1">values)</span>
+        <span class="s1">self._reorder()</span>
+
+    <span class="s3">def </span><span class="s1">__delslice__(self</span><span class="s5">, </span><span class="s1">start</span><span class="s5">, </span><span class="s1">end):</span>
+        <span class="s1">super().__delslice__(start</span><span class="s5">, </span><span class="s1">end)</span>
+        <span class="s1">self._reorder()</span>
+
+    <span class="s3">def </span><span class="s1">__reduce__(self):</span>
+        <span class="s3">return </span><span class="s1">_reconstitute</span><span class="s5">, </span><span class="s1">(self.__class__</span><span class="s5">, </span><span class="s1">self.__dict__</span><span class="s5">, </span><span class="s1">list(self))</span>
+
+    <span class="s3">for </span><span class="s1">func_name</span><span class="s5">, </span><span class="s1">func </span><span class="s3">in </span><span class="s1">list(locals().items()):</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">callable(func)</span>
+            <span class="s3">and </span><span class="s1">func.__name__ == func_name</span>
+            <span class="s3">and not </span><span class="s1">func.__doc__</span>
+            <span class="s3">and </span><span class="s1">hasattr(list</span><span class="s5">, </span><span class="s1">func_name)</span>
+        <span class="s1">):</span>
+            <span class="s1">func.__doc__ = getattr(list</span><span class="s5">, </span><span class="s1">func_name).__doc__</span>
+    <span class="s3">del </span><span class="s1">func_name</span><span class="s5">, </span><span class="s1">func</span>
+
+
+<span class="s3">def </span><span class="s1">_reconstitute(cls</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">items):</span>
+    <span class="s2">&quot;&quot;&quot;Reconstitute an :class:`.OrderingList`. 
+ 
+    This is the adjoint to :meth:`.OrderingList.__reduce__`.  It is used for 
+    unpickling :class:`.OrderingList` objects. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">obj = cls.__new__(cls)</span>
+    <span class="s1">obj.__dict__.update(dict_)</span>
+    <span class="s1">list.extend(obj</span><span class="s5">, </span><span class="s1">items)</span>
+    <span class="s3">return </span><span class="s1">obj</span>
+</pre>
+</body>
+</html>

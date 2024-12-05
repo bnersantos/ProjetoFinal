@@ -1,0 +1,795 @@
+<html>
+<head>
+<title>psycopg.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+.s6 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+psycopg.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/psycopg.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">r&quot;&quot;&quot; 
+.. dialect:: postgresql+psycopg 
+    :name: psycopg (a.k.a. psycopg 3) 
+    :dbapi: psycopg 
+    :connectstring: postgresql+psycopg://user:password@host:port/dbname[?key=value&amp;key=value...] 
+    :url: https://pypi.org/project/psycopg/ 
+ 
+``psycopg`` is the package and module name for version 3 of the ``psycopg`` 
+database driver, formerly known as ``psycopg2``.  This driver is different 
+enough from its ``psycopg2`` predecessor that SQLAlchemy supports it 
+via a totally separate dialect; support for ``psycopg2`` is expected to remain 
+for as long as that package continues to function for modern Python versions, 
+and also remains the default dialect for the ``postgresql://`` dialect 
+series. 
+ 
+The SQLAlchemy ``psycopg`` dialect provides both a sync and an async 
+implementation under the same dialect name. The proper version is 
+selected depending on how the engine is created: 
+ 
+* calling :func:`_sa.create_engine` with ``postgresql+psycopg://...`` will 
+  automatically select the sync version, e.g.:: 
+ 
+    from sqlalchemy import create_engine 
+    sync_engine = create_engine(&quot;postgresql+psycopg://scott:tiger@localhost/test&quot;) 
+ 
+* calling :func:`_asyncio.create_async_engine` with 
+  ``postgresql+psycopg://...`` will automatically select the async version, 
+  e.g.:: 
+ 
+    from sqlalchemy.ext.asyncio import create_async_engine 
+    asyncio_engine = create_async_engine(&quot;postgresql+psycopg://scott:tiger@localhost/test&quot;) 
+ 
+The asyncio version of the dialect may also be specified explicitly using the 
+``psycopg_async`` suffix, as:: 
+ 
+    from sqlalchemy.ext.asyncio import create_async_engine 
+    asyncio_engine = create_async_engine(&quot;postgresql+psycopg_async://scott:tiger@localhost/test&quot;) 
+ 
+.. seealso:: 
+ 
+    :ref:`postgresql_psycopg2` - The SQLAlchemy ``psycopg`` 
+    dialect shares most of its behavior with the ``psycopg2`` dialect. 
+    Further documentation is available there. 
+ 
+Using a different Cursor class 
+------------------------------ 
+ 
+One of the differences between ``psycopg`` and the older ``psycopg2`` 
+is how bound parameters are handled: ``psycopg2`` would bind them 
+client side, while ``psycopg`` by default will bind them server side. 
+ 
+It's possible to configure ``psycopg`` to do client side binding by 
+specifying the ``cursor_factory`` to be ``ClientCursor`` when creating 
+the engine:: 
+ 
+    from psycopg import ClientCursor 
+ 
+    client_side_engine = create_engine( 
+        &quot;postgresql+psycopg://...&quot;, 
+        connect_args={&quot;cursor_factory&quot;: ClientCursor}, 
+    ) 
+ 
+Similarly when using an async engine the ``AsyncClientCursor`` can be 
+specified:: 
+ 
+    from psycopg import AsyncClientCursor 
+ 
+    client_side_engine = create_async_engine( 
+        &quot;postgresql+psycopg://...&quot;, 
+        connect_args={&quot;cursor_factory&quot;: AsyncClientCursor}, 
+    ) 
+ 
+.. seealso:: 
+ 
+    `Client-side-binding cursors &lt;https://www.psycopg.org/psycopg3/docs/advanced/cursors.html#client-side-binding-cursors&gt;`_ 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">collections </span><span class="s3">import </span><span class="s1">deque</span>
+<span class="s3">import </span><span class="s1">logging</span>
+<span class="s3">import </span><span class="s1">re</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">ranges</span>
+<span class="s3">from </span><span class="s1">._psycopg_common </span><span class="s3">import </span><span class="s1">_PGDialect_common_psycopg</span>
+<span class="s3">from </span><span class="s1">._psycopg_common </span><span class="s3">import </span><span class="s1">_PGExecutionContext_common_psycopg</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">INTERVAL</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGCompiler</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGIdentifierPreparer</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">REGCONFIG</span>
+<span class="s3">from </span><span class="s1">.json </span><span class="s3">import </span><span class="s1">JSON</span>
+<span class="s3">from </span><span class="s1">.json </span><span class="s3">import </span><span class="s1">JSONB</span>
+<span class="s3">from </span><span class="s1">.json </span><span class="s3">import </span><span class="s1">JSONPathType</span>
+<span class="s3">from </span><span class="s1">.types </span><span class="s3">import </span><span class="s1">CITEXT</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">pool</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">AdaptedConnection</span>
+<span class="s3">from </span><span class="s1">...sql </span><span class="s3">import </span><span class="s1">sqltypes</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">await_fallback</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">await_only</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+
+    <span class="s3">from </span><span class="s1">psycopg </span><span class="s3">import </span><span class="s1">AsyncConnection</span>
+
+<span class="s1">logger = logging.getLogger(</span><span class="s2">&quot;sqlalchemy.dialects.postgresql&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_PGString(sqltypes.String):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGREGCONFIG(REGCONFIG):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSON(JSON):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s3">return </span><span class="s1">self._make_bind_processor(</span><span class="s3">None</span><span class="s4">, </span><span class="s1">dialect._psycopg_Json)</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSONB(JSONB):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s3">return </span><span class="s1">self._make_bind_processor(</span><span class="s3">None</span><span class="s4">, </span><span class="s1">dialect._psycopg_Jsonb)</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSONIntIndexType(sqltypes.JSON.JSONIntIndexType):</span>
+    <span class="s1">__visit_name__ = </span><span class="s2">&quot;json_int_index&quot;</span>
+
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSONStrIndexType(sqltypes.JSON.JSONStrIndexType):</span>
+    <span class="s1">__visit_name__ = </span><span class="s2">&quot;json_str_index&quot;</span>
+
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGJSONPathType(JSONPathType):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">_PGInterval(INTERVAL):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGTimeStamp(sqltypes.DateTime):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGDate(sqltypes.Date):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGTime(sqltypes.Time):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGInteger(sqltypes.Integer):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGSmallInteger(sqltypes.SmallInteger):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGNullType(sqltypes.NullType):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGBigInteger(sqltypes.BigInteger):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PGBoolean(sqltypes.Boolean):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_PsycopgRange(ranges.AbstractSingleRangeImpl):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s1">psycopg_Range = cast(PGDialect_psycopg</span><span class="s4">, </span><span class="s1">dialect)._psycopg_Range</span>
+
+        <span class="s3">def </span><span class="s1">to_range(value):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">ranges.Range):</span>
+                <span class="s1">value = psycopg_Range(</span>
+                    <span class="s1">value.lower</span><span class="s4">, </span><span class="s1">value.upper</span><span class="s4">, </span><span class="s1">value.bounds</span><span class="s4">, </span><span class="s1">value.empty</span>
+                <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">to_range</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">def </span><span class="s1">to_range(value):</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">value = ranges.Range(</span>
+                    <span class="s1">value._lower</span><span class="s4">,</span>
+                    <span class="s1">value._upper</span><span class="s4">,</span>
+                    <span class="s1">bounds=value._bounds </span><span class="s3">if </span><span class="s1">value._bounds </span><span class="s3">else </span><span class="s2">&quot;[)&quot;</span><span class="s4">,</span>
+                    <span class="s1">empty=</span><span class="s3">not </span><span class="s1">value._bounds</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">to_range</span>
+
+
+<span class="s3">class </span><span class="s1">_PsycopgMultiRange(ranges.AbstractMultiRangeImpl):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s1">psycopg_Range = cast(PGDialect_psycopg</span><span class="s4">, </span><span class="s1">dialect)._psycopg_Range</span>
+        <span class="s1">psycopg_Multirange = cast(</span>
+            <span class="s1">PGDialect_psycopg</span><span class="s4">, </span><span class="s1">dialect</span>
+        <span class="s1">)._psycopg_Multirange</span>
+
+        <span class="s1">NoneType = type(</span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">to_range(value):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">(str</span><span class="s4">, </span><span class="s1">NoneType</span><span class="s4">, </span><span class="s1">psycopg_Multirange)):</span>
+                <span class="s3">return </span><span class="s1">value</span>
+
+            <span class="s3">return </span><span class="s1">psycopg_Multirange(</span>
+                <span class="s1">[</span>
+                    <span class="s1">psycopg_Range(</span>
+                        <span class="s1">element.lower</span><span class="s4">,</span>
+                        <span class="s1">element.upper</span><span class="s4">,</span>
+                        <span class="s1">element.bounds</span><span class="s4">,</span>
+                        <span class="s1">element.empty</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">element </span><span class="s3">in </span><span class="s1">cast(</span><span class="s2">&quot;Iterable[ranges.Range]&quot;</span><span class="s4">, </span><span class="s1">value)</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">to_range</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">def </span><span class="s1">to_range(value):</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">ranges.MultiRange(</span>
+                    <span class="s1">ranges.Range(</span>
+                        <span class="s1">elem._lower</span><span class="s4">,</span>
+                        <span class="s1">elem._upper</span><span class="s4">,</span>
+                        <span class="s1">bounds=elem._bounds </span><span class="s3">if </span><span class="s1">elem._bounds </span><span class="s3">else </span><span class="s2">&quot;[)&quot;</span><span class="s4">,</span>
+                        <span class="s1">empty=</span><span class="s3">not </span><span class="s1">elem._bounds</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">value</span>
+                <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">to_range</span>
+
+
+<span class="s3">class </span><span class="s1">PGExecutionContext_psycopg(_PGExecutionContext_common_psycopg):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">PGCompiler_psycopg(PGCompiler):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">PGIdentifierPreparer_psycopg(PGIdentifierPreparer):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">def </span><span class="s1">_log_notices(diagnostic):</span>
+    <span class="s1">logger.info(</span><span class="s2">&quot;%s: %s&quot;</span><span class="s4">, </span><span class="s1">diagnostic.severity</span><span class="s4">, </span><span class="s1">diagnostic.message_primary)</span>
+
+
+<span class="s3">class </span><span class="s1">PGDialect_psycopg(_PGDialect_common_psycopg):</span>
+    <span class="s1">driver = </span><span class="s2">&quot;psycopg&quot;</span>
+
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+    <span class="s1">supports_server_side_cursors = </span><span class="s3">True</span>
+    <span class="s1">default_paramstyle = </span><span class="s2">&quot;pyformat&quot;</span>
+    <span class="s1">supports_sane_multi_rowcount = </span><span class="s3">True</span>
+
+    <span class="s1">execution_ctx_cls = PGExecutionContext_psycopg</span>
+    <span class="s1">statement_compiler = PGCompiler_psycopg</span>
+    <span class="s1">preparer = PGIdentifierPreparer_psycopg</span>
+    <span class="s1">psycopg_version = (</span><span class="s5">0</span><span class="s4">, </span><span class="s5">0</span><span class="s1">)</span>
+
+    <span class="s1">_has_native_hstore = </span><span class="s3">True</span>
+    <span class="s1">_psycopg_adapters_map = </span><span class="s3">None</span>
+
+    <span class="s1">colspecs = util.update_copy(</span>
+        <span class="s1">_PGDialect_common_psycopg.colspecs</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s1">sqltypes.String: _PGString</span><span class="s4">,</span>
+            <span class="s1">REGCONFIG: _PGREGCONFIG</span><span class="s4">,</span>
+            <span class="s1">JSON: _PGJSON</span><span class="s4">,</span>
+            <span class="s1">CITEXT: CITEXT</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON: _PGJSON</span><span class="s4">,</span>
+            <span class="s1">JSONB: _PGJSONB</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONPathType: _PGJSONPathType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONIntIndexType: _PGJSONIntIndexType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONStrIndexType: _PGJSONStrIndexType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Interval: _PGInterval</span><span class="s4">,</span>
+            <span class="s1">INTERVAL: _PGInterval</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Date: _PGDate</span><span class="s4">,</span>
+            <span class="s1">sqltypes.DateTime: _PGTimeStamp</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Time: _PGTime</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Integer: _PGInteger</span><span class="s4">,</span>
+            <span class="s1">sqltypes.SmallInteger: _PGSmallInteger</span><span class="s4">,</span>
+            <span class="s1">sqltypes.BigInteger: _PGBigInteger</span><span class="s4">,</span>
+            <span class="s1">ranges.AbstractSingleRange: _PsycopgRange</span><span class="s4">,</span>
+            <span class="s1">ranges.AbstractMultiRange: _PsycopgMultiRange</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">super().__init__(**kwargs)</span>
+
+        <span class="s3">if </span><span class="s1">self.dbapi:</span>
+            <span class="s1">m = re.match(</span><span class="s2">r&quot;(\d+)\.(\d+)(?:\.(\d+))?&quot;</span><span class="s4">, </span><span class="s1">self.dbapi.__version__)</span>
+            <span class="s3">if </span><span class="s1">m:</span>
+                <span class="s1">self.psycopg_version = tuple(</span>
+                    <span class="s1">int(x) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">m.group(</span><span class="s5">1</span><span class="s4">, </span><span class="s5">2</span><span class="s4">, </span><span class="s5">3</span><span class="s1">) </span><span class="s3">if </span><span class="s1">x </span><span class="s3">is not None</span>
+                <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">self.psycopg_version &lt; (</span><span class="s5">3</span><span class="s4">, </span><span class="s5">0</span><span class="s4">, </span><span class="s5">2</span><span class="s1">):</span>
+                <span class="s3">raise </span><span class="s1">ImportError(</span>
+                    <span class="s2">&quot;psycopg version 3.0.2 or higher is required.&quot;</span>
+                <span class="s1">)</span>
+
+            <span class="s3">from </span><span class="s1">psycopg.adapt </span><span class="s3">import </span><span class="s1">AdaptersMap</span>
+
+            <span class="s1">self._psycopg_adapters_map = adapters_map = AdaptersMap(</span>
+                <span class="s1">self.dbapi.adapters</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">self._native_inet_types </span><span class="s3">is False</span><span class="s1">:</span>
+                <span class="s3">import </span><span class="s1">psycopg.types.string</span>
+
+                <span class="s1">adapters_map.register_loader(</span>
+                    <span class="s2">&quot;inet&quot;</span><span class="s4">, </span><span class="s1">psycopg.types.string.TextLoader</span>
+                <span class="s1">)</span>
+                <span class="s1">adapters_map.register_loader(</span>
+                    <span class="s2">&quot;cidr&quot;</span><span class="s4">, </span><span class="s1">psycopg.types.string.TextLoader</span>
+                <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">self._json_deserializer:</span>
+                <span class="s3">from </span><span class="s1">psycopg.types.json </span><span class="s3">import </span><span class="s1">set_json_loads</span>
+
+                <span class="s1">set_json_loads(self._json_deserializer</span><span class="s4">, </span><span class="s1">adapters_map)</span>
+
+            <span class="s3">if </span><span class="s1">self._json_serializer:</span>
+                <span class="s3">from </span><span class="s1">psycopg.types.json </span><span class="s3">import </span><span class="s1">set_json_dumps</span>
+
+                <span class="s1">set_json_dumps(self._json_serializer</span><span class="s4">, </span><span class="s1">adapters_map)</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s0"># see https://github.com/psycopg/psycopg/issues/83</span>
+        <span class="s1">cargs</span><span class="s4">, </span><span class="s1">cparams = super().create_connect_args(url)</span>
+
+        <span class="s3">if </span><span class="s1">self._psycopg_adapters_map:</span>
+            <span class="s1">cparams[</span><span class="s2">&quot;context&quot;</span><span class="s1">] = self._psycopg_adapters_map</span>
+        <span class="s3">if </span><span class="s1">self.client_encoding </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">cparams[</span><span class="s2">&quot;client_encoding&quot;</span><span class="s1">] = self.client_encoding</span>
+        <span class="s3">return </span><span class="s1">cargs</span><span class="s4">, </span><span class="s1">cparams</span>
+
+    <span class="s3">def </span><span class="s1">_type_info_fetch(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">name):</span>
+        <span class="s3">from </span><span class="s1">psycopg.types </span><span class="s3">import </span><span class="s1">TypeInfo</span>
+
+        <span class="s3">return </span><span class="s1">TypeInfo.fetch(connection.connection.driver_connection</span><span class="s4">, </span><span class="s1">name)</span>
+
+    <span class="s3">def </span><span class="s1">initialize(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s1">super().initialize(connection)</span>
+
+        <span class="s0"># PGDialect.initialize() checks server version for &lt;= 8.2 and sets</span>
+        <span class="s0"># this flag to False if so</span>
+        <span class="s3">if not </span><span class="s1">self.insert_returning:</span>
+            <span class="s1">self.insert_executemany_returning = </span><span class="s3">False</span>
+
+        <span class="s0"># HSTORE can't be registered until we have a connection so that</span>
+        <span class="s0"># we can look up its OID, so we set up this adapter in</span>
+        <span class="s0"># initialize()</span>
+        <span class="s3">if </span><span class="s1">self.use_native_hstore:</span>
+            <span class="s1">info = self._type_info_fetch(connection</span><span class="s4">, </span><span class="s2">&quot;hstore&quot;</span><span class="s1">)</span>
+            <span class="s1">self._has_native_hstore = info </span><span class="s3">is not None</span>
+            <span class="s3">if </span><span class="s1">self._has_native_hstore:</span>
+                <span class="s3">from </span><span class="s1">psycopg.types.hstore </span><span class="s3">import </span><span class="s1">register_hstore</span>
+
+                <span class="s0"># register the adapter for connections made subsequent to</span>
+                <span class="s0"># this one</span>
+                <span class="s1">register_hstore(info</span><span class="s4">, </span><span class="s1">self._psycopg_adapters_map)</span>
+
+                <span class="s0"># register the adapter for this connection</span>
+                <span class="s1">register_hstore(info</span><span class="s4">, </span><span class="s1">connection.connection)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">import </span><span class="s1">psycopg</span>
+
+        <span class="s3">return </span><span class="s1">psycopg</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_async_dialect_cls(cls</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s3">return </span><span class="s1">PGDialectAsync_psycopg</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_isolation_lookup(self):</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s2">&quot;READ COMMITTED&quot;</span><span class="s1">: self.dbapi.IsolationLevel.READ_COMMITTED</span><span class="s4">,</span>
+            <span class="s2">&quot;READ UNCOMMITTED&quot;</span><span class="s1">: self.dbapi.IsolationLevel.READ_UNCOMMITTED</span><span class="s4">,</span>
+            <span class="s2">&quot;REPEATABLE READ&quot;</span><span class="s1">: self.dbapi.IsolationLevel.REPEATABLE_READ</span><span class="s4">,</span>
+            <span class="s2">&quot;SERIALIZABLE&quot;</span><span class="s1">: self.dbapi.IsolationLevel.SERIALIZABLE</span><span class="s4">,</span>
+        <span class="s1">}</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_psycopg_Json(self):</span>
+        <span class="s3">from </span><span class="s1">psycopg.types </span><span class="s3">import </span><span class="s1">json</span>
+
+        <span class="s3">return </span><span class="s1">json.Json</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_psycopg_Jsonb(self):</span>
+        <span class="s3">from </span><span class="s1">psycopg.types </span><span class="s3">import </span><span class="s1">json</span>
+
+        <span class="s3">return </span><span class="s1">json.Jsonb</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_psycopg_TransactionStatus(self):</span>
+        <span class="s3">from </span><span class="s1">psycopg.pq </span><span class="s3">import </span><span class="s1">TransactionStatus</span>
+
+        <span class="s3">return </span><span class="s1">TransactionStatus</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_psycopg_Range(self):</span>
+        <span class="s3">from </span><span class="s1">psycopg.types.range </span><span class="s3">import </span><span class="s1">Range</span>
+
+        <span class="s3">return </span><span class="s1">Range</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_psycopg_Multirange(self):</span>
+        <span class="s3">from </span><span class="s1">psycopg.types.multirange </span><span class="s3">import </span><span class="s1">Multirange</span>
+
+        <span class="s3">return </span><span class="s1">Multirange</span>
+
+    <span class="s3">def </span><span class="s1">_do_isolation_level(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">autocommit</span><span class="s4">, </span><span class="s1">isolation_level):</span>
+        <span class="s1">connection.autocommit = autocommit</span>
+        <span class="s1">connection.isolation_level = isolation_level</span>
+
+    <span class="s3">def </span><span class="s1">get_isolation_level(self</span><span class="s4">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s1">status_before = dbapi_connection.info.transaction_status</span>
+        <span class="s1">value = super().get_isolation_level(dbapi_connection)</span>
+
+        <span class="s0"># don't rely on psycopg providing enum symbols, compare with</span>
+        <span class="s0"># eq/ne</span>
+        <span class="s3">if </span><span class="s1">status_before == self._psycopg_TransactionStatus.IDLE:</span>
+            <span class="s1">dbapi_connection.rollback()</span>
+        <span class="s3">return </span><span class="s1">value</span>
+
+    <span class="s3">def </span><span class="s1">set_isolation_level(self</span><span class="s4">, </span><span class="s1">dbapi_connection</span><span class="s4">, </span><span class="s1">level):</span>
+        <span class="s3">if </span><span class="s1">level == </span><span class="s2">&quot;AUTOCOMMIT&quot;</span><span class="s1">:</span>
+            <span class="s1">self._do_isolation_level(</span>
+                <span class="s1">dbapi_connection</span><span class="s4">, </span><span class="s1">autocommit=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">isolation_level=</span><span class="s3">None</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._do_isolation_level(</span>
+                <span class="s1">dbapi_connection</span><span class="s4">,</span>
+                <span class="s1">autocommit=</span><span class="s3">False</span><span class="s4">,</span>
+                <span class="s1">isolation_level=self._isolation_lookup[level]</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">set_readonly(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">connection.read_only = value</span>
+
+    <span class="s3">def </span><span class="s1">get_readonly(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection.read_only</span>
+
+    <span class="s3">def </span><span class="s1">on_connect(self):</span>
+        <span class="s3">def </span><span class="s1">notices(conn):</span>
+            <span class="s1">conn.add_notice_handler(_log_notices)</span>
+
+        <span class="s1">fns = [notices]</span>
+
+        <span class="s3">if </span><span class="s1">self.isolation_level </span><span class="s3">is not None</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">on_connect(conn):</span>
+                <span class="s1">self.set_isolation_level(conn</span><span class="s4">, </span><span class="s1">self.isolation_level)</span>
+
+            <span class="s1">fns.append(on_connect)</span>
+
+        <span class="s0"># fns always has the notices function</span>
+        <span class="s3">def </span><span class="s1">on_connect(conn):</span>
+            <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">fns:</span>
+                <span class="s1">fn(conn)</span>
+
+        <span class="s3">return </span><span class="s1">on_connect</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s4">, </span><span class="s1">e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+        <span class="s3">if </span><span class="s1">isinstance(e</span><span class="s4">, </span><span class="s1">self.dbapi.Error) </span><span class="s3">and </span><span class="s1">connection </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">connection.closed </span><span class="s3">or </span><span class="s1">connection.broken:</span>
+                <span class="s3">return True</span>
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">_do_prepared_twophase(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">command</span><span class="s4">, </span><span class="s1">recover=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s1">dbapi_conn = connection.connection.dbapi_connection</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">recover</span>
+            <span class="s0"># don't rely on psycopg providing enum symbols, compare with</span>
+            <span class="s0"># eq/ne</span>
+            <span class="s3">or </span><span class="s1">dbapi_conn.info.transaction_status</span>
+            <span class="s1">!= self._psycopg_TransactionStatus.IDLE</span>
+        <span class="s1">):</span>
+            <span class="s1">dbapi_conn.rollback()</span>
+        <span class="s1">before_autocommit = dbapi_conn.autocommit</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">if not </span><span class="s1">before_autocommit:</span>
+                <span class="s1">self._do_autocommit(dbapi_conn</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)</span>
+            <span class="s1">dbapi_conn.execute(command)</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s3">if not </span><span class="s1">before_autocommit:</span>
+                <span class="s1">self._do_autocommit(dbapi_conn</span><span class="s4">, </span><span class="s1">before_autocommit)</span>
+
+    <span class="s3">def </span><span class="s1">do_rollback_twophase(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">xid</span><span class="s4">, </span><span class="s1">is_prepared=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">recover=</span><span class="s3">False</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">is_prepared:</span>
+            <span class="s1">self._do_prepared_twophase(</span>
+                <span class="s1">connection</span><span class="s4">, </span><span class="s2">f&quot;ROLLBACK PREPARED '</span><span class="s6">{</span><span class="s1">xid</span><span class="s6">}</span><span class="s2">'&quot;</span><span class="s4">, </span><span class="s1">recover=recover</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.do_rollback(connection.connection)</span>
+
+    <span class="s3">def </span><span class="s1">do_commit_twophase(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">xid</span><span class="s4">, </span><span class="s1">is_prepared=</span><span class="s3">True</span><span class="s4">, </span><span class="s1">recover=</span><span class="s3">False</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">is_prepared:</span>
+            <span class="s1">self._do_prepared_twophase(</span>
+                <span class="s1">connection</span><span class="s4">, </span><span class="s2">f&quot;COMMIT PREPARED '</span><span class="s6">{</span><span class="s1">xid</span><span class="s6">}</span><span class="s2">'&quot;</span><span class="s4">, </span><span class="s1">recover=recover</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.do_commit(connection.connection)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_dialect_specific_select_one(self):</span>
+        <span class="s3">return </span><span class="s2">&quot;;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_psycopg_cursor:</span>
+    <span class="s1">__slots__ = (</span><span class="s2">&quot;_cursor&quot;</span><span class="s4">, </span><span class="s2">&quot;await_&quot;</span><span class="s4">, </span><span class="s2">&quot;_rows&quot;</span><span class="s1">)</span>
+
+    <span class="s1">_psycopg_ExecStatus = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">cursor</span><span class="s4">, </span><span class="s1">await_) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._cursor = cursor</span>
+        <span class="s1">self.await_ = await_</span>
+        <span class="s1">self._rows = deque()</span>
+
+    <span class="s3">def </span><span class="s1">__getattr__(self</span><span class="s4">, </span><span class="s1">name):</span>
+        <span class="s3">return </span><span class="s1">getattr(self._cursor</span><span class="s4">, </span><span class="s1">name)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">arraysize(self):</span>
+        <span class="s3">return </span><span class="s1">self._cursor.arraysize</span>
+
+    <span class="s1">@arraysize.setter</span>
+    <span class="s3">def </span><span class="s1">arraysize(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">self._cursor.arraysize = value</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s1">self._rows.clear()</span>
+        <span class="s0"># Normal cursor just call _close() in a non-sync way.</span>
+        <span class="s1">self._cursor._close()</span>
+
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">query</span><span class="s4">, </span><span class="s1">params=</span><span class="s3">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">result = self.await_(self._cursor.execute(query</span><span class="s4">, </span><span class="s1">params</span><span class="s4">, </span><span class="s1">**kw))</span>
+        <span class="s0"># sqlalchemy result is not async, so need to pull all rows here</span>
+        <span class="s1">res = self._cursor.pgresult</span>
+
+        <span class="s0"># don't rely on psycopg providing enum symbols, compare with</span>
+        <span class="s0"># eq/ne</span>
+        <span class="s3">if </span><span class="s1">res </span><span class="s3">and </span><span class="s1">res.status == self._psycopg_ExecStatus.TUPLES_OK:</span>
+            <span class="s1">rows = self.await_(self._cursor.fetchall())</span>
+            <span class="s1">self._rows = deque(rows)</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">executemany(self</span><span class="s4">, </span><span class="s1">query</span><span class="s4">, </span><span class="s1">params_seq):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.executemany(query</span><span class="s4">, </span><span class="s1">params_seq))</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self):</span>
+        <span class="s3">while </span><span class="s1">self._rows:</span>
+            <span class="s3">yield </span><span class="s1">self._rows.popleft()</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self):</span>
+        <span class="s3">if </span><span class="s1">self._rows:</span>
+            <span class="s3">return </span><span class="s1">self._rows.popleft()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s4">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">size </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">size = self._cursor.arraysize</span>
+
+        <span class="s1">rr = self._rows</span>
+        <span class="s3">return </span><span class="s1">[rr.popleft() </span><span class="s3">for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">range(min(size</span><span class="s4">, </span><span class="s1">len(rr)))]</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self):</span>
+        <span class="s1">retval = list(self._rows)</span>
+        <span class="s1">self._rows.clear()</span>
+        <span class="s3">return </span><span class="s1">retval</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_psycopg_ss_cursor(AsyncAdapt_psycopg_cursor):</span>
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">query</span><span class="s4">, </span><span class="s1">params=</span><span class="s3">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">self.await_(self._cursor.execute(query</span><span class="s4">, </span><span class="s1">params</span><span class="s4">, </span><span class="s1">**kw))</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s1">self.await_(self._cursor.close())</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.fetchone())</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s4">, </span><span class="s1">size=</span><span class="s5">0</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.fetchmany(size))</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self):</span>
+        <span class="s3">return </span><span class="s1">self.await_(self._cursor.fetchall())</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self):</span>
+        <span class="s1">iterator = self._cursor.__aiter__()</span>
+        <span class="s3">while True</span><span class="s1">:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s3">yield </span><span class="s1">self.await_(iterator.__anext__())</span>
+            <span class="s3">except </span><span class="s1">StopAsyncIteration:</span>
+                <span class="s3">break</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_psycopg_connection(AdaptedConnection):</span>
+    <span class="s1">_connection: AsyncConnection</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">await_ = staticmethod(await_only)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">connection) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._connection = connection</span>
+
+    <span class="s3">def </span><span class="s1">__getattr__(self</span><span class="s4">, </span><span class="s1">name):</span>
+        <span class="s3">return </span><span class="s1">getattr(self._connection</span><span class="s4">, </span><span class="s1">name)</span>
+
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">query</span><span class="s4">, </span><span class="s1">params=</span><span class="s3">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">cursor = self.await_(self._connection.execute(query</span><span class="s4">, </span><span class="s1">params</span><span class="s4">, </span><span class="s1">**kw))</span>
+        <span class="s3">return </span><span class="s1">AsyncAdapt_psycopg_cursor(cursor</span><span class="s4">, </span><span class="s1">self.await_)</span>
+
+    <span class="s3">def </span><span class="s1">cursor(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">cursor = self._connection.cursor(*args</span><span class="s4">, </span><span class="s1">**kw)</span>
+        <span class="s3">if </span><span class="s1">hasattr(cursor</span><span class="s4">, </span><span class="s2">&quot;name&quot;</span><span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_psycopg_ss_cursor(cursor</span><span class="s4">, </span><span class="s1">self.await_)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_psycopg_cursor(cursor</span><span class="s4">, </span><span class="s1">self.await_)</span>
+
+    <span class="s3">def </span><span class="s1">commit(self):</span>
+        <span class="s1">self.await_(self._connection.commit())</span>
+
+    <span class="s3">def </span><span class="s1">rollback(self):</span>
+        <span class="s1">self.await_(self._connection.rollback())</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s1">self.await_(self._connection.close())</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">autocommit(self):</span>
+        <span class="s3">return </span><span class="s1">self._connection.autocommit</span>
+
+    <span class="s1">@autocommit.setter</span>
+    <span class="s3">def </span><span class="s1">autocommit(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">self.set_autocommit(value)</span>
+
+    <span class="s3">def </span><span class="s1">set_autocommit(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">self.await_(self._connection.set_autocommit(value))</span>
+
+    <span class="s3">def </span><span class="s1">set_isolation_level(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">self.await_(self._connection.set_isolation_level(value))</span>
+
+    <span class="s3">def </span><span class="s1">set_read_only(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">self.await_(self._connection.set_read_only(value))</span>
+
+    <span class="s3">def </span><span class="s1">set_deferrable(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">self.await_(self._connection.set_deferrable(value))</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdaptFallback_psycopg_connection(AsyncAdapt_psycopg_connection):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">await_ = staticmethod(await_fallback)</span>
+
+
+<span class="s3">class </span><span class="s1">PsycopgAdaptDBAPI:</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">psycopg) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.psycopg = psycopg</span>
+
+        <span class="s3">for </span><span class="s1">k</span><span class="s4">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">self.psycopg.__dict__.items():</span>
+            <span class="s3">if </span><span class="s1">k != </span><span class="s2">&quot;connect&quot;</span><span class="s1">:</span>
+                <span class="s1">self.__dict__[k] = v</span>
+
+    <span class="s3">def </span><span class="s1">connect(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">async_fallback = kw.pop(</span><span class="s2">&quot;async_fallback&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">creator_fn = kw.pop(</span>
+            <span class="s2">&quot;async_creator_fn&quot;</span><span class="s4">, </span><span class="s1">self.psycopg.AsyncConnection.connect</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">util.asbool(async_fallback):</span>
+            <span class="s3">return </span><span class="s1">AsyncAdaptFallback_psycopg_connection(</span>
+                <span class="s1">await_fallback(creator_fn(*arg</span><span class="s4">, </span><span class="s1">**kw))</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_psycopg_connection(</span>
+                <span class="s1">await_only(creator_fn(*arg</span><span class="s4">, </span><span class="s1">**kw))</span>
+            <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">PGDialectAsync_psycopg(PGDialect_psycopg):</span>
+    <span class="s1">is_async = </span><span class="s3">True</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">import </span><span class="s1">psycopg</span>
+        <span class="s3">from </span><span class="s1">psycopg.pq </span><span class="s3">import </span><span class="s1">ExecStatus</span>
+
+        <span class="s1">AsyncAdapt_psycopg_cursor._psycopg_ExecStatus = ExecStatus</span>
+
+        <span class="s3">return </span><span class="s1">PsycopgAdaptDBAPI(psycopg)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_pool_class(cls</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s1">async_fallback = url.query.get(</span><span class="s2">&quot;async_fallback&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">util.asbool(async_fallback):</span>
+            <span class="s3">return </span><span class="s1">pool.FallbackAsyncAdaptedQueuePool</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">pool.AsyncAdaptedQueuePool</span>
+
+    <span class="s3">def </span><span class="s1">_type_info_fetch(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">name):</span>
+        <span class="s3">from </span><span class="s1">psycopg.types </span><span class="s3">import </span><span class="s1">TypeInfo</span>
+
+        <span class="s1">adapted = connection.connection</span>
+        <span class="s3">return </span><span class="s1">adapted.await_(TypeInfo.fetch(adapted.driver_connection</span><span class="s4">, </span><span class="s1">name))</span>
+
+    <span class="s3">def </span><span class="s1">_do_isolation_level(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">autocommit</span><span class="s4">, </span><span class="s1">isolation_level):</span>
+        <span class="s1">connection.set_autocommit(autocommit)</span>
+        <span class="s1">connection.set_isolation_level(isolation_level)</span>
+
+    <span class="s3">def </span><span class="s1">_do_autocommit(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">connection.set_autocommit(value)</span>
+
+    <span class="s3">def </span><span class="s1">set_readonly(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">connection.set_read_only(value)</span>
+
+    <span class="s3">def </span><span class="s1">set_deferrable(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">connection.set_deferrable(value)</span>
+
+    <span class="s3">def </span><span class="s1">get_driver_connection(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection._connection</span>
+
+
+<span class="s1">dialect = PGDialect_psycopg</span>
+<span class="s1">dialect_async = PGDialectAsync_psycopg</span>
+</pre>
+</body>
+</html>

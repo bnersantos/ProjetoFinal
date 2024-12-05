@@ -1,0 +1,1706 @@
+<html>
+<head>
+<title>loading.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+loading.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/loading.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">&quot;&quot;&quot;private module containing functions used to convert database 
+rows into object instances and associated state. 
+ 
+the functions here are called primarily by Query, Mapper, 
+as well as some of the attribute loading strategies. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">orm_exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">path_registry</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_DEFER_FOR_STATE</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_RAISE_FOR_STATE</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_SET_DEFERRED_EXPIRED</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PassiveFlag</span>
+<span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">FromStatement</span>
+<span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">ORMCompileState</span>
+<span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">QueryContext</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">_none_set</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">state_str</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">sa_exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..engine </span><span class="s3">import </span><span class="s1">result_tuple</span>
+<span class="s3">from </span><span class="s1">..engine.result </span><span class="s3">import </span><span class="s1">ChunkedIteratorResult</span>
+<span class="s3">from </span><span class="s1">..engine.result </span><span class="s3">import </span><span class="s1">FrozenResult</span>
+<span class="s3">from </span><span class="s1">..engine.result </span><span class="s3">import </span><span class="s1">SimpleResultMetaData</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">select</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">sql_util</span>
+<span class="s3">from </span><span class="s1">..sql.selectable </span><span class="s3">import </span><span class="s1">ForUpdateArg</span>
+<span class="s3">from </span><span class="s1">..sql.selectable </span><span class="s3">import </span><span class="s1">LABEL_STYLE_TABLENAME_PLUS_COL</span>
+<span class="s3">from </span><span class="s1">..sql.selectable </span><span class="s3">import </span><span class="s1">SelectState</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">EMPTY_DICT</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_IdentityKeyType</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">LoaderCallableStatus</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">ORMOption</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.query </span><span class="s3">import </span><span class="s1">Query</span>
+    <span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">Session</span>
+    <span class="s3">from </span><span class="s1">.state </span><span class="s3">import </span><span class="s1">InstanceState</span>
+    <span class="s3">from </span><span class="s1">..engine.cursor </span><span class="s3">import </span><span class="s1">CursorResult</span>
+    <span class="s3">from </span><span class="s1">..engine.interfaces </span><span class="s3">import </span><span class="s1">_ExecuteOptions</span>
+    <span class="s3">from </span><span class="s1">..engine.result </span><span class="s3">import </span><span class="s1">Result</span>
+    <span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">Select</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_O = TypeVar(</span><span class="s4">&quot;_O&quot;</span><span class="s5">, </span><span class="s1">bound=object)</span>
+<span class="s1">_new_runid = util.counter()</span>
+
+
+<span class="s1">_PopulatorDict = Dict[str</span><span class="s5">, </span><span class="s1">List[Tuple[str</span><span class="s5">, </span><span class="s1">Any]]]</span>
+
+
+<span class="s3">def </span><span class="s1">instances(cursor: CursorResult[Any]</span><span class="s5">, </span><span class="s1">context: QueryContext) -&gt; Result[Any]:</span>
+    <span class="s2">&quot;&quot;&quot;Return a :class:`.Result` given an ORM query context. 
+ 
+    :param cursor: a :class:`.CursorResult`, generated by a statement 
+     which came from :class:`.ORMCompileState` 
+ 
+    :param context: a :class:`.QueryContext` object 
+ 
+    :return: a :class:`.Result` object representing ORM results 
+ 
+    .. versionchanged:: 1.4 The instances() function now uses 
+       :class:`.Result` objects and has an all new interface. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">context.runid = _new_runid()</span>
+
+    <span class="s3">if </span><span class="s1">context.top_level_context:</span>
+        <span class="s1">is_top_level = </span><span class="s3">False</span>
+        <span class="s1">context.post_load_paths = context.top_level_context.post_load_paths</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">is_top_level = </span><span class="s3">True</span>
+        <span class="s1">context.post_load_paths = {}</span>
+
+    <span class="s1">compile_state = context.compile_state</span>
+    <span class="s1">filtered = compile_state._has_mapper_entities</span>
+    <span class="s1">single_entity = (</span>
+        <span class="s3">not </span><span class="s1">context.load_options._only_return_tuples</span>
+        <span class="s3">and </span><span class="s1">len(compile_state._entities) == </span><span class="s6">1</span>
+        <span class="s3">and </span><span class="s1">compile_state._entities[</span><span class="s6">0</span><span class="s1">].supports_single_entity</span>
+    <span class="s1">)</span>
+
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">(process</span><span class="s5">, </span><span class="s1">labels</span><span class="s5">, </span><span class="s1">extra) = list(</span>
+            <span class="s1">zip(</span>
+                <span class="s1">*[</span>
+                    <span class="s1">query_entity.row_processor(context</span><span class="s5">, </span><span class="s1">cursor)</span>
+                    <span class="s3">for </span><span class="s1">query_entity </span><span class="s3">in </span><span class="s1">context.compile_state._entities</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">context.yield_per </span><span class="s3">and </span><span class="s1">(</span>
+            <span class="s1">context.loaders_require_buffering</span>
+            <span class="s3">or </span><span class="s1">context.loaders_require_uniquing</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Can't use yield_per with eager loaders that require uniquing &quot;</span>
+                <span class="s4">&quot;or row buffering, e.g. joinedload() against collections &quot;</span>
+                <span class="s4">&quot;or subqueryload().  Consider the selectinload() strategy &quot;</span>
+                <span class="s4">&quot;for better flexibility in loading objects.&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s3">except </span><span class="s1">Exception:</span>
+        <span class="s3">with </span><span class="s1">util.safe_reraise():</span>
+            <span class="s1">cursor.close()</span>
+
+    <span class="s3">def </span><span class="s1">_no_unique(entry):</span>
+        <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+            <span class="s4">&quot;Can't use the ORM yield_per feature in conjunction with unique()&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_not_hashable(datatype</span><span class="s5">, </span><span class="s1">*</span><span class="s5">, </span><span class="s1">legacy=</span><span class="s3">False</span><span class="s5">, </span><span class="s1">uncertain=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">legacy:</span>
+
+            <span class="s3">def </span><span class="s1">go(obj):</span>
+                <span class="s3">if </span><span class="s1">uncertain:</span>
+                    <span class="s3">try</span><span class="s1">:</span>
+                        <span class="s3">return </span><span class="s1">hash(obj)</span>
+                    <span class="s3">except</span><span class="s1">:</span>
+                        <span class="s3">pass</span>
+
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;Can't apply uniqueness to row tuple containing value of &quot;</span>
+                    <span class="s4">f&quot;&quot;&quot;type </span><span class="s7">{</span><span class="s1">datatype</span><span class="s7">!r}</span><span class="s4">; </span><span class="s7">{</span>
+                        <span class="s4">'the values returned appear to be'</span>
+                        <span class="s3">if </span><span class="s1">uncertain</span>
+                        <span class="s3">else </span><span class="s4">'this datatype produces'</span>
+                    <span class="s7">} </span><span class="s4">non-hashable values&quot;&quot;&quot;</span>
+                <span class="s1">)</span>
+
+            <span class="s3">return </span><span class="s1">go</span>
+        <span class="s3">elif not </span><span class="s1">uncertain:</span>
+            <span class="s3">return </span><span class="s1">id</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">_use_id = </span><span class="s3">False</span>
+
+            <span class="s3">def </span><span class="s1">go(obj):</span>
+                <span class="s3">nonlocal </span><span class="s1">_use_id</span>
+
+                <span class="s3">if not </span><span class="s1">_use_id:</span>
+                    <span class="s3">try</span><span class="s1">:</span>
+                        <span class="s3">return </span><span class="s1">hash(obj)</span>
+                    <span class="s3">except</span><span class="s1">:</span>
+                        <span class="s3">pass</span>
+
+                    <span class="s0"># in #10459, we considered using a warning here, however</span>
+                    <span class="s0"># as legacy query uses result.unique() in all cases, this</span>
+                    <span class="s0"># would lead to too many warning cases.</span>
+                    <span class="s1">_use_id = </span><span class="s3">True</span>
+
+                <span class="s3">return </span><span class="s1">id(obj)</span>
+
+            <span class="s3">return </span><span class="s1">go</span>
+
+    <span class="s1">unique_filters = [</span>
+        <span class="s1">(</span>
+            <span class="s1">_no_unique</span>
+            <span class="s3">if </span><span class="s1">context.yield_per</span>
+            <span class="s3">else </span><span class="s1">(</span>
+                <span class="s1">_not_hashable(</span>
+                    <span class="s1">ent.column.type</span><span class="s5">,  </span><span class="s0"># type: ignore</span>
+                    <span class="s1">legacy=context.load_options._legacy_uniquing</span><span class="s5">,</span>
+                    <span class="s1">uncertain=ent._null_column_type</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s3">not </span><span class="s1">ent.use_id_for_hash</span>
+                    <span class="s3">and </span><span class="s1">(ent._non_hashable_value </span><span class="s3">or </span><span class="s1">ent._null_column_type)</span>
+                <span class="s1">)</span>
+                <span class="s3">else </span><span class="s1">id </span><span class="s3">if </span><span class="s1">ent.use_id_for_hash </span><span class="s3">else None</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">context.compile_state._entities</span>
+    <span class="s1">]</span>
+
+    <span class="s1">row_metadata = SimpleResultMetaData(</span>
+        <span class="s1">labels</span><span class="s5">, </span><span class="s1">extra</span><span class="s5">, </span><span class="s1">_unique_filters=unique_filters</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">chunks(size):  </span><span class="s0"># type: ignore</span>
+        <span class="s3">while True</span><span class="s1">:</span>
+            <span class="s1">yield_per = size</span>
+
+            <span class="s1">context.partials = {}</span>
+
+            <span class="s3">if </span><span class="s1">yield_per:</span>
+                <span class="s1">fetch = cursor.fetchmany(yield_per)</span>
+
+                <span class="s3">if not </span><span class="s1">fetch:</span>
+                    <span class="s3">break</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">fetch = cursor._raw_all_rows()</span>
+
+            <span class="s3">if </span><span class="s1">single_entity:</span>
+                <span class="s1">proc = process[</span><span class="s6">0</span><span class="s1">]</span>
+                <span class="s1">rows = [proc(row) </span><span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">fetch]</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">rows = [</span>
+                    <span class="s1">tuple([proc(row) </span><span class="s3">for </span><span class="s1">proc </span><span class="s3">in </span><span class="s1">process]) </span><span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">fetch</span>
+                <span class="s1">]</span>
+
+            <span class="s0"># if we are the originating load from a query, meaning we</span>
+            <span class="s0"># aren't being called as a result of a nested &quot;post load&quot;,</span>
+            <span class="s0"># iterate through all the collected post loaders and fire them</span>
+            <span class="s0"># off.  Previously this used to work recursively, however that</span>
+            <span class="s0"># prevented deeply nested structures from being loadable</span>
+            <span class="s3">if </span><span class="s1">is_top_level:</span>
+                <span class="s3">if </span><span class="s1">yield_per:</span>
+                    <span class="s0"># if using yield per, memoize the state of the</span>
+                    <span class="s0"># collection so that it can be restored</span>
+                    <span class="s1">top_level_post_loads = list(</span>
+                        <span class="s1">context.post_load_paths.items()</span>
+                    <span class="s1">)</span>
+
+                <span class="s3">while </span><span class="s1">context.post_load_paths:</span>
+                    <span class="s1">post_loads = list(context.post_load_paths.items())</span>
+                    <span class="s1">context.post_load_paths.clear()</span>
+                    <span class="s3">for </span><span class="s1">path</span><span class="s5">, </span><span class="s1">post_load </span><span class="s3">in </span><span class="s1">post_loads:</span>
+                        <span class="s1">post_load.invoke(context</span><span class="s5">, </span><span class="s1">path)</span>
+
+                <span class="s3">if </span><span class="s1">yield_per:</span>
+                    <span class="s1">context.post_load_paths.clear()</span>
+                    <span class="s1">context.post_load_paths.update(top_level_post_loads)</span>
+
+            <span class="s3">yield </span><span class="s1">rows</span>
+
+            <span class="s3">if not </span><span class="s1">yield_per:</span>
+                <span class="s3">break</span>
+
+    <span class="s3">if </span><span class="s1">context.execution_options.get(</span><span class="s4">&quot;prebuffer_rows&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s0"># this is a bit of a hack at the moment.</span>
+        <span class="s0"># I would rather have some option in the result to pre-buffer</span>
+        <span class="s0"># internally.</span>
+        <span class="s1">_prebuffered = list(chunks(</span><span class="s3">None</span><span class="s1">))</span>
+
+        <span class="s3">def </span><span class="s1">chunks(size):</span>
+            <span class="s3">return </span><span class="s1">iter(_prebuffered)</span>
+
+    <span class="s1">result = ChunkedIteratorResult(</span>
+        <span class="s1">row_metadata</span><span class="s5">,</span>
+        <span class="s1">chunks</span><span class="s5">,</span>
+        <span class="s1">source_supports_scalars=single_entity</span><span class="s5">,</span>
+        <span class="s1">raw=cursor</span><span class="s5">,</span>
+        <span class="s1">dynamic_yield_per=cursor.context._is_server_side</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># filtered and single_entity are used to indicate to legacy Query that the</span>
+    <span class="s0"># query has ORM entities, so legacy deduping and scalars should be called</span>
+    <span class="s0"># on the result.</span>
+    <span class="s1">result._attributes = result._attributes.union(</span>
+        <span class="s1">dict(filtered=filtered</span><span class="s5">, </span><span class="s1">is_single_entity=single_entity)</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># multi_row_eager_loaders OTOH is specific to joinedload.</span>
+    <span class="s3">if </span><span class="s1">context.compile_state.multi_row_eager_loaders:</span>
+
+        <span class="s3">def </span><span class="s1">require_unique(obj):</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                <span class="s4">&quot;The unique() method must be invoked on this Result, &quot;</span>
+                <span class="s4">&quot;as it contains results that include joined eager loads &quot;</span>
+                <span class="s4">&quot;against collections&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">result._unique_filter_state = (</span><span class="s3">None</span><span class="s5">, </span><span class="s1">require_unique)</span>
+
+    <span class="s3">if </span><span class="s1">context.yield_per:</span>
+        <span class="s1">result.yield_per(context.yield_per)</span>
+
+    <span class="s3">return </span><span class="s1">result</span>
+
+
+<span class="s1">@util.preload_module(</span><span class="s4">&quot;sqlalchemy.orm.context&quot;</span><span class="s1">)</span>
+<span class="s3">def </span><span class="s1">merge_frozen_result(session</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">frozen_result</span><span class="s5">, </span><span class="s1">load=</span><span class="s3">True</span><span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Merge a :class:`_engine.FrozenResult` back into a :class:`_orm.Session`, 
+    returning a new :class:`_engine.Result` object with :term:`persistent` 
+    objects. 
+ 
+    See the section :ref:`do_orm_execute_re_executing` for an example. 
+ 
+    .. seealso:: 
+ 
+        :ref:`do_orm_execute_re_executing` 
+ 
+        :meth:`_engine.Result.freeze` 
+ 
+        :class:`_engine.FrozenResult` 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">querycontext = util.preloaded.orm_context</span>
+
+    <span class="s3">if </span><span class="s1">load:</span>
+        <span class="s0"># flush current contents if we expect to load data</span>
+        <span class="s1">session._autoflush()</span>
+
+    <span class="s1">ctx = querycontext.ORMSelectCompileState._create_entities_collection(</span>
+        <span class="s1">statement</span><span class="s5">, </span><span class="s1">legacy=</span><span class="s3">False</span>
+    <span class="s1">)</span>
+
+    <span class="s1">autoflush = session.autoflush</span>
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">session.autoflush = </span><span class="s3">False</span>
+        <span class="s1">mapped_entities = [</span>
+            <span class="s1">i</span>
+            <span class="s3">for </span><span class="s1">i</span><span class="s5">, </span><span class="s1">e </span><span class="s3">in </span><span class="s1">enumerate(ctx._entities)</span>
+            <span class="s3">if </span><span class="s1">isinstance(e</span><span class="s5">, </span><span class="s1">querycontext._MapperEntity)</span>
+        <span class="s1">]</span>
+        <span class="s1">keys = [ent._label_name </span><span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">ctx._entities]</span>
+
+        <span class="s1">keyed_tuple = result_tuple(</span>
+            <span class="s1">keys</span><span class="s5">, </span><span class="s1">[ent._extra_entities </span><span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">ctx._entities]</span>
+        <span class="s1">)</span>
+
+        <span class="s1">result = []</span>
+        <span class="s3">for </span><span class="s1">newrow </span><span class="s3">in </span><span class="s1">frozen_result.rewrite_rows():</span>
+            <span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">mapped_entities:</span>
+                <span class="s3">if </span><span class="s1">newrow[i] </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s1">newrow[i] = session._merge(</span>
+                        <span class="s1">attributes.instance_state(newrow[i])</span><span class="s5">,</span>
+                        <span class="s1">attributes.instance_dict(newrow[i])</span><span class="s5">,</span>
+                        <span class="s1">load=load</span><span class="s5">,</span>
+                        <span class="s1">_recursive={}</span><span class="s5">,</span>
+                        <span class="s1">_resolve_conflict_map={}</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+
+            <span class="s1">result.append(keyed_tuple(newrow))</span>
+
+        <span class="s3">return </span><span class="s1">frozen_result.with_new_rows(result)</span>
+    <span class="s3">finally</span><span class="s1">:</span>
+        <span class="s1">session.autoflush = autoflush</span>
+
+
+<span class="s1">@util.became_legacy_20(</span>
+    <span class="s4">&quot;:func:`_orm.merge_result`&quot;</span><span class="s5">,</span>
+    <span class="s1">alternative=</span><span class="s4">&quot;The function as well as the method on :class:`_orm.Query` &quot;</span>
+    <span class="s4">&quot;is superseded by the :func:`_orm.merge_frozen_result` function.&quot;</span><span class="s5">,</span>
+<span class="s1">)</span>
+<span class="s1">@util.preload_module(</span><span class="s4">&quot;sqlalchemy.orm.context&quot;</span><span class="s1">)</span>
+<span class="s3">def </span><span class="s1">merge_result(</span>
+    <span class="s1">query: Query[Any]</span><span class="s5">,</span>
+    <span class="s1">iterator: Union[FrozenResult</span><span class="s5">, </span><span class="s1">Iterable[Sequence[Any]]</span><span class="s5">, </span><span class="s1">Iterable[object]]</span><span class="s5">,</span>
+    <span class="s1">load: bool = </span><span class="s3">True</span><span class="s5">,</span>
+<span class="s1">) -&gt; Union[FrozenResult</span><span class="s5">, </span><span class="s1">Iterable[Any]]:</span>
+    <span class="s2">&quot;&quot;&quot;Merge a result into the given :class:`.Query` object's Session. 
+ 
+    See :meth:`_orm.Query.merge_result` for top-level documentation on this 
+    function. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">querycontext = util.preloaded.orm_context</span>
+
+    <span class="s1">session = query.session</span>
+    <span class="s3">if </span><span class="s1">load:</span>
+        <span class="s0"># flush current contents if we expect to load data</span>
+        <span class="s1">session._autoflush()</span>
+
+    <span class="s0"># TODO: need test coverage and documentation for the FrozenResult</span>
+    <span class="s0"># use case.</span>
+    <span class="s3">if </span><span class="s1">isinstance(iterator</span><span class="s5">, </span><span class="s1">FrozenResult):</span>
+        <span class="s1">frozen_result = iterator</span>
+        <span class="s1">iterator = iter(frozen_result.data)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">frozen_result = </span><span class="s3">None</span>
+
+    <span class="s1">ctx = querycontext.ORMSelectCompileState._create_entities_collection(</span>
+        <span class="s1">query</span><span class="s5">, </span><span class="s1">legacy=</span><span class="s3">True</span>
+    <span class="s1">)</span>
+
+    <span class="s1">autoflush = session.autoflush</span>
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">session.autoflush = </span><span class="s3">False</span>
+        <span class="s1">single_entity = </span><span class="s3">not </span><span class="s1">frozen_result </span><span class="s3">and </span><span class="s1">len(ctx._entities) == </span><span class="s6">1</span>
+
+        <span class="s3">if </span><span class="s1">single_entity:</span>
+            <span class="s3">if </span><span class="s1">isinstance(ctx._entities[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">querycontext._MapperEntity):</span>
+                <span class="s1">result = [</span>
+                    <span class="s1">session._merge(</span>
+                        <span class="s1">attributes.instance_state(instance)</span><span class="s5">,</span>
+                        <span class="s1">attributes.instance_dict(instance)</span><span class="s5">,</span>
+                        <span class="s1">load=load</span><span class="s5">,</span>
+                        <span class="s1">_recursive={}</span><span class="s5">,</span>
+                        <span class="s1">_resolve_conflict_map={}</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">instance </span><span class="s3">in </span><span class="s1">iterator</span>
+                <span class="s1">]</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">result = list(iterator)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">mapped_entities = [</span>
+                <span class="s1">i</span>
+                <span class="s3">for </span><span class="s1">i</span><span class="s5">, </span><span class="s1">e </span><span class="s3">in </span><span class="s1">enumerate(ctx._entities)</span>
+                <span class="s3">if </span><span class="s1">isinstance(e</span><span class="s5">, </span><span class="s1">querycontext._MapperEntity)</span>
+            <span class="s1">]</span>
+            <span class="s1">result = []</span>
+            <span class="s1">keys = [ent._label_name </span><span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">ctx._entities]</span>
+
+            <span class="s1">keyed_tuple = result_tuple(</span>
+                <span class="s1">keys</span><span class="s5">, </span><span class="s1">[ent._extra_entities </span><span class="s3">for </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">ctx._entities]</span>
+            <span class="s1">)</span>
+
+            <span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">iterator:</span>
+                <span class="s1">newrow = list(row)</span>
+                <span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">mapped_entities:</span>
+                    <span class="s3">if </span><span class="s1">newrow[i] </span><span class="s3">is not None</span><span class="s1">:</span>
+                        <span class="s1">newrow[i] = session._merge(</span>
+                            <span class="s1">attributes.instance_state(newrow[i])</span><span class="s5">,</span>
+                            <span class="s1">attributes.instance_dict(newrow[i])</span><span class="s5">,</span>
+                            <span class="s1">load=load</span><span class="s5">,</span>
+                            <span class="s1">_recursive={}</span><span class="s5">,</span>
+                            <span class="s1">_resolve_conflict_map={}</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+                <span class="s1">result.append(keyed_tuple(newrow))</span>
+
+        <span class="s3">if </span><span class="s1">frozen_result:</span>
+            <span class="s3">return </span><span class="s1">frozen_result.with_new_rows(result)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">iter(result)</span>
+    <span class="s3">finally</span><span class="s1">:</span>
+        <span class="s1">session.autoflush = autoflush</span>
+
+
+<span class="s3">def </span><span class="s1">get_from_identity(</span>
+    <span class="s1">session: Session</span><span class="s5">,</span>
+    <span class="s1">mapper: Mapper[_O]</span><span class="s5">,</span>
+    <span class="s1">key: _IdentityKeyType[_O]</span><span class="s5">,</span>
+    <span class="s1">passive: PassiveFlag</span><span class="s5">,</span>
+<span class="s1">) -&gt; Union[LoaderCallableStatus</span><span class="s5">, </span><span class="s1">Optional[_O]]:</span>
+    <span class="s2">&quot;&quot;&quot;Look up the given key in the given session's identity map, 
+    check the object for expired state if found. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">instance = session.identity_map.get(key)</span>
+    <span class="s3">if </span><span class="s1">instance </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">state = attributes.instance_state(instance)</span>
+
+        <span class="s3">if </span><span class="s1">mapper.inherits </span><span class="s3">and not </span><span class="s1">state.mapper.isa(mapper):</span>
+            <span class="s3">return </span><span class="s1">attributes.PASSIVE_CLASS_MISMATCH</span>
+
+        <span class="s0"># expired - ensure it still exists</span>
+        <span class="s3">if </span><span class="s1">state.expired:</span>
+            <span class="s3">if not </span><span class="s1">passive &amp; attributes.SQL_OK:</span>
+                <span class="s0"># TODO: no coverage here</span>
+                <span class="s3">return </span><span class="s1">attributes.PASSIVE_NO_RESULT</span>
+            <span class="s3">elif not </span><span class="s1">passive &amp; attributes.RELATED_OBJECT_OK:</span>
+                <span class="s0"># this mode is used within a flush and the instance's</span>
+                <span class="s0"># expired state will be checked soon enough, if necessary.</span>
+                <span class="s0"># also used by immediateloader for a mutually-dependent</span>
+                <span class="s0"># o2m-&gt;m2m load, :ticket:`6301`</span>
+                <span class="s3">return </span><span class="s1">instance</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">state._load_expired(state</span><span class="s5">, </span><span class="s1">passive)</span>
+            <span class="s3">except </span><span class="s1">orm_exc.ObjectDeletedError:</span>
+                <span class="s1">session._remove_newly_deleted([state])</span>
+                <span class="s3">return None</span>
+        <span class="s3">return </span><span class="s1">instance</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">def </span><span class="s1">load_on_ident(</span>
+    <span class="s1">session: Session</span><span class="s5">,</span>
+    <span class="s1">statement: Union[Select</span><span class="s5">, </span><span class="s1">FromStatement]</span><span class="s5">,</span>
+    <span class="s1">key: Optional[_IdentityKeyType]</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">load_options: Optional[Sequence[ORMOption]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">refresh_state: Optional[InstanceState[Any]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">with_for_update: Optional[ForUpdateArg] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">only_load_props: Optional[Iterable[str]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">no_autoflush: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">bind_arguments: Mapping[str</span><span class="s5">, </span><span class="s1">Any] = util.EMPTY_DICT</span><span class="s5">,</span>
+    <span class="s1">execution_options: _ExecuteOptions = util.EMPTY_DICT</span><span class="s5">,</span>
+    <span class="s1">require_pk_cols: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">is_user_refresh: bool = </span><span class="s3">False</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Load the given identity key from the database.&quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">key </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">ident = key[</span><span class="s6">1</span><span class="s1">]</span>
+        <span class="s1">identity_token = key[</span><span class="s6">2</span><span class="s1">]</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">ident = identity_token = </span><span class="s3">None</span>
+
+    <span class="s3">return </span><span class="s1">load_on_pk_identity(</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">ident</span><span class="s5">,</span>
+        <span class="s1">load_options=load_options</span><span class="s5">,</span>
+        <span class="s1">refresh_state=refresh_state</span><span class="s5">,</span>
+        <span class="s1">with_for_update=with_for_update</span><span class="s5">,</span>
+        <span class="s1">only_load_props=only_load_props</span><span class="s5">,</span>
+        <span class="s1">identity_token=identity_token</span><span class="s5">,</span>
+        <span class="s1">no_autoflush=no_autoflush</span><span class="s5">,</span>
+        <span class="s1">bind_arguments=bind_arguments</span><span class="s5">,</span>
+        <span class="s1">execution_options=execution_options</span><span class="s5">,</span>
+        <span class="s1">require_pk_cols=require_pk_cols</span><span class="s5">,</span>
+        <span class="s1">is_user_refresh=is_user_refresh</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">load_on_pk_identity(</span>
+    <span class="s1">session: Session</span><span class="s5">,</span>
+    <span class="s1">statement: Union[Select</span><span class="s5">, </span><span class="s1">FromStatement]</span><span class="s5">,</span>
+    <span class="s1">primary_key_identity: Optional[Tuple[Any</span><span class="s5">, </span><span class="s1">...]]</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">load_options: Optional[Sequence[ORMOption]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">refresh_state: Optional[InstanceState[Any]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">with_for_update: Optional[ForUpdateArg] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">only_load_props: Optional[Iterable[str]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">identity_token: Optional[Any] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">no_autoflush: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">bind_arguments: Mapping[str</span><span class="s5">, </span><span class="s1">Any] = util.EMPTY_DICT</span><span class="s5">,</span>
+    <span class="s1">execution_options: _ExecuteOptions = util.EMPTY_DICT</span><span class="s5">,</span>
+    <span class="s1">require_pk_cols: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">is_user_refresh: bool = </span><span class="s3">False</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Load the given primary key identity from the database.&quot;&quot;&quot;</span>
+
+    <span class="s1">query = statement</span>
+    <span class="s1">q = query._clone()</span>
+
+    <span class="s3">assert not </span><span class="s1">q._is_lambda_element</span>
+
+    <span class="s3">if </span><span class="s1">load_options </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">load_options = QueryContext.default_load_options</span>
+
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s1">statement._compile_options</span>
+        <span class="s3">is </span><span class="s1">SelectState.default_select_compile_options</span>
+    <span class="s1">):</span>
+        <span class="s1">compile_options = ORMCompileState.default_compile_options</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">compile_options = statement._compile_options</span>
+
+    <span class="s3">if </span><span class="s1">primary_key_identity </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">mapper = query._propagate_attrs[</span><span class="s4">&quot;plugin_subject&quot;</span><span class="s1">]</span>
+
+        <span class="s1">(_get_clause</span><span class="s5">, </span><span class="s1">_get_params) = mapper._get_clause</span>
+
+        <span class="s0"># None present in ident - turn those comparisons</span>
+        <span class="s0"># into &quot;IS NULL&quot;</span>
+        <span class="s3">if None in </span><span class="s1">primary_key_identity:</span>
+            <span class="s1">nones = {</span>
+                <span class="s1">_get_params[col].key</span>
+                <span class="s3">for </span><span class="s1">col</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">zip(mapper.primary_key</span><span class="s5">, </span><span class="s1">primary_key_identity)</span>
+                <span class="s3">if </span><span class="s1">value </span><span class="s3">is None</span>
+            <span class="s1">}</span>
+
+            <span class="s1">_get_clause = sql_util.adapt_criterion_to_null(_get_clause</span><span class="s5">, </span><span class="s1">nones)</span>
+
+            <span class="s3">if </span><span class="s1">len(nones) == len(primary_key_identity):</span>
+                <span class="s1">util.warn(</span>
+                    <span class="s4">&quot;fully NULL primary key identity cannot load any &quot;</span>
+                    <span class="s4">&quot;object.  This condition may raise an error in a future &quot;</span>
+                    <span class="s4">&quot;release.&quot;</span>
+                <span class="s1">)</span>
+
+        <span class="s1">q._where_criteria = (</span>
+            <span class="s1">sql_util._deep_annotate(_get_clause</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;_orm_adapt&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">})</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">params = {</span>
+            <span class="s1">_get_params[primary_key].key: id_val</span>
+            <span class="s3">for </span><span class="s1">id_val</span><span class="s5">, </span><span class="s1">primary_key </span><span class="s3">in </span><span class="s1">zip(</span>
+                <span class="s1">primary_key_identity</span><span class="s5">, </span><span class="s1">mapper.primary_key</span>
+            <span class="s1">)</span>
+        <span class="s1">}</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">params = </span><span class="s3">None</span>
+
+    <span class="s3">if </span><span class="s1">with_for_update </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">version_check = </span><span class="s3">True</span>
+        <span class="s1">q._for_update_arg = with_for_update</span>
+    <span class="s3">elif </span><span class="s1">query._for_update_arg </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">version_check = </span><span class="s3">True</span>
+        <span class="s1">q._for_update_arg = query._for_update_arg</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">version_check = </span><span class="s3">False</span>
+
+    <span class="s3">if </span><span class="s1">require_pk_cols </span><span class="s3">and </span><span class="s1">only_load_props:</span>
+        <span class="s3">if not </span><span class="s1">refresh_state:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s4">&quot;refresh_state is required when require_pk_cols is present&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">refresh_state_prokeys = refresh_state.mapper._primary_key_propkeys</span>
+        <span class="s1">has_changes = {</span>
+            <span class="s1">key</span>
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">refresh_state_prokeys.difference(only_load_props)</span>
+            <span class="s3">if </span><span class="s1">refresh_state.attrs[key].history.has_changes()</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">has_changes:</span>
+            <span class="s0"># raise if pending pk changes are present.</span>
+            <span class="s0"># technically, this could be limited to the case where we have</span>
+            <span class="s0"># relationships in the only_load_props collection to be refreshed</span>
+            <span class="s0"># also (and only ones that have a secondary eager loader, at that).</span>
+            <span class="s0"># however, the error is in place across the board so that behavior</span>
+            <span class="s0"># here is easier to predict.   The use case it prevents is one</span>
+            <span class="s0"># of mutating PK attrs, leaving them unflushed,</span>
+            <span class="s0"># calling session.refresh(), and expecting those attrs to remain</span>
+            <span class="s0"># still unflushed.   It seems likely someone doing all those</span>
+            <span class="s0"># things would be better off having the PK attributes flushed</span>
+            <span class="s0"># to the database before tinkering like that (session.refresh() is</span>
+            <span class="s0"># tinkering).</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;Please flush pending primary key changes on &quot;</span>
+                <span class="s4">&quot;attributes &quot;</span>
+                <span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">has_changes</span><span class="s7">} </span><span class="s4">for mapper </span><span class="s7">{</span><span class="s1">refresh_state.mapper</span><span class="s7">} </span><span class="s4">before &quot;</span>
+                <span class="s4">&quot;proceeding with a refresh&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s0"># overall, the ORM has no internal flow right now for &quot;dont load the</span>
+        <span class="s0"># primary row of an object at all, but fire off</span>
+        <span class="s0"># selectinload/subqueryload/immediateload for some relationships&quot;.</span>
+        <span class="s0"># It would probably be a pretty big effort to add such a flow.  So</span>
+        <span class="s0"># here, the case for #8703 is introduced; user asks to refresh some</span>
+        <span class="s0"># relationship attributes only which are</span>
+        <span class="s0"># selectinload/subqueryload/immediateload/ etc. (not joinedload).</span>
+        <span class="s0"># ORM complains there's no columns in the primary row to load.</span>
+        <span class="s0"># So here, we just add the PK cols if that</span>
+        <span class="s0"># case is detected, so that there is a SELECT emitted for the primary</span>
+        <span class="s0"># row.</span>
+        <span class="s0">#</span>
+        <span class="s0"># Let's just state right up front, for this one little case,</span>
+        <span class="s0"># the ORM here is adding a whole extra SELECT just to satisfy</span>
+        <span class="s0"># limitations in the internal flow.  This is really not a thing</span>
+        <span class="s0"># SQLAlchemy finds itself doing like, ever, obviously, we are</span>
+        <span class="s0"># constantly working to *remove* SELECTs we don't need.   We</span>
+        <span class="s0"># rationalize this for now based on 1. session.refresh() is not</span>
+        <span class="s0"># commonly used 2. session.refresh() with only relationship attrs is</span>
+        <span class="s0"># even less commonly used 3. the SELECT in question is very low</span>
+        <span class="s0"># latency.</span>
+        <span class="s0">#</span>
+        <span class="s0"># to add the flow to not include the SELECT, the quickest way</span>
+        <span class="s0"># might be to just manufacture a single-row result set to send off to</span>
+        <span class="s0"># instances(), but we'd have to weave that into context.py and all</span>
+        <span class="s0"># that.  For 2.0.0, we have enough big changes to navigate for now.</span>
+        <span class="s0">#</span>
+        <span class="s1">mp = refresh_state.mapper._props</span>
+        <span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">only_load_props:</span>
+            <span class="s3">if </span><span class="s1">mp[p]._is_relationship:</span>
+                <span class="s1">only_load_props = refresh_state_prokeys.union(only_load_props)</span>
+                <span class="s3">break</span>
+
+    <span class="s3">if </span><span class="s1">refresh_state </span><span class="s3">and </span><span class="s1">refresh_state.load_options:</span>
+        <span class="s1">compile_options += {</span><span class="s4">&quot;_current_path&quot;</span><span class="s1">: refresh_state.load_path.parent}</span>
+        <span class="s1">q = q.options(*refresh_state.load_options)</span>
+
+    <span class="s1">new_compile_options</span><span class="s5">, </span><span class="s1">load_options = _set_get_options(</span>
+        <span class="s1">compile_options</span><span class="s5">,</span>
+        <span class="s1">load_options</span><span class="s5">,</span>
+        <span class="s1">version_check=version_check</span><span class="s5">,</span>
+        <span class="s1">only_load_props=only_load_props</span><span class="s5">,</span>
+        <span class="s1">refresh_state=refresh_state</span><span class="s5">,</span>
+        <span class="s1">identity_token=identity_token</span><span class="s5">,</span>
+        <span class="s1">is_user_refresh=is_user_refresh</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">q._compile_options = new_compile_options</span>
+    <span class="s1">q._order_by = </span><span class="s3">None</span>
+
+    <span class="s3">if </span><span class="s1">no_autoflush:</span>
+        <span class="s1">load_options += {</span><span class="s4">&quot;_autoflush&quot;</span><span class="s1">: </span><span class="s3">False</span><span class="s1">}</span>
+
+    <span class="s1">execution_options = util.EMPTY_DICT.merge_with(</span>
+        <span class="s1">execution_options</span><span class="s5">, </span><span class="s1">{</span><span class="s4">&quot;_sa_orm_load_options&quot;</span><span class="s1">: load_options}</span>
+    <span class="s1">)</span>
+    <span class="s1">result = (</span>
+        <span class="s1">session.execute(</span>
+            <span class="s1">q</span><span class="s5">,</span>
+            <span class="s1">params=params</span><span class="s5">,</span>
+            <span class="s1">execution_options=execution_options</span><span class="s5">,</span>
+            <span class="s1">bind_arguments=bind_arguments</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">.unique()</span>
+        <span class="s1">.scalars()</span>
+    <span class="s1">)</span>
+
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">result.one()</span>
+    <span class="s3">except </span><span class="s1">orm_exc.NoResultFound:</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">def </span><span class="s1">_set_get_options(</span>
+    <span class="s1">compile_opt</span><span class="s5">,</span>
+    <span class="s1">load_opt</span><span class="s5">,</span>
+    <span class="s1">populate_existing=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">version_check=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">only_load_props=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">refresh_state=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">identity_token=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">is_user_refresh=</span><span class="s3">None</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s1">compile_options = {}</span>
+    <span class="s1">load_options = {}</span>
+    <span class="s3">if </span><span class="s1">version_check:</span>
+        <span class="s1">load_options[</span><span class="s4">&quot;_version_check&quot;</span><span class="s1">] = version_check</span>
+    <span class="s3">if </span><span class="s1">populate_existing:</span>
+        <span class="s1">load_options[</span><span class="s4">&quot;_populate_existing&quot;</span><span class="s1">] = populate_existing</span>
+    <span class="s3">if </span><span class="s1">refresh_state:</span>
+        <span class="s1">load_options[</span><span class="s4">&quot;_refresh_state&quot;</span><span class="s1">] = refresh_state</span>
+        <span class="s1">compile_options[</span><span class="s4">&quot;_for_refresh_state&quot;</span><span class="s1">] = </span><span class="s3">True</span>
+    <span class="s3">if </span><span class="s1">only_load_props:</span>
+        <span class="s1">compile_options[</span><span class="s4">&quot;_only_load_props&quot;</span><span class="s1">] = frozenset(only_load_props)</span>
+    <span class="s3">if </span><span class="s1">identity_token:</span>
+        <span class="s1">load_options[</span><span class="s4">&quot;_identity_token&quot;</span><span class="s1">] = identity_token</span>
+
+    <span class="s3">if </span><span class="s1">is_user_refresh:</span>
+        <span class="s1">load_options[</span><span class="s4">&quot;_is_user_refresh&quot;</span><span class="s1">] = is_user_refresh</span>
+    <span class="s3">if </span><span class="s1">load_options:</span>
+        <span class="s1">load_opt += load_options</span>
+    <span class="s3">if </span><span class="s1">compile_options:</span>
+        <span class="s1">compile_opt += compile_options</span>
+
+    <span class="s3">return </span><span class="s1">compile_opt</span><span class="s5">, </span><span class="s1">load_opt</span>
+
+
+<span class="s3">def </span><span class="s1">_setup_entity_query(</span>
+    <span class="s1">compile_state</span><span class="s5">,</span>
+    <span class="s1">mapper</span><span class="s5">,</span>
+    <span class="s1">query_entity</span><span class="s5">,</span>
+    <span class="s1">path</span><span class="s5">,</span>
+    <span class="s1">adapter</span><span class="s5">,</span>
+    <span class="s1">column_collection</span><span class="s5">,</span>
+    <span class="s1">with_polymorphic=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">only_load_props=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">polymorphic_discriminator=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">**kw</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s3">if </span><span class="s1">with_polymorphic:</span>
+        <span class="s1">poly_properties = mapper._iterate_polymorphic_properties(</span>
+            <span class="s1">with_polymorphic</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">poly_properties = mapper._polymorphic_properties</span>
+
+    <span class="s1">quick_populators = {}</span>
+
+    <span class="s1">path.set(compile_state.attributes</span><span class="s5">, </span><span class="s4">&quot;memoized_setups&quot;</span><span class="s5">, </span><span class="s1">quick_populators)</span>
+
+    <span class="s0"># for the lead entities in the path, e.g. not eager loads, and</span>
+    <span class="s0"># assuming a user-passed aliased class, e.g. not a from_self() or any</span>
+    <span class="s0"># implicit aliasing, don't add columns to the SELECT that aren't</span>
+    <span class="s0"># in the thing that's aliased.</span>
+    <span class="s1">check_for_adapt = adapter </span><span class="s3">and </span><span class="s1">len(path) == </span><span class="s6">1 </span><span class="s3">and </span><span class="s1">path[-</span><span class="s6">1</span><span class="s1">].is_aliased_class</span>
+
+    <span class="s3">for </span><span class="s1">value </span><span class="s3">in </span><span class="s1">poly_properties:</span>
+        <span class="s3">if </span><span class="s1">only_load_props </span><span class="s3">and </span><span class="s1">value.key </span><span class="s3">not in </span><span class="s1">only_load_props:</span>
+            <span class="s3">continue</span>
+        <span class="s1">value.setup(</span>
+            <span class="s1">compile_state</span><span class="s5">,</span>
+            <span class="s1">query_entity</span><span class="s5">,</span>
+            <span class="s1">path</span><span class="s5">,</span>
+            <span class="s1">adapter</span><span class="s5">,</span>
+            <span class="s1">only_load_props=only_load_props</span><span class="s5">,</span>
+            <span class="s1">column_collection=column_collection</span><span class="s5">,</span>
+            <span class="s1">memoized_populators=quick_populators</span><span class="s5">,</span>
+            <span class="s1">check_for_adapt=check_for_adapt</span><span class="s5">,</span>
+            <span class="s1">**kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s1">polymorphic_discriminator </span><span class="s3">is not None</span>
+        <span class="s3">and </span><span class="s1">polymorphic_discriminator </span><span class="s3">is not </span><span class="s1">mapper.polymorphic_on</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">adapter:</span>
+            <span class="s1">pd = adapter.columns[polymorphic_discriminator]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">pd = polymorphic_discriminator</span>
+        <span class="s1">column_collection.append(pd)</span>
+
+
+<span class="s3">def </span><span class="s1">_warn_for_runid_changed(state):</span>
+    <span class="s1">util.warn(</span>
+        <span class="s4">&quot;Loading context for %s has changed within a load/refresh &quot;</span>
+        <span class="s4">&quot;handler, suggesting a row refresh operation took place. If this &quot;</span>
+        <span class="s4">&quot;event handler is expected to be &quot;</span>
+        <span class="s4">&quot;emitting row refresh operations within an existing load or refresh &quot;</span>
+        <span class="s4">&quot;operation, set restore_load_context=True when establishing the &quot;</span>
+        <span class="s4">&quot;listener to ensure the context remains unchanged when the event &quot;</span>
+        <span class="s4">&quot;handler completes.&quot; </span><span class="s1">% (state_str(state)</span><span class="s5">,</span><span class="s1">)</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_instance_processor(</span>
+    <span class="s1">query_entity</span><span class="s5">,</span>
+    <span class="s1">mapper</span><span class="s5">,</span>
+    <span class="s1">context</span><span class="s5">,</span>
+    <span class="s1">result</span><span class="s5">,</span>
+    <span class="s1">path</span><span class="s5">,</span>
+    <span class="s1">adapter</span><span class="s5">,</span>
+    <span class="s1">only_load_props=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">refresh_state=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">polymorphic_discriminator=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">_polymorphic_from=</span><span class="s3">None</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot;Produce a mapper level row processor callable 
+    which processes rows into mapped instances.&quot;&quot;&quot;</span>
+
+    <span class="s0"># note that this method, most of which exists in a closure</span>
+    <span class="s0"># called _instance(), resists being broken out, as</span>
+    <span class="s0"># attempts to do so tend to add significant function</span>
+    <span class="s0"># call overhead.  _instance() is the most</span>
+    <span class="s0"># performance-critical section in the whole ORM.</span>
+
+    <span class="s1">identity_class = mapper._identity_class</span>
+    <span class="s1">compile_state = context.compile_state</span>
+
+    <span class="s0"># look for &quot;row getter&quot; functions that have been assigned along</span>
+    <span class="s0"># with the compile state that were cached from a previous load.</span>
+    <span class="s0"># these are operator.itemgetter() objects that each will extract a</span>
+    <span class="s0"># particular column from each row.</span>
+
+    <span class="s1">getter_key = (</span><span class="s4">&quot;getters&quot;</span><span class="s5">, </span><span class="s1">mapper)</span>
+    <span class="s1">getters = path.get(compile_state.attributes</span><span class="s5">, </span><span class="s1">getter_key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">getters </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s0"># no getters, so go through a list of attributes we are loading for,</span>
+        <span class="s0"># and the ones that are column based will have already put information</span>
+        <span class="s0"># for us in another collection &quot;memoized_setups&quot;, which represents the</span>
+        <span class="s0"># output of the LoaderStrategy.setup_query() method.  We can just as</span>
+        <span class="s0"># easily call LoaderStrategy.create_row_processor for each, but by</span>
+        <span class="s0"># getting it all at once from setup_query we save another method call</span>
+        <span class="s0"># per attribute.</span>
+        <span class="s1">props = mapper._prop_set</span>
+        <span class="s3">if </span><span class="s1">only_load_props </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">props = props.intersection(</span>
+                <span class="s1">mapper._props[k] </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">only_load_props</span>
+            <span class="s1">)</span>
+
+        <span class="s1">quick_populators = path.get(</span>
+            <span class="s1">context.attributes</span><span class="s5">, </span><span class="s4">&quot;memoized_setups&quot;</span><span class="s5">, </span><span class="s1">EMPTY_DICT</span>
+        <span class="s1">)</span>
+
+        <span class="s1">todo = []</span>
+        <span class="s1">cached_populators = {</span>
+            <span class="s4">&quot;new&quot;</span><span class="s1">: []</span><span class="s5">,</span>
+            <span class="s4">&quot;quick&quot;</span><span class="s1">: []</span><span class="s5">,</span>
+            <span class="s4">&quot;deferred&quot;</span><span class="s1">: []</span><span class="s5">,</span>
+            <span class="s4">&quot;expire&quot;</span><span class="s1">: []</span><span class="s5">,</span>
+            <span class="s4">&quot;existing&quot;</span><span class="s1">: []</span><span class="s5">,</span>
+            <span class="s4">&quot;eager&quot;</span><span class="s1">: []</span><span class="s5">,</span>
+        <span class="s1">}</span>
+
+        <span class="s3">if </span><span class="s1">refresh_state </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s0"># we can also get the &quot;primary key&quot; tuple getter function</span>
+            <span class="s1">pk_cols = mapper.primary_key</span>
+
+            <span class="s3">if </span><span class="s1">adapter:</span>
+                <span class="s1">pk_cols = [adapter.columns[c] </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">pk_cols]</span>
+            <span class="s1">primary_key_getter = result._tuple_getter(pk_cols)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">primary_key_getter = </span><span class="s3">None</span>
+
+        <span class="s1">getters = {</span>
+            <span class="s4">&quot;cached_populators&quot;</span><span class="s1">: cached_populators</span><span class="s5">,</span>
+            <span class="s4">&quot;todo&quot;</span><span class="s1">: todo</span><span class="s5">,</span>
+            <span class="s4">&quot;primary_key_getter&quot;</span><span class="s1">: primary_key_getter</span><span class="s5">,</span>
+        <span class="s1">}</span>
+        <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">props:</span>
+            <span class="s3">if </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">quick_populators:</span>
+                <span class="s0"># this is an inlined path just for column-based attributes.</span>
+                <span class="s1">col = quick_populators[prop]</span>
+                <span class="s3">if </span><span class="s1">col </span><span class="s3">is </span><span class="s1">_DEFER_FOR_STATE:</span>
+                    <span class="s1">cached_populators[</span><span class="s4">&quot;new&quot;</span><span class="s1">].append(</span>
+                        <span class="s1">(prop.key</span><span class="s5">, </span><span class="s1">prop._deferred_column_loader)</span>
+                    <span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">col </span><span class="s3">is </span><span class="s1">_SET_DEFERRED_EXPIRED:</span>
+                    <span class="s0"># note that in this path, we are no longer</span>
+                    <span class="s0"># searching in the result to see if the column might</span>
+                    <span class="s0"># be present in some unexpected way.</span>
+                    <span class="s1">cached_populators[</span><span class="s4">&quot;expire&quot;</span><span class="s1">].append((prop.key</span><span class="s5">, </span><span class="s3">False</span><span class="s1">))</span>
+                <span class="s3">elif </span><span class="s1">col </span><span class="s3">is </span><span class="s1">_RAISE_FOR_STATE:</span>
+                    <span class="s1">cached_populators[</span><span class="s4">&quot;new&quot;</span><span class="s1">].append(</span>
+                        <span class="s1">(prop.key</span><span class="s5">, </span><span class="s1">prop._raise_column_loader)</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">getter = </span><span class="s3">None</span>
+                    <span class="s3">if </span><span class="s1">adapter:</span>
+                        <span class="s0"># this logic had been removed for all 1.4 releases</span>
+                        <span class="s0"># up until 1.4.18; the adapter here is particularly</span>
+                        <span class="s0"># the compound eager adapter which isn't accommodated</span>
+                        <span class="s0"># in the quick_populators right now.  The &quot;fallback&quot;</span>
+                        <span class="s0"># logic below instead took over in many more cases</span>
+                        <span class="s0"># until issue #6596 was identified.</span>
+
+                        <span class="s0"># note there is still an issue where this codepath</span>
+                        <span class="s0"># produces no &quot;getter&quot; for cases where a joined-inh</span>
+                        <span class="s0"># mapping includes a labeled column property, meaning</span>
+                        <span class="s0"># KeyError is caught internally and we fall back to</span>
+                        <span class="s0"># _getter(col), which works anyway.   The adapter</span>
+                        <span class="s0"># here for joined inh without any aliasing might not</span>
+                        <span class="s0"># be useful.  Tests which see this include</span>
+                        <span class="s0"># test.orm.inheritance.test_basic -&gt;</span>
+                        <span class="s0"># EagerTargetingTest.test_adapt_stringency</span>
+                        <span class="s0"># OptimizedLoadTest.test_column_expression_joined</span>
+                        <span class="s0"># PolymorphicOnNotLocalTest.test_polymorphic_on_column_prop  # noqa: E501</span>
+                        <span class="s0">#</span>
+
+                        <span class="s1">adapted_col = adapter.columns[col]</span>
+                        <span class="s3">if </span><span class="s1">adapted_col </span><span class="s3">is not None</span><span class="s1">:</span>
+                            <span class="s1">getter = result._getter(adapted_col</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+                    <span class="s3">if not </span><span class="s1">getter:</span>
+                        <span class="s1">getter = result._getter(col</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">getter:</span>
+                        <span class="s1">cached_populators[</span><span class="s4">&quot;quick&quot;</span><span class="s1">].append((prop.key</span><span class="s5">, </span><span class="s1">getter))</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s0"># fall back to the ColumnProperty itself, which</span>
+                        <span class="s0"># will iterate through all of its columns</span>
+                        <span class="s0"># to see if one fits</span>
+                        <span class="s1">prop.create_row_processor(</span>
+                            <span class="s1">context</span><span class="s5">,</span>
+                            <span class="s1">query_entity</span><span class="s5">,</span>
+                            <span class="s1">path</span><span class="s5">,</span>
+                            <span class="s1">mapper</span><span class="s5">,</span>
+                            <span class="s1">result</span><span class="s5">,</span>
+                            <span class="s1">adapter</span><span class="s5">,</span>
+                            <span class="s1">cached_populators</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s0"># loader strategies like subqueryload, selectinload,</span>
+                <span class="s0"># joinedload, basically relationships, these need to interact</span>
+                <span class="s0"># with the context each time to work correctly.</span>
+                <span class="s1">todo.append(prop)</span>
+
+        <span class="s1">path.set(compile_state.attributes</span><span class="s5">, </span><span class="s1">getter_key</span><span class="s5">, </span><span class="s1">getters)</span>
+
+    <span class="s1">cached_populators = getters[</span><span class="s4">&quot;cached_populators&quot;</span><span class="s1">]</span>
+
+    <span class="s1">populators = {key: list(value) </span><span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">cached_populators.items()}</span>
+    <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">getters[</span><span class="s4">&quot;todo&quot;</span><span class="s1">]:</span>
+        <span class="s1">prop.create_row_processor(</span>
+            <span class="s1">context</span><span class="s5">, </span><span class="s1">query_entity</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">mapper</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">adapter</span><span class="s5">, </span><span class="s1">populators</span>
+        <span class="s1">)</span>
+
+    <span class="s1">propagated_loader_options = context.propagated_loader_options</span>
+    <span class="s1">load_path = (</span>
+        <span class="s1">context.compile_state.current_path + path</span>
+        <span class="s3">if </span><span class="s1">context.compile_state.current_path.path</span>
+        <span class="s3">else </span><span class="s1">path</span>
+    <span class="s1">)</span>
+
+    <span class="s1">session_identity_map = context.session.identity_map</span>
+
+    <span class="s1">populate_existing = context.populate_existing </span><span class="s3">or </span><span class="s1">mapper.always_refresh</span>
+    <span class="s1">load_evt = bool(mapper.class_manager.dispatch.load)</span>
+    <span class="s1">refresh_evt = bool(mapper.class_manager.dispatch.refresh)</span>
+    <span class="s1">persistent_evt = bool(context.session.dispatch.loaded_as_persistent)</span>
+    <span class="s3">if </span><span class="s1">persistent_evt:</span>
+        <span class="s1">loaded_as_persistent = context.session.dispatch.loaded_as_persistent</span>
+    <span class="s1">instance_state = attributes.instance_state</span>
+    <span class="s1">instance_dict = attributes.instance_dict</span>
+    <span class="s1">session_id = context.session.hash_key</span>
+    <span class="s1">runid = context.runid</span>
+    <span class="s1">identity_token = context.identity_token</span>
+
+    <span class="s1">version_check = context.version_check</span>
+    <span class="s3">if </span><span class="s1">version_check:</span>
+        <span class="s1">version_id_col = mapper.version_id_col</span>
+        <span class="s3">if </span><span class="s1">version_id_col </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">adapter:</span>
+                <span class="s1">version_id_col = adapter.columns[version_id_col]</span>
+            <span class="s1">version_id_getter = result._getter(version_id_col)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">version_id_getter = </span><span class="s3">None</span>
+
+    <span class="s3">if not </span><span class="s1">refresh_state </span><span class="s3">and </span><span class="s1">_polymorphic_from </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">key = (</span><span class="s4">&quot;loader&quot;</span><span class="s5">, </span><span class="s1">path.path)</span>
+
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">context.attributes </span><span class="s3">and </span><span class="s1">context.attributes[key].strategy == (</span>
+            <span class="s1">(</span><span class="s4">&quot;selectinload_polymorphic&quot;</span><span class="s5">, </span><span class="s3">True</span><span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s1">option_entities = context.attributes[key].local_opts[</span><span class="s4">&quot;entities&quot;</span><span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">option_entities = </span><span class="s3">None</span>
+        <span class="s1">selectin_load_via = mapper._should_selectin_load(</span>
+            <span class="s1">option_entities</span><span class="s5">,</span>
+            <span class="s1">_polymorphic_from</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">selectin_load_via </span><span class="s3">and </span><span class="s1">selectin_load_via </span><span class="s3">is not </span><span class="s1">_polymorphic_from:</span>
+            <span class="s0"># only_load_props goes w/ refresh_state only, and in a refresh</span>
+            <span class="s0"># we are a single row query for the exact entity; polymorphic</span>
+            <span class="s0"># loading does not apply</span>
+            <span class="s3">assert </span><span class="s1">only_load_props </span><span class="s3">is None</span>
+
+            <span class="s3">if </span><span class="s1">selectin_load_via.is_mapper:</span>
+                <span class="s1">_load_supers = []</span>
+                <span class="s1">_endmost_mapper = selectin_load_via</span>
+                <span class="s3">while </span><span class="s1">(</span>
+                    <span class="s1">_endmost_mapper</span>
+                    <span class="s3">and </span><span class="s1">_endmost_mapper </span><span class="s3">is not </span><span class="s1">_polymorphic_from</span>
+                <span class="s1">):</span>
+                    <span class="s1">_load_supers.append(_endmost_mapper)</span>
+                    <span class="s1">_endmost_mapper = _endmost_mapper.inherits</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">_load_supers = [selectin_load_via]</span>
+
+            <span class="s3">for </span><span class="s1">_selectinload_entity </span><span class="s3">in </span><span class="s1">_load_supers:</span>
+                <span class="s3">if </span><span class="s1">PostLoad.path_exists(</span>
+                    <span class="s1">context</span><span class="s5">, </span><span class="s1">load_path</span><span class="s5">, </span><span class="s1">_selectinload_entity</span>
+                <span class="s1">):</span>
+                    <span class="s3">continue</span>
+                <span class="s1">callable_ = _load_subclass_via_in(</span>
+                    <span class="s1">context</span><span class="s5">,</span>
+                    <span class="s1">path</span><span class="s5">,</span>
+                    <span class="s1">_selectinload_entity</span><span class="s5">,</span>
+                    <span class="s1">_polymorphic_from</span><span class="s5">,</span>
+                    <span class="s1">option_entities</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s1">PostLoad.callable_for_path(</span>
+                    <span class="s1">context</span><span class="s5">,</span>
+                    <span class="s1">load_path</span><span class="s5">,</span>
+                    <span class="s1">_selectinload_entity.mapper</span><span class="s5">,</span>
+                    <span class="s1">_selectinload_entity</span><span class="s5">,</span>
+                    <span class="s1">callable_</span><span class="s5">,</span>
+                    <span class="s1">_selectinload_entity</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+    <span class="s1">post_load = PostLoad.for_context(context</span><span class="s5">, </span><span class="s1">load_path</span><span class="s5">, </span><span class="s1">only_load_props)</span>
+
+    <span class="s3">if </span><span class="s1">refresh_state:</span>
+        <span class="s1">refresh_identity_key = refresh_state.key</span>
+        <span class="s3">if </span><span class="s1">refresh_identity_key </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s0"># super-rare condition; a refresh is being called</span>
+            <span class="s0"># on a non-instance-key instance; this is meant to only</span>
+            <span class="s0"># occur within a flush()</span>
+            <span class="s1">refresh_identity_key = mapper._identity_key_from_state(</span>
+                <span class="s1">refresh_state</span>
+            <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">refresh_identity_key = </span><span class="s3">None</span>
+
+        <span class="s1">primary_key_getter = getters[</span><span class="s4">&quot;primary_key_getter&quot;</span><span class="s1">]</span>
+
+    <span class="s3">if </span><span class="s1">mapper.allow_partial_pks:</span>
+        <span class="s1">is_not_primary_key = _none_set.issuperset</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">is_not_primary_key = _none_set.intersection</span>
+
+    <span class="s3">def </span><span class="s1">_instance(row):</span>
+        <span class="s0"># determine the state that we'll be populating</span>
+        <span class="s3">if </span><span class="s1">refresh_identity_key:</span>
+            <span class="s0"># fixed state that we're refreshing</span>
+            <span class="s1">state = refresh_state</span>
+            <span class="s1">instance = state.obj()</span>
+            <span class="s1">dict_ = instance_dict(instance)</span>
+            <span class="s1">isnew = state.runid != runid</span>
+            <span class="s1">currentload = </span><span class="s3">True</span>
+            <span class="s1">loaded_instance = </span><span class="s3">False</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># look at the row, see if that identity is in the</span>
+            <span class="s0"># session, or we have to create a new one</span>
+            <span class="s1">identitykey = (</span>
+                <span class="s1">identity_class</span><span class="s5">,</span>
+                <span class="s1">primary_key_getter(row)</span><span class="s5">,</span>
+                <span class="s1">identity_token</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">instance = session_identity_map.get(identitykey)</span>
+
+            <span class="s3">if </span><span class="s1">instance </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s0"># existing instance</span>
+                <span class="s1">state = instance_state(instance)</span>
+                <span class="s1">dict_ = instance_dict(instance)</span>
+
+                <span class="s1">isnew = state.runid != runid</span>
+                <span class="s1">currentload = </span><span class="s3">not </span><span class="s1">isnew</span>
+                <span class="s1">loaded_instance = </span><span class="s3">False</span>
+
+                <span class="s3">if </span><span class="s1">version_check </span><span class="s3">and </span><span class="s1">version_id_getter </span><span class="s3">and not </span><span class="s1">currentload:</span>
+                    <span class="s1">_validate_version_id(</span>
+                        <span class="s1">mapper</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">row</span><span class="s5">, </span><span class="s1">version_id_getter</span>
+                    <span class="s1">)</span>
+
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s0"># create a new instance</span>
+
+                <span class="s0"># check for non-NULL values in the primary key columns,</span>
+                <span class="s0"># else no entity is returned for the row</span>
+                <span class="s3">if </span><span class="s1">is_not_primary_key(identitykey[</span><span class="s6">1</span><span class="s1">]):</span>
+                    <span class="s3">return None</span>
+
+                <span class="s1">isnew = </span><span class="s3">True</span>
+                <span class="s1">currentload = </span><span class="s3">True</span>
+                <span class="s1">loaded_instance = </span><span class="s3">True</span>
+
+                <span class="s1">instance = mapper.class_manager.new_instance()</span>
+
+                <span class="s1">dict_ = instance_dict(instance)</span>
+                <span class="s1">state = instance_state(instance)</span>
+                <span class="s1">state.key = identitykey</span>
+                <span class="s1">state.identity_token = identity_token</span>
+
+                <span class="s0"># attach instance to session.</span>
+                <span class="s1">state.session_id = session_id</span>
+                <span class="s1">session_identity_map._add_unpresent(state</span><span class="s5">, </span><span class="s1">identitykey)</span>
+
+        <span class="s1">effective_populate_existing = populate_existing</span>
+        <span class="s3">if </span><span class="s1">refresh_state </span><span class="s3">is </span><span class="s1">state:</span>
+            <span class="s1">effective_populate_existing = </span><span class="s3">True</span>
+
+        <span class="s0"># populate.  this looks at whether this state is new</span>
+        <span class="s0"># for this load or was existing, and whether or not this</span>
+        <span class="s0"># row is the first row with this identity.</span>
+        <span class="s3">if </span><span class="s1">currentload </span><span class="s3">or </span><span class="s1">effective_populate_existing:</span>
+            <span class="s0"># full population routines.  Objects here are either</span>
+            <span class="s0"># just created, or we are doing a populate_existing</span>
+
+            <span class="s0"># be conservative about setting load_path when populate_existing</span>
+            <span class="s0"># is in effect; want to maintain options from the original</span>
+            <span class="s0"># load.  see test_expire-&gt;test_refresh_maintains_deferred_options</span>
+            <span class="s3">if </span><span class="s1">isnew </span><span class="s3">and </span><span class="s1">(</span>
+                <span class="s1">propagated_loader_options </span><span class="s3">or not </span><span class="s1">effective_populate_existing</span>
+            <span class="s1">):</span>
+                <span class="s1">state.load_options = propagated_loader_options</span>
+                <span class="s1">state.load_path = load_path</span>
+
+            <span class="s1">_populate_full(</span>
+                <span class="s1">context</span><span class="s5">,</span>
+                <span class="s1">row</span><span class="s5">,</span>
+                <span class="s1">state</span><span class="s5">,</span>
+                <span class="s1">dict_</span><span class="s5">,</span>
+                <span class="s1">isnew</span><span class="s5">,</span>
+                <span class="s1">load_path</span><span class="s5">,</span>
+                <span class="s1">loaded_instance</span><span class="s5">,</span>
+                <span class="s1">effective_populate_existing</span><span class="s5">,</span>
+                <span class="s1">populators</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">isnew:</span>
+                <span class="s0"># state.runid should be equal to context.runid / runid</span>
+                <span class="s0"># here, however for event checks we are being more conservative</span>
+                <span class="s0"># and checking against existing run id</span>
+                <span class="s0"># assert state.runid == runid</span>
+
+                <span class="s1">existing_runid = state.runid</span>
+
+                <span class="s3">if </span><span class="s1">loaded_instance:</span>
+                    <span class="s3">if </span><span class="s1">load_evt:</span>
+                        <span class="s1">state.manager.dispatch.load(state</span><span class="s5">, </span><span class="s1">context)</span>
+                        <span class="s3">if </span><span class="s1">state.runid != existing_runid:</span>
+                            <span class="s1">_warn_for_runid_changed(state)</span>
+                    <span class="s3">if </span><span class="s1">persistent_evt:</span>
+                        <span class="s1">loaded_as_persistent(context.session</span><span class="s5">, </span><span class="s1">state)</span>
+                        <span class="s3">if </span><span class="s1">state.runid != existing_runid:</span>
+                            <span class="s1">_warn_for_runid_changed(state)</span>
+                <span class="s3">elif </span><span class="s1">refresh_evt:</span>
+                    <span class="s1">state.manager.dispatch.refresh(</span>
+                        <span class="s1">state</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">only_load_props</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">state.runid != runid:</span>
+                        <span class="s1">_warn_for_runid_changed(state)</span>
+
+                <span class="s3">if </span><span class="s1">effective_populate_existing </span><span class="s3">or </span><span class="s1">state.modified:</span>
+                    <span class="s3">if </span><span class="s1">refresh_state </span><span class="s3">and </span><span class="s1">only_load_props:</span>
+                        <span class="s1">state._commit(dict_</span><span class="s5">, </span><span class="s1">only_load_props)</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">state._commit_all(dict_</span><span class="s5">, </span><span class="s1">session_identity_map)</span>
+
+            <span class="s3">if </span><span class="s1">post_load:</span>
+                <span class="s1">post_load.add_state(state</span><span class="s5">, </span><span class="s3">True</span><span class="s1">)</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># partial population routines, for objects that were already</span>
+            <span class="s0"># in the Session, but a row matches them; apply eager loaders</span>
+            <span class="s0"># on existing objects, etc.</span>
+            <span class="s1">unloaded = state.unloaded</span>
+            <span class="s1">isnew = state </span><span class="s3">not in </span><span class="s1">context.partials</span>
+
+            <span class="s3">if not </span><span class="s1">isnew </span><span class="s3">or </span><span class="s1">unloaded </span><span class="s3">or </span><span class="s1">populators[</span><span class="s4">&quot;eager&quot;</span><span class="s1">]:</span>
+                <span class="s0"># state is having a partial set of its attributes</span>
+                <span class="s0"># refreshed.  Populate those attributes,</span>
+                <span class="s0"># and add to the &quot;context.partials&quot; collection.</span>
+
+                <span class="s1">to_load = _populate_partial(</span>
+                    <span class="s1">context</span><span class="s5">,</span>
+                    <span class="s1">row</span><span class="s5">,</span>
+                    <span class="s1">state</span><span class="s5">,</span>
+                    <span class="s1">dict_</span><span class="s5">,</span>
+                    <span class="s1">isnew</span><span class="s5">,</span>
+                    <span class="s1">load_path</span><span class="s5">,</span>
+                    <span class="s1">unloaded</span><span class="s5">,</span>
+                    <span class="s1">populators</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+                <span class="s3">if </span><span class="s1">isnew:</span>
+                    <span class="s3">if </span><span class="s1">refresh_evt:</span>
+                        <span class="s1">existing_runid = state.runid</span>
+                        <span class="s1">state.manager.dispatch.refresh(state</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">to_load)</span>
+                        <span class="s3">if </span><span class="s1">state.runid != existing_runid:</span>
+                            <span class="s1">_warn_for_runid_changed(state)</span>
+
+                    <span class="s1">state._commit(dict_</span><span class="s5">, </span><span class="s1">to_load)</span>
+
+            <span class="s3">if </span><span class="s1">post_load </span><span class="s3">and </span><span class="s1">context.invoke_all_eagers:</span>
+                <span class="s1">post_load.add_state(state</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">instance</span>
+
+    <span class="s3">if </span><span class="s1">mapper.polymorphic_map </span><span class="s3">and not </span><span class="s1">_polymorphic_from </span><span class="s3">and not </span><span class="s1">refresh_state:</span>
+        <span class="s0"># if we are doing polymorphic, dispatch to a different _instance()</span>
+        <span class="s0"># method specific to the subclass mapper</span>
+        <span class="s3">def </span><span class="s1">ensure_no_pk(row):</span>
+            <span class="s1">identitykey = (</span>
+                <span class="s1">identity_class</span><span class="s5">,</span>
+                <span class="s1">primary_key_getter(row)</span><span class="s5">,</span>
+                <span class="s1">identity_token</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">if not </span><span class="s1">is_not_primary_key(identitykey[</span><span class="s6">1</span><span class="s1">]):</span>
+                <span class="s3">return </span><span class="s1">identitykey</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+
+        <span class="s1">_instance = _decorate_polymorphic_switch(</span>
+            <span class="s1">_instance</span><span class="s5">,</span>
+            <span class="s1">context</span><span class="s5">,</span>
+            <span class="s1">query_entity</span><span class="s5">,</span>
+            <span class="s1">mapper</span><span class="s5">,</span>
+            <span class="s1">result</span><span class="s5">,</span>
+            <span class="s1">path</span><span class="s5">,</span>
+            <span class="s1">polymorphic_discriminator</span><span class="s5">,</span>
+            <span class="s1">adapter</span><span class="s5">,</span>
+            <span class="s1">ensure_no_pk</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">return </span><span class="s1">_instance</span>
+
+
+<span class="s3">def </span><span class="s1">_load_subclass_via_in(</span>
+    <span class="s1">context</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">entity</span><span class="s5">, </span><span class="s1">polymorphic_from</span><span class="s5">, </span><span class="s1">option_entities</span>
+<span class="s1">):</span>
+    <span class="s1">mapper = entity.mapper</span>
+
+    <span class="s0"># TODO: polymorphic_from seems to be a Mapper in all cases.</span>
+    <span class="s0"># this is likely not needed, but as we dont have typing in loading.py</span>
+    <span class="s0"># yet, err on the safe side</span>
+    <span class="s1">polymorphic_from_mapper = polymorphic_from.mapper</span>
+    <span class="s1">not_against_basemost = polymorphic_from_mapper.inherits </span><span class="s3">is not None</span>
+
+    <span class="s1">zero_idx = len(mapper.base_mapper.primary_key) == </span><span class="s6">1</span>
+
+    <span class="s3">if </span><span class="s1">entity.is_aliased_class </span><span class="s3">or </span><span class="s1">not_against_basemost:</span>
+        <span class="s1">q</span><span class="s5">, </span><span class="s1">enable_opt</span><span class="s5">, </span><span class="s1">disable_opt = mapper._subclass_load_via_in(</span>
+            <span class="s1">entity</span><span class="s5">, </span><span class="s1">polymorphic_from</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">q</span><span class="s5">, </span><span class="s1">enable_opt</span><span class="s5">, </span><span class="s1">disable_opt = mapper._subclass_load_via_in_mapper</span>
+
+    <span class="s3">def </span><span class="s1">do_load(context</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">states</span><span class="s5">, </span><span class="s1">load_only</span><span class="s5">, </span><span class="s1">effective_entity):</span>
+        <span class="s3">if not </span><span class="s1">option_entities:</span>
+            <span class="s0"># filter out states for those that would have selectinloaded</span>
+            <span class="s0"># from another loader</span>
+            <span class="s0"># TODO: we are currently ignoring the case where the</span>
+            <span class="s0"># &quot;selectin_polymorphic&quot; option is used, as this is much more</span>
+            <span class="s0"># complex / specific / very uncommon API use</span>
+            <span class="s1">states = [</span>
+                <span class="s1">(s</span><span class="s5">, </span><span class="s1">v)</span>
+                <span class="s3">for </span><span class="s1">s</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">states</span>
+                <span class="s3">if </span><span class="s1">s.mapper._would_selectin_load_only_from_given_mapper(mapper)</span>
+            <span class="s1">]</span>
+
+            <span class="s3">if not </span><span class="s1">states:</span>
+                <span class="s3">return</span>
+
+        <span class="s1">orig_query = context.query</span>
+
+        <span class="s3">if </span><span class="s1">path.parent:</span>
+            <span class="s1">enable_opt_lcl = enable_opt._prepend_path(path)</span>
+            <span class="s1">disable_opt_lcl = disable_opt._prepend_path(path)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">enable_opt_lcl = enable_opt</span>
+            <span class="s1">disable_opt_lcl = disable_opt</span>
+        <span class="s1">options = (</span>
+            <span class="s1">(enable_opt_lcl</span><span class="s5">,</span><span class="s1">) + orig_query._with_options + (disable_opt_lcl</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">q2 = q.options(*options)</span>
+
+        <span class="s1">q2._compile_options = context.compile_state.default_compile_options</span>
+        <span class="s1">q2._compile_options += {</span><span class="s4">&quot;_current_path&quot;</span><span class="s1">: path.parent}</span>
+
+        <span class="s3">if </span><span class="s1">context.populate_existing:</span>
+            <span class="s1">q2 = q2.execution_options(populate_existing=</span><span class="s3">True</span><span class="s1">)</span>
+
+        <span class="s1">context.session.execute(</span>
+            <span class="s1">q2</span><span class="s5">,</span>
+            <span class="s1">dict(</span>
+                <span class="s1">primary_keys=[</span>
+                    <span class="s1">state.key[</span><span class="s6">1</span><span class="s1">][</span><span class="s6">0</span><span class="s1">] </span><span class="s3">if </span><span class="s1">zero_idx </span><span class="s3">else </span><span class="s1">state.key[</span><span class="s6">1</span><span class="s1">]</span>
+                    <span class="s3">for </span><span class="s1">state</span><span class="s5">, </span><span class="s1">load_attrs </span><span class="s3">in </span><span class="s1">states</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">).unique().scalars().all()</span>
+
+    <span class="s3">return </span><span class="s1">do_load</span>
+
+
+<span class="s3">def </span><span class="s1">_populate_full(</span>
+    <span class="s1">context</span><span class="s5">,</span>
+    <span class="s1">row</span><span class="s5">,</span>
+    <span class="s1">state</span><span class="s5">,</span>
+    <span class="s1">dict_</span><span class="s5">,</span>
+    <span class="s1">isnew</span><span class="s5">,</span>
+    <span class="s1">load_path</span><span class="s5">,</span>
+    <span class="s1">loaded_instance</span><span class="s5">,</span>
+    <span class="s1">populate_existing</span><span class="s5">,</span>
+    <span class="s1">populators</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s3">if </span><span class="s1">isnew:</span>
+        <span class="s0"># first time we are seeing a row with this identity.</span>
+        <span class="s1">state.runid = context.runid</span>
+
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">getter </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;quick&quot;</span><span class="s1">]:</span>
+            <span class="s1">dict_[key] = getter(row)</span>
+        <span class="s3">if </span><span class="s1">populate_existing:</span>
+            <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">set_callable </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;expire&quot;</span><span class="s1">]:</span>
+                <span class="s1">dict_.pop(key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">set_callable:</span>
+                    <span class="s1">state.expired_attributes.add(key)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">set_callable </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;expire&quot;</span><span class="s1">]:</span>
+                <span class="s3">if </span><span class="s1">set_callable:</span>
+                    <span class="s1">state.expired_attributes.add(key)</span>
+
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">populator </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;new&quot;</span><span class="s1">]:</span>
+            <span class="s1">populator(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">row)</span>
+
+    <span class="s3">elif </span><span class="s1">load_path != state.load_path:</span>
+        <span class="s0"># new load path, e.g. object is present in more than one</span>
+        <span class="s0"># column position in a series of rows</span>
+        <span class="s1">state.load_path = load_path</span>
+
+        <span class="s0"># if we have data, and the data isn't in the dict, OK, let's put</span>
+        <span class="s0"># it in.</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">getter </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;quick&quot;</span><span class="s1">]:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">dict_:</span>
+                <span class="s1">dict_[key] = getter(row)</span>
+
+        <span class="s0"># otherwise treat like an &quot;already seen&quot; row</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">populator </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;existing&quot;</span><span class="s1">]:</span>
+            <span class="s1">populator(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">row)</span>
+            <span class="s0"># TODO:  allow &quot;existing&quot; populator to know this is</span>
+            <span class="s0"># a new path for the state:</span>
+            <span class="s0"># populator(state, dict_, row, new_path=True)</span>
+
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s0"># have already seen rows with this identity in this same path.</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">populator </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;existing&quot;</span><span class="s1">]:</span>
+            <span class="s1">populator(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">row)</span>
+
+            <span class="s0"># TODO: same path</span>
+            <span class="s0"># populator(state, dict_, row, new_path=False)</span>
+
+
+<span class="s3">def </span><span class="s1">_populate_partial(</span>
+    <span class="s1">context</span><span class="s5">, </span><span class="s1">row</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">isnew</span><span class="s5">, </span><span class="s1">load_path</span><span class="s5">, </span><span class="s1">unloaded</span><span class="s5">, </span><span class="s1">populators</span>
+<span class="s1">):</span>
+    <span class="s3">if not </span><span class="s1">isnew:</span>
+        <span class="s3">if </span><span class="s1">unloaded:</span>
+            <span class="s0"># extra pass, see #8166</span>
+            <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">getter </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;quick&quot;</span><span class="s1">]:</span>
+                <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">unloaded:</span>
+                    <span class="s1">dict_[key] = getter(row)</span>
+
+        <span class="s1">to_load = context.partials[state]</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">populator </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;existing&quot;</span><span class="s1">]:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">to_load:</span>
+                <span class="s1">populator(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">row)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">to_load = unloaded</span>
+        <span class="s1">context.partials[state] = to_load</span>
+
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">getter </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;quick&quot;</span><span class="s1">]:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">to_load:</span>
+                <span class="s1">dict_[key] = getter(row)</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">set_callable </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;expire&quot;</span><span class="s1">]:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">to_load:</span>
+                <span class="s1">dict_.pop(key</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">set_callable:</span>
+                    <span class="s1">state.expired_attributes.add(key)</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">populator </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;new&quot;</span><span class="s1">]:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">to_load:</span>
+                <span class="s1">populator(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">row)</span>
+
+    <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">populator </span><span class="s3">in </span><span class="s1">populators[</span><span class="s4">&quot;eager&quot;</span><span class="s1">]:</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">unloaded:</span>
+            <span class="s1">populator(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">row)</span>
+
+    <span class="s3">return </span><span class="s1">to_load</span>
+
+
+<span class="s3">def </span><span class="s1">_validate_version_id(mapper</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">row</span><span class="s5">, </span><span class="s1">getter):</span>
+    <span class="s3">if </span><span class="s1">mapper._get_state_attr_by_column(</span>
+        <span class="s1">state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">mapper.version_id_col</span>
+    <span class="s1">) != getter(row):</span>
+        <span class="s3">raise </span><span class="s1">orm_exc.StaleDataError(</span>
+            <span class="s4">&quot;Instance '%s' has version id '%s' which &quot;</span>
+            <span class="s4">&quot;does not match database-loaded version id '%s'.&quot;</span>
+            <span class="s1">% (</span>
+                <span class="s1">state_str(state)</span><span class="s5">,</span>
+                <span class="s1">mapper._get_state_attr_by_column(</span>
+                    <span class="s1">state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">mapper.version_id_col</span>
+                <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">getter(row)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_decorate_polymorphic_switch(</span>
+    <span class="s1">instance_fn</span><span class="s5">,</span>
+    <span class="s1">context</span><span class="s5">,</span>
+    <span class="s1">query_entity</span><span class="s5">,</span>
+    <span class="s1">mapper</span><span class="s5">,</span>
+    <span class="s1">result</span><span class="s5">,</span>
+    <span class="s1">path</span><span class="s5">,</span>
+    <span class="s1">polymorphic_discriminator</span><span class="s5">,</span>
+    <span class="s1">adapter</span><span class="s5">,</span>
+    <span class="s1">ensure_no_pk</span><span class="s5">,</span>
+<span class="s1">):</span>
+    <span class="s3">if </span><span class="s1">polymorphic_discriminator </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">polymorphic_on = polymorphic_discriminator</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">polymorphic_on = mapper.polymorphic_on</span>
+    <span class="s3">if </span><span class="s1">polymorphic_on </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">instance_fn</span>
+
+    <span class="s3">if </span><span class="s1">adapter:</span>
+        <span class="s1">polymorphic_on = adapter.columns[polymorphic_on]</span>
+
+    <span class="s3">def </span><span class="s1">configure_subclass_mapper(discriminator):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">sub_mapper = mapper.polymorphic_map[discriminator]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s3">raise </span><span class="s1">AssertionError(</span>
+                <span class="s4">&quot;No such polymorphic_identity %r is defined&quot; </span><span class="s1">% discriminator</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">sub_mapper </span><span class="s3">is </span><span class="s1">mapper:</span>
+                <span class="s3">return None</span>
+            <span class="s3">elif not </span><span class="s1">sub_mapper.isa(mapper):</span>
+                <span class="s3">return False</span>
+
+            <span class="s3">return </span><span class="s1">_instance_processor(</span>
+                <span class="s1">query_entity</span><span class="s5">,</span>
+                <span class="s1">sub_mapper</span><span class="s5">,</span>
+                <span class="s1">context</span><span class="s5">,</span>
+                <span class="s1">result</span><span class="s5">,</span>
+                <span class="s1">path</span><span class="s5">,</span>
+                <span class="s1">adapter</span><span class="s5">,</span>
+                <span class="s1">_polymorphic_from=mapper</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s1">polymorphic_instances = util.PopulateDict(configure_subclass_mapper)</span>
+
+    <span class="s1">getter = result._getter(polymorphic_on)</span>
+
+    <span class="s3">def </span><span class="s1">polymorphic_instance(row):</span>
+        <span class="s1">discriminator = getter(row)</span>
+        <span class="s3">if </span><span class="s1">discriminator </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">_instance = polymorphic_instances[discriminator]</span>
+            <span class="s3">if </span><span class="s1">_instance:</span>
+                <span class="s3">return </span><span class="s1">_instance(row)</span>
+            <span class="s3">elif </span><span class="s1">_instance </span><span class="s3">is False</span><span class="s1">:</span>
+                <span class="s1">identitykey = ensure_no_pk(row)</span>
+
+                <span class="s3">if </span><span class="s1">identitykey:</span>
+                    <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                        <span class="s4">&quot;Row with identity key %s can't be loaded into an &quot;</span>
+                        <span class="s4">&quot;object; the polymorphic discriminator column '%s' &quot;</span>
+                        <span class="s4">&quot;refers to %s, which is not a sub-mapper of &quot;</span>
+                        <span class="s4">&quot;the requested %s&quot;</span>
+                        <span class="s1">% (</span>
+                            <span class="s1">identitykey</span><span class="s5">,</span>
+                            <span class="s1">polymorphic_on</span><span class="s5">,</span>
+                            <span class="s1">mapper.polymorphic_map[discriminator]</span><span class="s5">,</span>
+                            <span class="s1">mapper</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">return None</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">instance_fn(row)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">identitykey = ensure_no_pk(row)</span>
+
+            <span class="s3">if </span><span class="s1">identitykey:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;Row with identity key %s can't be loaded into an &quot;</span>
+                    <span class="s4">&quot;object; the polymorphic discriminator column '%s' is &quot;</span>
+                    <span class="s4">&quot;NULL&quot; </span><span class="s1">% (identitykey</span><span class="s5">, </span><span class="s1">polymorphic_on)</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+
+    <span class="s3">return </span><span class="s1">polymorphic_instance</span>
+
+
+<span class="s3">class </span><span class="s1">PostLoad:</span>
+    <span class="s2">&quot;&quot;&quot;Track loaders and states for &quot;post load&quot; operations.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = </span><span class="s4">&quot;loaders&quot;</span><span class="s5">, </span><span class="s4">&quot;states&quot;</span><span class="s5">, </span><span class="s4">&quot;load_keys&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self):</span>
+        <span class="s1">self.loaders = {}</span>
+        <span class="s1">self.states = util.OrderedDict()</span>
+        <span class="s1">self.load_keys = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">add_state(self</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">overwrite):</span>
+        <span class="s0"># the states for a polymorphic load here are all shared</span>
+        <span class="s0"># within a single PostLoad object among multiple subtypes.</span>
+        <span class="s0"># Filtering of callables on a per-subclass basis needs to be done at</span>
+        <span class="s0"># the invocation level</span>
+        <span class="s1">self.states[state] = overwrite</span>
+
+    <span class="s3">def </span><span class="s1">invoke(self</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">path):</span>
+        <span class="s3">if not </span><span class="s1">self.states:</span>
+            <span class="s3">return</span>
+        <span class="s1">path = path_registry.PathRegistry.coerce(path)</span>
+        <span class="s3">for </span><span class="s1">(</span>
+            <span class="s1">effective_context</span><span class="s5">,</span>
+            <span class="s1">token</span><span class="s5">,</span>
+            <span class="s1">limit_to_mapper</span><span class="s5">,</span>
+            <span class="s1">loader</span><span class="s5">,</span>
+            <span class="s1">arg</span><span class="s5">,</span>
+            <span class="s1">kw</span><span class="s5">,</span>
+        <span class="s1">) </span><span class="s3">in </span><span class="s1">self.loaders.values():</span>
+            <span class="s1">states = [</span>
+                <span class="s1">(state</span><span class="s5">, </span><span class="s1">overwrite)</span>
+                <span class="s3">for </span><span class="s1">state</span><span class="s5">, </span><span class="s1">overwrite </span><span class="s3">in </span><span class="s1">self.states.items()</span>
+                <span class="s3">if </span><span class="s1">state.manager.mapper.isa(limit_to_mapper)</span>
+            <span class="s1">]</span>
+            <span class="s3">if </span><span class="s1">states:</span>
+                <span class="s1">loader(</span>
+                    <span class="s1">effective_context</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">states</span><span class="s5">, </span><span class="s1">self.load_keys</span><span class="s5">, </span><span class="s1">*arg</span><span class="s5">, </span><span class="s1">**kw</span>
+                <span class="s1">)</span>
+        <span class="s1">self.states.clear()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">for_context(cls</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">only_load_props):</span>
+        <span class="s1">pl = context.post_load_paths.get(path.path)</span>
+        <span class="s3">if </span><span class="s1">pl </span><span class="s3">is not None and </span><span class="s1">only_load_props:</span>
+            <span class="s1">pl.load_keys = only_load_props</span>
+        <span class="s3">return </span><span class="s1">pl</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">path_exists(self</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">key):</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">path.path </span><span class="s3">in </span><span class="s1">context.post_load_paths</span>
+            <span class="s3">and </span><span class="s1">key </span><span class="s3">in </span><span class="s1">context.post_load_paths[path.path].loaders</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">callable_for_path(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">path</span><span class="s5">, </span><span class="s1">limit_to_mapper</span><span class="s5">, </span><span class="s1">token</span><span class="s5">, </span><span class="s1">loader_callable</span><span class="s5">, </span><span class="s1">*arg</span><span class="s5">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">path.path </span><span class="s3">in </span><span class="s1">context.post_load_paths:</span>
+            <span class="s1">pl = context.post_load_paths[path.path]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">pl = context.post_load_paths[path.path] = PostLoad()</span>
+        <span class="s1">pl.loaders[token] = (</span>
+            <span class="s1">context</span><span class="s5">,</span>
+            <span class="s1">token</span><span class="s5">,</span>
+            <span class="s1">limit_to_mapper</span><span class="s5">,</span>
+            <span class="s1">loader_callable</span><span class="s5">,</span>
+            <span class="s1">arg</span><span class="s5">,</span>
+            <span class="s1">kw</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">load_scalar_attributes(mapper</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">attribute_names</span><span class="s5">, </span><span class="s1">passive):</span>
+    <span class="s2">&quot;&quot;&quot;initiate a column-based attribute refresh operation.&quot;&quot;&quot;</span>
+
+    <span class="s0"># assert mapper is _state_mapper(state)</span>
+    <span class="s1">session = state.session</span>
+    <span class="s3">if not </span><span class="s1">session:</span>
+        <span class="s3">raise </span><span class="s1">orm_exc.DetachedInstanceError(</span>
+            <span class="s4">&quot;Instance %s is not bound to a Session; &quot;</span>
+            <span class="s4">&quot;attribute refresh operation cannot proceed&quot; </span><span class="s1">% (state_str(state))</span>
+        <span class="s1">)</span>
+
+    <span class="s1">no_autoflush = bool(passive &amp; attributes.NO_AUTOFLUSH)</span>
+
+    <span class="s0"># in the case of inheritance, particularly concrete and abstract</span>
+    <span class="s0"># concrete inheritance, the class manager might have some keys</span>
+    <span class="s0"># of attributes on the superclass that we didn't actually map.</span>
+    <span class="s0"># These could be mapped as &quot;concrete, don't load&quot; or could be completely</span>
+    <span class="s0"># excluded from the mapping and we know nothing about them.  Filter them</span>
+    <span class="s0"># here to prevent them from coming through.</span>
+    <span class="s3">if </span><span class="s1">attribute_names:</span>
+        <span class="s1">attribute_names = attribute_names.intersection(mapper.attrs.keys())</span>
+
+    <span class="s3">if </span><span class="s1">mapper.inherits </span><span class="s3">and not </span><span class="s1">mapper.concrete:</span>
+        <span class="s0"># load based on committed attributes in the object, formed into</span>
+        <span class="s0"># a truncated SELECT that only includes relevant tables.  does not</span>
+        <span class="s0"># currently use state.key</span>
+        <span class="s1">statement = mapper._optimized_get_statement(state</span><span class="s5">, </span><span class="s1">attribute_names)</span>
+        <span class="s3">if </span><span class="s1">statement </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s0"># undefer() isn't needed here because statement has the</span>
+            <span class="s0"># columns needed already, this implicitly undefers that column</span>
+            <span class="s1">stmt = FromStatement(mapper</span><span class="s5">, </span><span class="s1">statement)</span>
+
+            <span class="s3">return </span><span class="s1">load_on_ident(</span>
+                <span class="s1">session</span><span class="s5">,</span>
+                <span class="s1">stmt</span><span class="s5">,</span>
+                <span class="s3">None</span><span class="s5">,</span>
+                <span class="s1">only_load_props=attribute_names</span><span class="s5">,</span>
+                <span class="s1">refresh_state=state</span><span class="s5">,</span>
+                <span class="s1">no_autoflush=no_autoflush</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s0"># normal load, use state.key as the identity to SELECT</span>
+    <span class="s1">has_key = bool(state.key)</span>
+
+    <span class="s3">if </span><span class="s1">has_key:</span>
+        <span class="s1">identity_key = state.key</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s0"># this codepath is rare - only valid when inside a flush, and the</span>
+        <span class="s0"># object is becoming persistent but hasn't yet been assigned</span>
+        <span class="s0"># an identity_key.</span>
+        <span class="s0"># check here to ensure we have the attrs we need.</span>
+        <span class="s1">pk_attrs = [</span>
+            <span class="s1">mapper._columntoproperty[col].key </span><span class="s3">for </span><span class="s1">col </span><span class="s3">in </span><span class="s1">mapper.primary_key</span>
+        <span class="s1">]</span>
+        <span class="s3">if </span><span class="s1">state.expired_attributes.intersection(pk_attrs):</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Instance %s cannot be refreshed - it's not &quot;</span>
+                <span class="s4">&quot; persistent and does not &quot;</span>
+                <span class="s4">&quot;contain a full primary key.&quot; </span><span class="s1">% state_str(state)</span>
+            <span class="s1">)</span>
+        <span class="s1">identity_key = mapper._identity_key_from_state(state)</span>
+
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s1">_none_set.issubset(identity_key) </span><span class="s3">and not </span><span class="s1">mapper.allow_partial_pks</span>
+    <span class="s1">) </span><span class="s3">or </span><span class="s1">_none_set.issuperset(identity_key):</span>
+        <span class="s1">util.warn_limited(</span>
+            <span class="s4">&quot;Instance %s to be refreshed doesn't &quot;</span>
+            <span class="s4">&quot;contain a full primary key - can't be refreshed &quot;</span>
+            <span class="s4">&quot;(and shouldn't be expired, either).&quot;</span><span class="s5">,</span>
+            <span class="s1">state_str(state)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">return</span>
+
+    <span class="s1">result = load_on_ident(</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">select(mapper).set_label_style(LABEL_STYLE_TABLENAME_PLUS_COL)</span><span class="s5">,</span>
+        <span class="s1">identity_key</span><span class="s5">,</span>
+        <span class="s1">refresh_state=state</span><span class="s5">,</span>
+        <span class="s1">only_load_props=attribute_names</span><span class="s5">,</span>
+        <span class="s1">no_autoflush=no_autoflush</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># if instance is pending, a refresh operation</span>
+    <span class="s0"># may not complete (even if PK attributes are assigned)</span>
+    <span class="s3">if </span><span class="s1">has_key </span><span class="s3">and </span><span class="s1">result </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">orm_exc.ObjectDeletedError(state)</span>
+</pre>
+</body>
+</html>

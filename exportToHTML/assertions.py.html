@@ -1,0 +1,1013 @@
+<html>
+<head>
+<title>assertions.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+assertions.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/assertions.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">collections </span><span class="s2">import </span><span class="s1">defaultdict</span>
+<span class="s2">import </span><span class="s1">contextlib</span>
+<span class="s2">from </span><span class="s1">copy </span><span class="s2">import </span><span class="s1">copy</span>
+<span class="s2">from </span><span class="s1">itertools </span><span class="s2">import </span><span class="s1">filterfalse</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">warnings</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">assertsql</span>
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">config</span>
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">engines</span>
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">mock</span>
+<span class="s2">from </span><span class="s1">.exclusions </span><span class="s2">import </span><span class="s1">db_spec</span>
+<span class="s2">from </span><span class="s1">.util </span><span class="s2">import </span><span class="s1">fail</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">exc </span><span class="s2">as </span><span class="s1">sa_exc</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">schema</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">sql</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">types </span><span class="s2">as </span><span class="s1">sqltypes</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">..engine </span><span class="s2">import </span><span class="s1">default</span>
+<span class="s2">from </span><span class="s1">..engine </span><span class="s2">import </span><span class="s1">url</span>
+<span class="s2">from </span><span class="s1">..sql.selectable </span><span class="s2">import </span><span class="s1">LABEL_STYLE_TABLENAME_PLUS_COL</span>
+<span class="s2">from </span><span class="s1">..util </span><span class="s2">import </span><span class="s1">decorator</span>
+
+
+<span class="s2">def </span><span class="s1">expect_warnings(*messages</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s4">&quot;&quot;&quot;Context manager which expects one or more warnings. 
+ 
+    With no arguments, squelches all SAWarning emitted via 
+    sqlalchemy.util.warn and sqlalchemy.util.warn_limited.   Otherwise 
+    pass string expressions that will match selected warnings via regex; 
+    all non-matching warnings are sent through. 
+ 
+    The expect version **asserts** that the warnings were in fact seen. 
+ 
+    Note that the test suite sets SAWarning warnings to raise exceptions. 
+ 
+    &quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+    <span class="s2">return </span><span class="s1">_expect_warnings_sqla_only(sa_exc.SAWarning</span><span class="s3">, </span><span class="s1">messages</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+
+<span class="s1">@contextlib.contextmanager</span>
+<span class="s2">def </span><span class="s1">expect_warnings_on(db</span><span class="s3">, </span><span class="s1">*messages</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s5">&quot;&quot;&quot;Context manager which expects one or more warnings on specific 
+    dialects. 
+ 
+    The expect version **asserts** that the warnings were in fact seen. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">spec = db_spec(db)</span>
+
+    <span class="s2">if </span><span class="s1">isinstance(db</span><span class="s3">, </span><span class="s1">str) </span><span class="s2">and not </span><span class="s1">spec(config._current):</span>
+        <span class="s2">yield</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">with </span><span class="s1">expect_warnings(*messages</span><span class="s3">, </span><span class="s1">**kw):</span>
+            <span class="s2">yield</span>
+
+
+<span class="s2">def </span><span class="s1">emits_warning(*messages):</span>
+    <span class="s5">&quot;&quot;&quot;Decorator form of expect_warnings(). 
+ 
+    Note that emits_warning does **not** assert that the warnings 
+    were in fact seen. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@decorator</span>
+    <span class="s2">def </span><span class="s1">decorate(fn</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s2">with </span><span class="s1">expect_warnings(assert_=</span><span class="s2">False</span><span class="s3">, </span><span class="s1">*messages):</span>
+            <span class="s2">return </span><span class="s1">fn(*args</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">return </span><span class="s1">decorate</span>
+
+
+<span class="s2">def </span><span class="s1">expect_deprecated(*messages</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s2">return </span><span class="s1">_expect_warnings_sqla_only(</span>
+        <span class="s1">sa_exc.SADeprecationWarning</span><span class="s3">, </span><span class="s1">messages</span><span class="s3">, </span><span class="s1">**kw</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">expect_deprecated_20(*messages</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s2">return </span><span class="s1">_expect_warnings_sqla_only(</span>
+        <span class="s1">sa_exc.Base20DeprecationWarning</span><span class="s3">, </span><span class="s1">messages</span><span class="s3">, </span><span class="s1">**kw</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">emits_warning_on(db</span><span class="s3">, </span><span class="s1">*messages):</span>
+    <span class="s5">&quot;&quot;&quot;Mark a test as emitting a warning on a specific dialect. 
+ 
+    With no arguments, squelches all SAWarning failures.  Or pass one or more 
+    strings; these will be matched to the root of the warning description by 
+    warnings.filterwarnings(). 
+ 
+    Note that emits_warning_on does **not** assert that the warnings 
+    were in fact seen. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@decorator</span>
+    <span class="s2">def </span><span class="s1">decorate(fn</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s2">with </span><span class="s1">expect_warnings_on(db</span><span class="s3">, </span><span class="s1">assert_=</span><span class="s2">False</span><span class="s3">, </span><span class="s1">*messages):</span>
+            <span class="s2">return </span><span class="s1">fn(*args</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">return </span><span class="s1">decorate</span>
+
+
+<span class="s2">def </span><span class="s1">uses_deprecated(*messages):</span>
+    <span class="s5">&quot;&quot;&quot;Mark a test as immune from fatal deprecation warnings. 
+ 
+    With no arguments, squelches all SADeprecationWarning failures. 
+    Or pass one or more strings; these will be matched to the root 
+    of the warning description by warnings.filterwarnings(). 
+ 
+    As a special case, you may pass a function name prefixed with // 
+    and it will be re-written as needed to match the standard warning 
+    verbiage emitted by the sqlalchemy.util.deprecated decorator. 
+ 
+    Note that uses_deprecated does **not** assert that the warnings 
+    were in fact seen. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@decorator</span>
+    <span class="s2">def </span><span class="s1">decorate(fn</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s2">with </span><span class="s1">expect_deprecated(*messages</span><span class="s3">, </span><span class="s1">assert_=</span><span class="s2">False</span><span class="s1">):</span>
+            <span class="s2">return </span><span class="s1">fn(*args</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">return </span><span class="s1">decorate</span>
+
+
+<span class="s1">_FILTERS = </span><span class="s2">None</span>
+<span class="s1">_SEEN = </span><span class="s2">None</span>
+<span class="s1">_EXC_CLS = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">_expect_warnings_sqla_only(</span>
+    <span class="s1">exc_cls</span><span class="s3">,</span>
+    <span class="s1">messages</span><span class="s3">,</span>
+    <span class="s1">regex=</span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">search_msg=</span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">assert_=</span><span class="s2">True</span><span class="s3">,</span>
+<span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;SQLAlchemy internal use only _expect_warnings(). 
+ 
+    Alembic is using _expect_warnings() directly, and should be updated 
+    to use this new interface. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">_expect_warnings(</span>
+        <span class="s1">exc_cls</span><span class="s3">,</span>
+        <span class="s1">messages</span><span class="s3">,</span>
+        <span class="s1">regex=regex</span><span class="s3">,</span>
+        <span class="s1">search_msg=search_msg</span><span class="s3">,</span>
+        <span class="s1">assert_=assert_</span><span class="s3">,</span>
+        <span class="s1">raise_on_any_unexpected=</span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s1">@contextlib.contextmanager</span>
+<span class="s2">def </span><span class="s1">_expect_warnings(</span>
+    <span class="s1">exc_cls</span><span class="s3">,</span>
+    <span class="s1">messages</span><span class="s3">,</span>
+    <span class="s1">regex=</span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">search_msg=</span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">assert_=</span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">raise_on_any_unexpected=</span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">squelch_other_warnings=</span><span class="s2">False</span><span class="s3">,</span>
+<span class="s1">):</span>
+    <span class="s2">global </span><span class="s1">_FILTERS</span><span class="s3">, </span><span class="s1">_SEEN</span><span class="s3">, </span><span class="s1">_EXC_CLS</span>
+
+    <span class="s2">if </span><span class="s1">regex </span><span class="s2">or </span><span class="s1">search_msg:</span>
+        <span class="s1">filters = [re.compile(msg</span><span class="s3">, </span><span class="s1">re.I | re.S) </span><span class="s2">for </span><span class="s1">msg </span><span class="s2">in </span><span class="s1">messages]</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">filters = list(messages)</span>
+
+    <span class="s2">if </span><span class="s1">_FILTERS </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s0"># nested call; update _FILTERS and _SEEN, return.  outer</span>
+        <span class="s0"># block will assert our messages</span>
+        <span class="s2">assert </span><span class="s1">_SEEN </span><span class="s2">is not None</span>
+        <span class="s2">assert </span><span class="s1">_EXC_CLS </span><span class="s2">is not None</span>
+        <span class="s1">_FILTERS.extend(filters)</span>
+        <span class="s1">_SEEN.update(filters)</span>
+        <span class="s1">_EXC_CLS += (exc_cls</span><span class="s3">,</span><span class="s1">)</span>
+        <span class="s2">yield</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">seen = _SEEN = set(filters)</span>
+        <span class="s1">_FILTERS = filters</span>
+        <span class="s1">_EXC_CLS = (exc_cls</span><span class="s3">,</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">raise_on_any_unexpected:</span>
+
+            <span class="s2">def </span><span class="s1">real_warn(msg</span><span class="s3">, </span><span class="s1">*arg</span><span class="s3">, </span><span class="s1">**kw):</span>
+                <span class="s2">raise </span><span class="s1">AssertionError(</span><span class="s4">&quot;Got unexpected warning: %r&quot; </span><span class="s1">% msg)</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">real_warn = warnings.warn</span>
+
+        <span class="s2">def </span><span class="s1">our_warn(msg</span><span class="s3">, </span><span class="s1">*arg</span><span class="s3">, </span><span class="s1">**kw):</span>
+            <span class="s2">if </span><span class="s1">isinstance(msg</span><span class="s3">, </span><span class="s1">_EXC_CLS):</span>
+                <span class="s1">exception = type(msg)</span>
+                <span class="s1">msg = str(msg)</span>
+            <span class="s2">elif </span><span class="s1">arg:</span>
+                <span class="s1">exception = arg[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">exception = </span><span class="s2">None</span>
+
+            <span class="s2">if not </span><span class="s1">exception </span><span class="s2">or not </span><span class="s1">issubclass(exception</span><span class="s3">, </span><span class="s1">_EXC_CLS):</span>
+                <span class="s2">if not </span><span class="s1">squelch_other_warnings:</span>
+                    <span class="s2">return </span><span class="s1">real_warn(msg</span><span class="s3">, </span><span class="s1">*arg</span><span class="s3">, </span><span class="s1">**kw)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">return</span>
+
+            <span class="s2">if not </span><span class="s1">filters </span><span class="s2">and not </span><span class="s1">raise_on_any_unexpected:</span>
+                <span class="s2">return</span>
+
+            <span class="s2">for </span><span class="s1">filter_ </span><span class="s2">in </span><span class="s1">filters:</span>
+                <span class="s2">if </span><span class="s1">(</span>
+                    <span class="s1">(search_msg </span><span class="s2">and </span><span class="s1">filter_.search(msg))</span>
+                    <span class="s2">or </span><span class="s1">(regex </span><span class="s2">and </span><span class="s1">filter_.match(msg))</span>
+                    <span class="s2">or </span><span class="s1">(</span><span class="s2">not </span><span class="s1">regex </span><span class="s2">and </span><span class="s1">filter_ == msg)</span>
+                <span class="s1">):</span>
+                    <span class="s1">seen.discard(filter_)</span>
+                    <span class="s2">break</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">if not </span><span class="s1">squelch_other_warnings:</span>
+                    <span class="s1">real_warn(msg</span><span class="s3">, </span><span class="s1">*arg</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+        <span class="s2">with </span><span class="s1">mock.patch(</span><span class="s4">&quot;warnings.warn&quot;</span><span class="s3">, </span><span class="s1">our_warn):</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s2">yield</span>
+            <span class="s2">finally</span><span class="s1">:</span>
+                <span class="s1">_SEEN = _FILTERS = _EXC_CLS = </span><span class="s2">None</span>
+
+                <span class="s2">if </span><span class="s1">assert_:</span>
+                    <span class="s2">assert not </span><span class="s1">seen</span><span class="s3">, </span><span class="s4">&quot;Warnings were not seen: %s&quot; </span><span class="s1">% </span><span class="s4">&quot;, &quot;</span><span class="s1">.join(</span>
+                        <span class="s4">&quot;%r&quot; </span><span class="s1">% (s.pattern </span><span class="s2">if </span><span class="s1">regex </span><span class="s2">else </span><span class="s1">s) </span><span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s1">seen</span>
+                    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">global_cleanup_assertions():</span>
+    <span class="s5">&quot;&quot;&quot;Check things that have to be finalized at the end of a test suite. 
+ 
+    Hardcoded at the moment, a modular system can be built here 
+    to support things like PG prepared transactions, tables all 
+    dropped, etc. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">_assert_no_stray_pool_connections()</span>
+
+
+<span class="s2">def </span><span class="s1">_assert_no_stray_pool_connections():</span>
+    <span class="s1">engines.testing_reaper.assert_all_closed()</span>
+
+
+<span class="s2">def </span><span class="s1">int_within_variance(expected</span><span class="s3">, </span><span class="s1">received</span><span class="s3">, </span><span class="s1">variance):</span>
+    <span class="s1">deviance = int(expected * variance)</span>
+    <span class="s2">assert </span><span class="s1">(</span>
+        <span class="s1">abs(received - expected) &lt; deviance</span>
+    <span class="s1">)</span><span class="s3">, </span><span class="s4">&quot;Given int value %s is not within %d%% of expected value %s&quot; </span><span class="s1">% (</span>
+        <span class="s1">received</span><span class="s3">,</span>
+        <span class="s1">variance * </span><span class="s6">100</span><span class="s3">,</span>
+        <span class="s1">expected</span><span class="s3">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">eq_regex(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s2">assert </span><span class="s1">re.match(b</span><span class="s3">, </span><span class="s1">a)</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r !~ %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s2">def </span><span class="s1">eq_(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Assert a == b, with repr messaging on failure.&quot;&quot;&quot;</span>
+    <span class="s2">assert </span><span class="s1">a == b</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r != %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s2">def </span><span class="s1">ne_(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Assert a != b, with repr messaging on failure.&quot;&quot;&quot;</span>
+    <span class="s2">assert </span><span class="s1">a != b</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r == %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s2">def </span><span class="s1">le_(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Assert a &lt;= b, with repr messaging on failure.&quot;&quot;&quot;</span>
+    <span class="s2">assert </span><span class="s1">a &lt;= b</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r != %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s2">def </span><span class="s1">is_instance_of(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s2">assert </span><span class="s1">isinstance(a</span><span class="s3">, </span><span class="s1">b)</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r is not an instance of %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s2">def </span><span class="s1">is_none(a</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s1">is_(a</span><span class="s3">, </span><span class="s2">None</span><span class="s3">, </span><span class="s1">msg=msg)</span>
+
+
+<span class="s2">def </span><span class="s1">is_not_none(a</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s1">is_not(a</span><span class="s3">, </span><span class="s2">None</span><span class="s3">, </span><span class="s1">msg=msg)</span>
+
+
+<span class="s2">def </span><span class="s1">is_true(a</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s1">is_(bool(a)</span><span class="s3">, </span><span class="s2">True</span><span class="s3">, </span><span class="s1">msg=msg)</span>
+
+
+<span class="s2">def </span><span class="s1">is_false(a</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s1">is_(bool(a)</span><span class="s3">, </span><span class="s2">False</span><span class="s3">, </span><span class="s1">msg=msg)</span>
+
+
+<span class="s2">def </span><span class="s1">is_(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Assert a is b, with repr messaging on failure.&quot;&quot;&quot;</span>
+    <span class="s2">assert </span><span class="s1">a </span><span class="s2">is </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r is not %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s2">def </span><span class="s1">is_not(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Assert a is not b, with repr messaging on failure.&quot;&quot;&quot;</span>
+    <span class="s2">assert </span><span class="s1">a </span><span class="s2">is not </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r is %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s0"># deprecated.  See #5429</span>
+<span class="s1">is_not_ = is_not</span>
+
+
+<span class="s2">def </span><span class="s1">in_(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Assert a in b, with repr messaging on failure.&quot;&quot;&quot;</span>
+    <span class="s2">assert </span><span class="s1">a </span><span class="s2">in </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r not in %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s2">def </span><span class="s1">not_in(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Assert a in not b, with repr messaging on failure.&quot;&quot;&quot;</span>
+    <span class="s2">assert </span><span class="s1">a </span><span class="s2">not in </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r is in %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s0"># deprecated.  See #5429</span>
+<span class="s1">not_in_ = not_in</span>
+
+
+<span class="s2">def </span><span class="s1">startswith_(a</span><span class="s3">, </span><span class="s1">fragment</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Assert a.startswith(fragment), with repr messaging on failure.&quot;&quot;&quot;</span>
+    <span class="s2">assert </span><span class="s1">a.startswith(fragment)</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r does not start with %r&quot; </span><span class="s1">% (</span>
+        <span class="s1">a</span><span class="s3">,</span>
+        <span class="s1">fragment</span><span class="s3">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">eq_ignore_whitespace(a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s1">a = re.sub(</span><span class="s4">r&quot;^\s+?|\n&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">a)</span>
+    <span class="s1">a = re.sub(</span><span class="s4">r&quot; {2,}&quot;</span><span class="s3">, </span><span class="s4">&quot; &quot;</span><span class="s3">, </span><span class="s1">a)</span>
+    <span class="s1">a = re.sub(</span><span class="s4">r&quot;\t&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">a)</span>
+    <span class="s1">b = re.sub(</span><span class="s4">r&quot;^\s+?|\n&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">b)</span>
+    <span class="s1">b = re.sub(</span><span class="s4">r&quot; {2,}&quot;</span><span class="s3">, </span><span class="s4">&quot; &quot;</span><span class="s3">, </span><span class="s1">b)</span>
+    <span class="s1">b = re.sub(</span><span class="s4">r&quot;\t&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">b)</span>
+
+    <span class="s2">assert </span><span class="s1">a == b</span><span class="s3">, </span><span class="s1">msg </span><span class="s2">or </span><span class="s4">&quot;%r != %r&quot; </span><span class="s1">% (a</span><span class="s3">, </span><span class="s1">b)</span>
+
+
+<span class="s2">def </span><span class="s1">_assert_proper_exception_context(exception):</span>
+    <span class="s5">&quot;&quot;&quot;assert that any exception we're catching does not have a __context__ 
+    without a __cause__, and that __suppress_context__ is never set. 
+ 
+    Python 3 will report nested as exceptions as &quot;during the handling of 
+    error X, error Y occurred&quot;. That's not what we want to do.  we want 
+    these exceptions in a cause chain. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s1">(</span>
+        <span class="s1">exception.__context__ </span><span class="s2">is not </span><span class="s1">exception.__cause__</span>
+        <span class="s2">and not </span><span class="s1">exception.__suppress_context__</span>
+    <span class="s1">):</span>
+        <span class="s2">assert False</span><span class="s3">, </span><span class="s1">(</span>
+            <span class="s4">&quot;Exception %r was correctly raised but did not set a cause, &quot;</span>
+            <span class="s4">&quot;within context %r as its cause.&quot;</span>
+            <span class="s1">% (exception</span><span class="s3">, </span><span class="s1">exception.__context__)</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">assert_raises(except_cls</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s2">return </span><span class="s1">_assert_raises(except_cls</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">args</span><span class="s3">, </span><span class="s1">kw</span><span class="s3">, </span><span class="s1">check_context=</span><span class="s2">True</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">assert_raises_context_ok(except_cls</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kw):</span>
+    <span class="s2">return </span><span class="s1">_assert_raises(except_cls</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">args</span><span class="s3">, </span><span class="s1">kw)</span>
+
+
+<span class="s2">def </span><span class="s1">assert_raises_message(except_cls</span><span class="s3">, </span><span class="s1">msg</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+    <span class="s2">return </span><span class="s1">_assert_raises(</span>
+        <span class="s1">except_cls</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">args</span><span class="s3">, </span><span class="s1">kwargs</span><span class="s3">, </span><span class="s1">msg=msg</span><span class="s3">, </span><span class="s1">check_context=</span><span class="s2">True</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">assert_warns(except_cls</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+    <span class="s5">&quot;&quot;&quot;legacy adapter function for functions that were previously using 
+    assert_raises with SAWarning or similar. 
+ 
+    has some workarounds to accommodate the fact that the callable completes 
+    with this approach rather than stopping at the exception raise. 
+ 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">with </span><span class="s1">_expect_warnings_sqla_only(except_cls</span><span class="s3">, </span><span class="s1">[</span><span class="s4">&quot;.*&quot;</span><span class="s1">]):</span>
+        <span class="s2">return </span><span class="s1">callable_(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+
+<span class="s2">def </span><span class="s1">assert_warns_message(except_cls</span><span class="s3">, </span><span class="s1">msg</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+    <span class="s5">&quot;&quot;&quot;legacy adapter function for functions that were previously using 
+    assert_raises with SAWarning or similar. 
+ 
+    has some workarounds to accommodate the fact that the callable completes 
+    with this approach rather than stopping at the exception raise. 
+ 
+    Also uses regex.search() to match the given message to the error string 
+    rather than regex.match(). 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">with </span><span class="s1">_expect_warnings_sqla_only(</span>
+        <span class="s1">except_cls</span><span class="s3">,</span>
+        <span class="s1">[msg]</span><span class="s3">,</span>
+        <span class="s1">search_msg=</span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">regex=</span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">callable_(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+
+<span class="s2">def </span><span class="s1">assert_raises_message_context_ok(</span>
+    <span class="s1">except_cls</span><span class="s3">, </span><span class="s1">msg</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs</span>
+<span class="s1">):</span>
+    <span class="s2">return </span><span class="s1">_assert_raises(except_cls</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">args</span><span class="s3">, </span><span class="s1">kwargs</span><span class="s3">, </span><span class="s1">msg=msg)</span>
+
+
+<span class="s2">def </span><span class="s1">_assert_raises(</span>
+    <span class="s1">except_cls</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">args</span><span class="s3">, </span><span class="s1">kwargs</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">check_context=</span><span class="s2">False</span>
+<span class="s1">):</span>
+    <span class="s2">with </span><span class="s1">_expect_raises(except_cls</span><span class="s3">, </span><span class="s1">msg</span><span class="s3">, </span><span class="s1">check_context) </span><span class="s2">as </span><span class="s1">ec:</span>
+        <span class="s1">callable_(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+    <span class="s2">return </span><span class="s1">ec.error</span>
+
+
+<span class="s2">class </span><span class="s1">_ErrorContainer:</span>
+    <span class="s1">error = </span><span class="s2">None</span>
+
+
+<span class="s1">@contextlib.contextmanager</span>
+<span class="s2">def </span><span class="s1">_expect_raises(except_cls</span><span class="s3">, </span><span class="s1">msg=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">check_context=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s2">if </span><span class="s1">(</span>
+        <span class="s1">isinstance(except_cls</span><span class="s3">, </span><span class="s1">type)</span>
+        <span class="s2">and </span><span class="s1">issubclass(except_cls</span><span class="s3">, </span><span class="s1">Warning)</span>
+        <span class="s2">or </span><span class="s1">isinstance(except_cls</span><span class="s3">, </span><span class="s1">Warning)</span>
+    <span class="s1">):</span>
+        <span class="s2">raise </span><span class="s1">TypeError(</span>
+            <span class="s4">&quot;Use expect_warnings for warnings, not &quot;</span>
+            <span class="s4">&quot;expect_raises / assert_raises&quot;</span>
+        <span class="s1">)</span>
+    <span class="s1">ec = _ErrorContainer()</span>
+    <span class="s2">if </span><span class="s1">check_context:</span>
+        <span class="s1">are_we_already_in_a_traceback = sys.exc_info()[</span><span class="s6">0</span><span class="s1">]</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">yield </span><span class="s1">ec</span>
+        <span class="s1">success = </span><span class="s2">False</span>
+    <span class="s2">except </span><span class="s1">except_cls </span><span class="s2">as </span><span class="s1">err:</span>
+        <span class="s1">ec.error = err</span>
+        <span class="s1">success = </span><span class="s2">True</span>
+        <span class="s2">if </span><span class="s1">msg </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s0"># I'm often pdbing here, and &quot;err&quot; above isn't</span>
+            <span class="s0"># in scope, so assign the string explicitly</span>
+            <span class="s1">error_as_string = str(err)</span>
+            <span class="s2">assert </span><span class="s1">re.search(msg</span><span class="s3">, </span><span class="s1">error_as_string</span><span class="s3">, </span><span class="s1">re.UNICODE)</span><span class="s3">, </span><span class="s4">&quot;%r !~ %s&quot; </span><span class="s1">% (</span>
+                <span class="s1">msg</span><span class="s3">,</span>
+                <span class="s1">error_as_string</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">check_context </span><span class="s2">and not </span><span class="s1">are_we_already_in_a_traceback:</span>
+            <span class="s1">_assert_proper_exception_context(err)</span>
+        <span class="s1">print(str(err).encode(</span><span class="s4">&quot;utf-8&quot;</span><span class="s1">))</span>
+
+    <span class="s0"># it's generally a good idea to not carry traceback objects outside</span>
+    <span class="s0"># of the except: block, but in this case especially we seem to have</span>
+    <span class="s0"># hit some bug in either python 3.10.0b2 or greenlet or both which</span>
+    <span class="s0"># this seems to fix:</span>
+    <span class="s0"># https://github.com/python-greenlet/greenlet/issues/242</span>
+    <span class="s2">del </span><span class="s1">ec</span>
+
+    <span class="s0"># assert outside the block so it works for AssertionError too !</span>
+    <span class="s2">assert </span><span class="s1">success</span><span class="s3">, </span><span class="s4">&quot;Callable did not raise an exception&quot;</span>
+
+
+<span class="s2">def </span><span class="s1">expect_raises(except_cls</span><span class="s3">, </span><span class="s1">check_context=</span><span class="s2">True</span><span class="s1">):</span>
+    <span class="s2">return </span><span class="s1">_expect_raises(except_cls</span><span class="s3">, </span><span class="s1">check_context=check_context)</span>
+
+
+<span class="s2">def </span><span class="s1">expect_raises_message(except_cls</span><span class="s3">, </span><span class="s1">msg</span><span class="s3">, </span><span class="s1">check_context=</span><span class="s2">True</span><span class="s1">):</span>
+    <span class="s2">return </span><span class="s1">_expect_raises(except_cls</span><span class="s3">, </span><span class="s1">msg=msg</span><span class="s3">, </span><span class="s1">check_context=check_context)</span>
+
+
+<span class="s2">class </span><span class="s1">AssertsCompiledSQL:</span>
+    <span class="s2">def </span><span class="s1">assert_compile(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">clause</span><span class="s3">,</span>
+        <span class="s1">result</span><span class="s3">,</span>
+        <span class="s1">params=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">checkparams=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">for_executemany=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">check_literal_execute=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">check_post_param=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">dialect=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">checkpositional=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">check_prefetch=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">use_default_dialect=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">allow_dialect_select=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">supports_default_values=</span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">supports_default_metavalue=</span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">literal_binds=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">render_postcompile=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">schema_translate_map=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">render_schema_translate=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">default_schema_name=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">from_linting=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">check_param_order=</span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">use_literal_execute_for_simple_int=</span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">use_default_dialect:</span>
+            <span class="s1">dialect = default.DefaultDialect()</span>
+            <span class="s1">dialect.supports_default_values = supports_default_values</span>
+            <span class="s1">dialect.supports_default_metavalue = supports_default_metavalue</span>
+        <span class="s2">elif </span><span class="s1">allow_dialect_select:</span>
+            <span class="s1">dialect = </span><span class="s2">None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">dialect </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s1">dialect = getattr(self</span><span class="s3">, </span><span class="s4">&quot;__dialect__&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+
+            <span class="s2">if </span><span class="s1">dialect </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s1">dialect = config.db.dialect</span>
+            <span class="s2">elif </span><span class="s1">dialect == </span><span class="s4">&quot;default&quot; </span><span class="s2">or </span><span class="s1">dialect == </span><span class="s4">&quot;default_qmark&quot;</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">dialect == </span><span class="s4">&quot;default&quot;</span><span class="s1">:</span>
+                    <span class="s1">dialect = default.DefaultDialect()</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">dialect = default.DefaultDialect(</span><span class="s4">&quot;qmark&quot;</span><span class="s1">)</span>
+                <span class="s1">dialect.supports_default_values = supports_default_values</span>
+                <span class="s1">dialect.supports_default_metavalue = supports_default_metavalue</span>
+            <span class="s2">elif </span><span class="s1">dialect == </span><span class="s4">&quot;default_enhanced&quot;</span><span class="s1">:</span>
+                <span class="s1">dialect = default.StrCompileDialect()</span>
+            <span class="s2">elif </span><span class="s1">isinstance(dialect</span><span class="s3">, </span><span class="s1">str):</span>
+                <span class="s1">dialect = url.URL.create(dialect).get_dialect()()</span>
+
+        <span class="s2">if </span><span class="s1">default_schema_name:</span>
+            <span class="s1">dialect.default_schema_name = default_schema_name</span>
+
+        <span class="s1">kw = {}</span>
+        <span class="s1">compile_kwargs = {}</span>
+
+        <span class="s2">if </span><span class="s1">schema_translate_map:</span>
+            <span class="s1">kw[</span><span class="s4">&quot;schema_translate_map&quot;</span><span class="s1">] = schema_translate_map</span>
+
+        <span class="s2">if </span><span class="s1">params </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">kw[</span><span class="s4">&quot;column_keys&quot;</span><span class="s1">] = list(params)</span>
+
+        <span class="s2">if </span><span class="s1">literal_binds:</span>
+            <span class="s1">compile_kwargs[</span><span class="s4">&quot;literal_binds&quot;</span><span class="s1">] = </span><span class="s2">True</span>
+
+        <span class="s2">if </span><span class="s1">render_postcompile:</span>
+            <span class="s1">compile_kwargs[</span><span class="s4">&quot;render_postcompile&quot;</span><span class="s1">] = </span><span class="s2">True</span>
+
+        <span class="s2">if </span><span class="s1">use_literal_execute_for_simple_int:</span>
+            <span class="s1">compile_kwargs[</span><span class="s4">&quot;use_literal_execute_for_simple_int&quot;</span><span class="s1">] = </span><span class="s2">True</span>
+
+        <span class="s2">if </span><span class="s1">for_executemany:</span>
+            <span class="s1">kw[</span><span class="s4">&quot;for_executemany&quot;</span><span class="s1">] = </span><span class="s2">True</span>
+
+        <span class="s2">if </span><span class="s1">render_schema_translate:</span>
+            <span class="s1">kw[</span><span class="s4">&quot;render_schema_translate&quot;</span><span class="s1">] = </span><span class="s2">True</span>
+
+        <span class="s2">if </span><span class="s1">from_linting </span><span class="s2">or </span><span class="s1">getattr(self</span><span class="s3">, </span><span class="s4">&quot;assert_from_linting&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">):</span>
+            <span class="s1">kw[</span><span class="s4">&quot;linting&quot;</span><span class="s1">] = sql.FROM_LINTING</span>
+
+        <span class="s2">from </span><span class="s1">sqlalchemy </span><span class="s2">import </span><span class="s1">orm</span>
+
+        <span class="s2">if </span><span class="s1">isinstance(clause</span><span class="s3">, </span><span class="s1">orm.Query):</span>
+            <span class="s1">stmt = clause._statement_20()</span>
+            <span class="s1">stmt._label_style = LABEL_STYLE_TABLENAME_PLUS_COL</span>
+            <span class="s1">clause = stmt</span>
+
+        <span class="s2">if </span><span class="s1">compile_kwargs:</span>
+            <span class="s1">kw[</span><span class="s4">&quot;compile_kwargs&quot;</span><span class="s1">] = compile_kwargs</span>
+
+        <span class="s2">class </span><span class="s1">DontAccess:</span>
+            <span class="s2">def </span><span class="s1">__getattribute__(self</span><span class="s3">, </span><span class="s1">key):</span>
+                <span class="s2">raise </span><span class="s1">NotImplementedError(</span>
+                    <span class="s4">&quot;compiler accessed .statement; use &quot;</span>
+                    <span class="s4">&quot;compiler.current_executable&quot;</span>
+                <span class="s1">)</span>
+
+        <span class="s2">class </span><span class="s1">CheckCompilerAccess:</span>
+            <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">test_statement):</span>
+                <span class="s1">self.test_statement = test_statement</span>
+                <span class="s1">self._annotations = {}</span>
+                <span class="s1">self.supports_execution = getattr(</span>
+                    <span class="s1">test_statement</span><span class="s3">, </span><span class="s4">&quot;supports_execution&quot;</span><span class="s3">, </span><span class="s2">False</span>
+                <span class="s1">)</span>
+
+                <span class="s2">if </span><span class="s1">self.supports_execution:</span>
+                    <span class="s1">self._execution_options = test_statement._execution_options</span>
+
+                    <span class="s2">if </span><span class="s1">hasattr(test_statement</span><span class="s3">, </span><span class="s4">&quot;_returning&quot;</span><span class="s1">):</span>
+                        <span class="s1">self._returning = test_statement._returning</span>
+                    <span class="s2">if </span><span class="s1">hasattr(test_statement</span><span class="s3">, </span><span class="s4">&quot;_inline&quot;</span><span class="s1">):</span>
+                        <span class="s1">self._inline = test_statement._inline</span>
+                    <span class="s2">if </span><span class="s1">hasattr(test_statement</span><span class="s3">, </span><span class="s4">&quot;_return_defaults&quot;</span><span class="s1">):</span>
+                        <span class="s1">self._return_defaults = test_statement._return_defaults</span>
+
+            <span class="s1">@property</span>
+            <span class="s2">def </span><span class="s1">_variant_mapping(self):</span>
+                <span class="s2">return </span><span class="s1">self.test_statement._variant_mapping</span>
+
+            <span class="s2">def </span><span class="s1">_default_dialect(self):</span>
+                <span class="s2">return </span><span class="s1">self.test_statement._default_dialect()</span>
+
+            <span class="s2">def </span><span class="s1">compile(self</span><span class="s3">, </span><span class="s1">dialect</span><span class="s3">, </span><span class="s1">**kw):</span>
+                <span class="s2">return </span><span class="s1">self.test_statement.compile.__func__(</span>
+                    <span class="s1">self</span><span class="s3">, </span><span class="s1">dialect=dialect</span><span class="s3">, </span><span class="s1">**kw</span>
+                <span class="s1">)</span>
+
+            <span class="s2">def </span><span class="s1">_compiler(self</span><span class="s3">, </span><span class="s1">dialect</span><span class="s3">, </span><span class="s1">**kw):</span>
+                <span class="s2">return </span><span class="s1">self.test_statement._compiler.__func__(</span>
+                    <span class="s1">self</span><span class="s3">, </span><span class="s1">dialect</span><span class="s3">, </span><span class="s1">**kw</span>
+                <span class="s1">)</span>
+
+            <span class="s2">def </span><span class="s1">_compiler_dispatch(self</span><span class="s3">, </span><span class="s1">compiler</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+                <span class="s2">if </span><span class="s1">hasattr(compiler</span><span class="s3">, </span><span class="s4">&quot;statement&quot;</span><span class="s1">):</span>
+                    <span class="s2">with </span><span class="s1">mock.patch.object(</span>
+                        <span class="s1">compiler</span><span class="s3">, </span><span class="s4">&quot;statement&quot;</span><span class="s3">, </span><span class="s1">DontAccess()</span>
+                    <span class="s1">):</span>
+                        <span class="s2">return </span><span class="s1">self.test_statement._compiler_dispatch(</span>
+                            <span class="s1">compiler</span><span class="s3">, </span><span class="s1">**kwargs</span>
+                        <span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">return </span><span class="s1">self.test_statement._compiler_dispatch(</span>
+                        <span class="s1">compiler</span><span class="s3">, </span><span class="s1">**kwargs</span>
+                    <span class="s1">)</span>
+
+        <span class="s0"># no construct can assume it's the &quot;top level&quot; construct in all cases</span>
+        <span class="s0"># as anything can be nested.  ensure constructs don't assume they</span>
+        <span class="s0"># are the &quot;self.statement&quot; element</span>
+        <span class="s1">c = CheckCompilerAccess(clause).compile(dialect=dialect</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+        <span class="s2">if </span><span class="s1">isinstance(clause</span><span class="s3">, </span><span class="s1">sqltypes.TypeEngine):</span>
+            <span class="s1">cache_key_no_warnings = clause._static_cache_key</span>
+            <span class="s2">if </span><span class="s1">cache_key_no_warnings:</span>
+                <span class="s1">hash(cache_key_no_warnings)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">cache_key_no_warnings = clause._generate_cache_key()</span>
+            <span class="s2">if </span><span class="s1">cache_key_no_warnings:</span>
+                <span class="s1">hash(cache_key_no_warnings[</span><span class="s6">0</span><span class="s1">])</span>
+
+        <span class="s1">param_str = repr(getattr(c</span><span class="s3">, </span><span class="s4">&quot;params&quot;</span><span class="s3">, </span><span class="s1">{}))</span>
+        <span class="s1">param_str = param_str.encode(</span><span class="s4">&quot;utf-8&quot;</span><span class="s1">).decode(</span><span class="s4">&quot;ascii&quot;</span><span class="s3">, </span><span class="s4">&quot;ignore&quot;</span><span class="s1">)</span>
+        <span class="s1">print((</span><span class="s4">&quot;</span><span class="s7">\n</span><span class="s4">SQL String:</span><span class="s7">\n</span><span class="s4">&quot; </span><span class="s1">+ str(c) + param_str).encode(</span><span class="s4">&quot;utf-8&quot;</span><span class="s1">))</span>
+
+        <span class="s1">cc = re.sub(</span><span class="s4">r&quot;[\n\t]&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">str(c))</span>
+
+        <span class="s1">eq_(cc</span><span class="s3">, </span><span class="s1">result</span><span class="s3">, </span><span class="s4">&quot;%r != %r on dialect %r&quot; </span><span class="s1">% (cc</span><span class="s3">, </span><span class="s1">result</span><span class="s3">, </span><span class="s1">dialect))</span>
+
+        <span class="s2">if </span><span class="s1">checkparams </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">render_postcompile:</span>
+                <span class="s1">expanded_state = c.construct_expanded_state(</span>
+                    <span class="s1">params</span><span class="s3">, </span><span class="s1">escape_names=</span><span class="s2">False</span>
+                <span class="s1">)</span>
+                <span class="s1">eq_(expanded_state.parameters</span><span class="s3">, </span><span class="s1">checkparams)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">eq_(c.construct_params(params)</span><span class="s3">, </span><span class="s1">checkparams)</span>
+        <span class="s2">if </span><span class="s1">checkpositional </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">render_postcompile:</span>
+                <span class="s1">expanded_state = c.construct_expanded_state(</span>
+                    <span class="s1">params</span><span class="s3">, </span><span class="s1">escape_names=</span><span class="s2">False</span>
+                <span class="s1">)</span>
+                <span class="s1">eq_(</span>
+                    <span class="s1">tuple(</span>
+                        <span class="s1">[</span>
+                            <span class="s1">expanded_state.parameters[x]</span>
+                            <span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">expanded_state.positiontup</span>
+                        <span class="s1">]</span>
+                    <span class="s1">)</span><span class="s3">,</span>
+                    <span class="s1">checkpositional</span><span class="s3">,</span>
+                <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">p = c.construct_params(params</span><span class="s3">, </span><span class="s1">escape_names=</span><span class="s2">False</span><span class="s1">)</span>
+                <span class="s1">eq_(tuple([p[x] </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">c.positiontup])</span><span class="s3">, </span><span class="s1">checkpositional)</span>
+        <span class="s2">if </span><span class="s1">check_prefetch </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">eq_(c.prefetch</span><span class="s3">, </span><span class="s1">check_prefetch)</span>
+        <span class="s2">if </span><span class="s1">check_literal_execute </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">eq_(</span>
+                <span class="s1">{</span>
+                    <span class="s1">c.bind_names[b]: b.effective_value</span>
+                    <span class="s2">for </span><span class="s1">b </span><span class="s2">in </span><span class="s1">c.literal_execute_params</span>
+                <span class="s1">}</span><span class="s3">,</span>
+                <span class="s1">check_literal_execute</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">check_post_param </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">eq_(</span>
+                <span class="s1">{</span>
+                    <span class="s1">c.bind_names[b]: b.effective_value</span>
+                    <span class="s2">for </span><span class="s1">b </span><span class="s2">in </span><span class="s1">c.post_compile_params</span>
+                <span class="s1">}</span><span class="s3">,</span>
+                <span class="s1">check_post_param</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">check_param_order </span><span class="s2">and </span><span class="s1">getattr(c</span><span class="s3">, </span><span class="s4">&quot;params&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s1">):</span>
+
+            <span class="s2">def </span><span class="s1">get_dialect(paramstyle</span><span class="s3">, </span><span class="s1">positional):</span>
+                <span class="s1">cp = copy(dialect)</span>
+                <span class="s1">cp.paramstyle = paramstyle</span>
+                <span class="s1">cp.positional = positional</span>
+                <span class="s2">return </span><span class="s1">cp</span>
+
+            <span class="s1">pyformat_dialect = get_dialect(</span><span class="s4">&quot;pyformat&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span>
+            <span class="s1">pyformat_c = clause.compile(dialect=pyformat_dialect</span><span class="s3">, </span><span class="s1">**kw)</span>
+            <span class="s1">stmt = re.sub(</span><span class="s4">r&quot;[\n\t]&quot;</span><span class="s3">, </span><span class="s4">&quot;&quot;</span><span class="s3">, </span><span class="s1">str(pyformat_c))</span>
+
+            <span class="s1">qmark_dialect = get_dialect(</span><span class="s4">&quot;qmark&quot;</span><span class="s3">, </span><span class="s2">True</span><span class="s1">)</span>
+            <span class="s1">qmark_c = clause.compile(dialect=qmark_dialect</span><span class="s3">, </span><span class="s1">**kw)</span>
+            <span class="s1">values = list(qmark_c.positiontup)</span>
+            <span class="s1">escaped = qmark_c.escaped_bind_names</span>
+
+            <span class="s2">for </span><span class="s1">post_param </span><span class="s2">in </span><span class="s1">(</span>
+                <span class="s1">qmark_c.post_compile_params | qmark_c.literal_execute_params</span>
+            <span class="s1">):</span>
+                <span class="s1">name = qmark_c.bind_names[post_param]</span>
+                <span class="s2">if </span><span class="s1">name </span><span class="s2">in </span><span class="s1">values:</span>
+                    <span class="s1">values = [v </span><span class="s2">for </span><span class="s1">v </span><span class="s2">in </span><span class="s1">values </span><span class="s2">if </span><span class="s1">v != name]</span>
+            <span class="s1">positions = []</span>
+            <span class="s1">pos_by_value = defaultdict(list)</span>
+            <span class="s2">for </span><span class="s1">v </span><span class="s2">in </span><span class="s1">values:</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">v </span><span class="s2">in </span><span class="s1">pos_by_value:</span>
+                        <span class="s1">start = pos_by_value[v][-</span><span class="s6">1</span><span class="s1">]</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">start = </span><span class="s6">0</span>
+                    <span class="s1">esc = escaped.get(v</span><span class="s3">, </span><span class="s1">v)</span>
+                    <span class="s1">pos = stmt.index(</span><span class="s4">&quot;%%(%s)s&quot; </span><span class="s1">% (esc</span><span class="s3">,</span><span class="s1">)</span><span class="s3">, </span><span class="s1">start) + </span><span class="s6">2</span>
+                    <span class="s1">positions.append(pos)</span>
+                    <span class="s1">pos_by_value[v].append(pos)</span>
+                <span class="s2">except </span><span class="s1">ValueError:</span>
+                    <span class="s1">msg = </span><span class="s4">&quot;Expected to find bindparam %r in %r&quot; </span><span class="s1">% (v</span><span class="s3">, </span><span class="s1">stmt)</span>
+                    <span class="s2">assert False</span><span class="s3">, </span><span class="s1">msg</span>
+
+            <span class="s1">ordered = all(</span>
+                <span class="s1">positions[i - </span><span class="s6">1</span><span class="s1">] &lt; positions[i]</span>
+                <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s6">1</span><span class="s3">, </span><span class="s1">len(positions))</span>
+            <span class="s1">)</span>
+
+            <span class="s1">expected = [v </span><span class="s2">for </span><span class="s1">_</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">sorted(zip(positions</span><span class="s3">, </span><span class="s1">values))]</span>
+
+            <span class="s1">msg = (</span>
+                <span class="s4">&quot;Order of parameters %s does not match the order &quot;</span>
+                <span class="s4">&quot;in the statement %s. Statement %r&quot; </span><span class="s1">% (values</span><span class="s3">, </span><span class="s1">expected</span><span class="s3">, </span><span class="s1">stmt)</span>
+            <span class="s1">)</span>
+
+            <span class="s1">is_true(ordered</span><span class="s3">, </span><span class="s1">msg)</span>
+
+
+<span class="s2">class </span><span class="s1">ComparesTables:</span>
+    <span class="s2">def </span><span class="s1">assert_tables_equal(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">table</span><span class="s3">,</span>
+        <span class="s1">reflected_table</span><span class="s3">,</span>
+        <span class="s1">strict_types=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">strict_constraints=</span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">):</span>
+        <span class="s2">assert </span><span class="s1">len(table.c) == len(reflected_table.c)</span>
+        <span class="s2">for </span><span class="s1">c</span><span class="s3">, </span><span class="s1">reflected_c </span><span class="s2">in </span><span class="s1">zip(table.c</span><span class="s3">, </span><span class="s1">reflected_table.c):</span>
+            <span class="s1">eq_(c.name</span><span class="s3">, </span><span class="s1">reflected_c.name)</span>
+            <span class="s2">assert </span><span class="s1">reflected_c </span><span class="s2">is </span><span class="s1">reflected_table.c[c.name]</span>
+
+            <span class="s2">if </span><span class="s1">strict_constraints:</span>
+                <span class="s1">eq_(c.primary_key</span><span class="s3">, </span><span class="s1">reflected_c.primary_key)</span>
+                <span class="s1">eq_(c.nullable</span><span class="s3">, </span><span class="s1">reflected_c.nullable)</span>
+
+            <span class="s2">if </span><span class="s1">strict_types:</span>
+                <span class="s1">msg = </span><span class="s4">&quot;Type '%s' doesn't correspond to type '%s'&quot;</span>
+                <span class="s2">assert </span><span class="s1">isinstance(reflected_c.type</span><span class="s3">, </span><span class="s1">type(c.type))</span><span class="s3">, </span><span class="s1">msg % (</span>
+                    <span class="s1">reflected_c.type</span><span class="s3">,</span>
+                    <span class="s1">c.type</span><span class="s3">,</span>
+                <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.assert_types_base(reflected_c</span><span class="s3">, </span><span class="s1">c)</span>
+
+            <span class="s2">if </span><span class="s1">isinstance(c.type</span><span class="s3">, </span><span class="s1">sqltypes.String):</span>
+                <span class="s1">eq_(c.type.length</span><span class="s3">, </span><span class="s1">reflected_c.type.length)</span>
+
+            <span class="s2">if </span><span class="s1">strict_constraints:</span>
+                <span class="s1">eq_(</span>
+                    <span class="s1">{f.column.name </span><span class="s2">for </span><span class="s1">f </span><span class="s2">in </span><span class="s1">c.foreign_keys}</span><span class="s3">,</span>
+                    <span class="s1">{f.column.name </span><span class="s2">for </span><span class="s1">f </span><span class="s2">in </span><span class="s1">reflected_c.foreign_keys}</span><span class="s3">,</span>
+                <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">c.server_default:</span>
+                <span class="s2">assert </span><span class="s1">isinstance(</span>
+                    <span class="s1">reflected_c.server_default</span><span class="s3">, </span><span class="s1">schema.FetchedValue</span>
+                <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">strict_constraints:</span>
+            <span class="s2">assert </span><span class="s1">len(table.primary_key) == len(reflected_table.primary_key)</span>
+            <span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">table.primary_key:</span>
+                <span class="s2">assert </span><span class="s1">reflected_table.primary_key.columns[c.name] </span><span class="s2">is not None</span>
+
+    <span class="s2">def </span><span class="s1">assert_types_base(self</span><span class="s3">, </span><span class="s1">c1</span><span class="s3">, </span><span class="s1">c2):</span>
+        <span class="s2">assert </span><span class="s1">c1.type._compare_type_affinity(</span>
+            <span class="s1">c2.type</span>
+        <span class="s1">)</span><span class="s3">, </span><span class="s4">&quot;On column %r, type '%s' doesn't correspond to type '%s'&quot; </span><span class="s1">% (</span>
+            <span class="s1">c1.name</span><span class="s3">,</span>
+            <span class="s1">c1.type</span><span class="s3">,</span>
+            <span class="s1">c2.type</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">AssertsExecutionResults:</span>
+    <span class="s2">def </span><span class="s1">assert_result(self</span><span class="s3">, </span><span class="s1">result</span><span class="s3">, </span><span class="s1">class_</span><span class="s3">, </span><span class="s1">*objects):</span>
+        <span class="s1">result = list(result)</span>
+        <span class="s1">print(repr(result))</span>
+        <span class="s1">self.assert_list(result</span><span class="s3">, </span><span class="s1">class_</span><span class="s3">, </span><span class="s1">objects)</span>
+
+    <span class="s2">def </span><span class="s1">assert_list(self</span><span class="s3">, </span><span class="s1">result</span><span class="s3">, </span><span class="s1">class_</span><span class="s3">, </span><span class="s1">list_):</span>
+        <span class="s1">self.assert_(</span>
+            <span class="s1">len(result) == len(list_)</span><span class="s3">,</span>
+            <span class="s4">&quot;result list is not the same size as test list, &quot;</span>
+            <span class="s1">+ </span><span class="s4">&quot;for class &quot;</span>
+            <span class="s1">+ class_.__name__</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s6">0</span><span class="s3">, </span><span class="s1">len(list_)):</span>
+            <span class="s1">self.assert_row(class_</span><span class="s3">, </span><span class="s1">result[i]</span><span class="s3">, </span><span class="s1">list_[i])</span>
+
+    <span class="s2">def </span><span class="s1">assert_row(self</span><span class="s3">, </span><span class="s1">class_</span><span class="s3">, </span><span class="s1">rowobj</span><span class="s3">, </span><span class="s1">desc):</span>
+        <span class="s1">self.assert_(</span>
+            <span class="s1">rowobj.__class__ </span><span class="s2">is </span><span class="s1">class_</span><span class="s3">, </span><span class="s4">&quot;item class is not &quot; </span><span class="s1">+ repr(class_)</span>
+        <span class="s1">)</span>
+        <span class="s2">for </span><span class="s1">key</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">desc.items():</span>
+            <span class="s2">if </span><span class="s1">isinstance(value</span><span class="s3">, </span><span class="s1">tuple):</span>
+                <span class="s2">if </span><span class="s1">isinstance(value[</span><span class="s6">1</span><span class="s1">]</span><span class="s3">, </span><span class="s1">list):</span>
+                    <span class="s1">self.assert_list(getattr(rowobj</span><span class="s3">, </span><span class="s1">key)</span><span class="s3">, </span><span class="s1">value[</span><span class="s6">0</span><span class="s1">]</span><span class="s3">, </span><span class="s1">value[</span><span class="s6">1</span><span class="s1">])</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">self.assert_row(value[</span><span class="s6">0</span><span class="s1">]</span><span class="s3">, </span><span class="s1">getattr(rowobj</span><span class="s3">, </span><span class="s1">key)</span><span class="s3">, </span><span class="s1">value[</span><span class="s6">1</span><span class="s1">])</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.assert_(</span>
+                    <span class="s1">getattr(rowobj</span><span class="s3">, </span><span class="s1">key) == value</span><span class="s3">,</span>
+                    <span class="s4">&quot;attribute %s value %s does not match %s&quot;</span>
+                    <span class="s1">% (key</span><span class="s3">, </span><span class="s1">getattr(rowobj</span><span class="s3">, </span><span class="s1">key)</span><span class="s3">, </span><span class="s1">value)</span><span class="s3">,</span>
+                <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">assert_unordered_result(self</span><span class="s3">, </span><span class="s1">result</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">, </span><span class="s1">*expected):</span>
+        <span class="s5">&quot;&quot;&quot;As assert_result, but the order of objects is not considered. 
+ 
+        The algorithm is very expensive but not a big deal for the small 
+        numbers of rows that the test suite manipulates. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s2">class </span><span class="s1">immutabledict(dict):</span>
+            <span class="s2">def </span><span class="s1">__hash__(self):</span>
+                <span class="s2">return </span><span class="s1">id(self)</span>
+
+        <span class="s1">found = util.IdentitySet(result)</span>
+        <span class="s1">expected = {immutabledict(e) </span><span class="s2">for </span><span class="s1">e </span><span class="s2">in </span><span class="s1">expected}</span>
+
+        <span class="s2">for </span><span class="s1">wrong </span><span class="s2">in </span><span class="s1">filterfalse(</span><span class="s2">lambda </span><span class="s1">o: isinstance(o</span><span class="s3">, </span><span class="s1">cls)</span><span class="s3">, </span><span class="s1">found):</span>
+            <span class="s1">fail(</span>
+                <span class="s4">'Unexpected type &quot;%s&quot;, expected &quot;%s&quot;'</span>
+                <span class="s1">% (type(wrong).__name__</span><span class="s3">, </span><span class="s1">cls.__name__)</span>
+            <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">len(found) != len(expected):</span>
+            <span class="s1">fail(</span>
+                <span class="s4">'Unexpected object count &quot;%s&quot;, expected &quot;%s&quot;'</span>
+                <span class="s1">% (len(found)</span><span class="s3">, </span><span class="s1">len(expected))</span>
+            <span class="s1">)</span>
+
+        <span class="s1">NOVALUE = object()</span>
+
+        <span class="s2">def </span><span class="s1">_compare_item(obj</span><span class="s3">, </span><span class="s1">spec):</span>
+            <span class="s2">for </span><span class="s1">key</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">spec.items():</span>
+                <span class="s2">if </span><span class="s1">isinstance(value</span><span class="s3">, </span><span class="s1">tuple):</span>
+                    <span class="s2">try</span><span class="s1">:</span>
+                        <span class="s1">self.assert_unordered_result(</span>
+                            <span class="s1">getattr(obj</span><span class="s3">, </span><span class="s1">key)</span><span class="s3">, </span><span class="s1">value[</span><span class="s6">0</span><span class="s1">]</span><span class="s3">, </span><span class="s1">*value[</span><span class="s6">1</span><span class="s1">]</span>
+                        <span class="s1">)</span>
+                    <span class="s2">except </span><span class="s1">AssertionError:</span>
+                        <span class="s2">return False</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">getattr(obj</span><span class="s3">, </span><span class="s1">key</span><span class="s3">, </span><span class="s1">NOVALUE) != value:</span>
+                        <span class="s2">return False</span>
+            <span class="s2">return True</span>
+
+        <span class="s2">for </span><span class="s1">expected_item </span><span class="s2">in </span><span class="s1">expected:</span>
+            <span class="s2">for </span><span class="s1">found_item </span><span class="s2">in </span><span class="s1">found:</span>
+                <span class="s2">if </span><span class="s1">_compare_item(found_item</span><span class="s3">, </span><span class="s1">expected_item):</span>
+                    <span class="s1">found.remove(found_item)</span>
+                    <span class="s2">break</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">fail(</span>
+                    <span class="s4">&quot;Expected %s instance with attributes %s not found.&quot;</span>
+                    <span class="s1">% (cls.__name__</span><span class="s3">, </span><span class="s1">repr(expected_item))</span>
+                <span class="s1">)</span>
+        <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">sql_execution_asserter(self</span><span class="s3">, </span><span class="s1">db=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">db </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">db </span><span class="s2">as </span><span class="s1">db</span>
+
+        <span class="s2">return </span><span class="s1">assertsql.assert_engine(db)</span>
+
+    <span class="s2">def </span><span class="s1">assert_sql_execution(self</span><span class="s3">, </span><span class="s1">db</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">*rules):</span>
+        <span class="s2">with </span><span class="s1">self.sql_execution_asserter(db) </span><span class="s2">as </span><span class="s1">asserter:</span>
+            <span class="s1">result = callable_()</span>
+        <span class="s1">asserter.assert_(*rules)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">assert_sql(self</span><span class="s3">, </span><span class="s1">db</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">rules):</span>
+        <span class="s1">newrules = []</span>
+        <span class="s2">for </span><span class="s1">rule </span><span class="s2">in </span><span class="s1">rules:</span>
+            <span class="s2">if </span><span class="s1">isinstance(rule</span><span class="s3">, </span><span class="s1">dict):</span>
+                <span class="s1">newrule = assertsql.AllOf(</span>
+                    <span class="s1">*[assertsql.CompiledSQL(k</span><span class="s3">, </span><span class="s1">v) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">rule.items()]</span>
+                <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">newrule = assertsql.CompiledSQL(*rule)</span>
+            <span class="s1">newrules.append(newrule)</span>
+
+        <span class="s2">return </span><span class="s1">self.assert_sql_execution(db</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">*newrules)</span>
+
+    <span class="s2">def </span><span class="s1">assert_sql_count(self</span><span class="s3">, </span><span class="s1">db</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">count):</span>
+        <span class="s2">return </span><span class="s1">self.assert_sql_execution(</span>
+            <span class="s1">db</span><span class="s3">, </span><span class="s1">callable_</span><span class="s3">, </span><span class="s1">assertsql.CountStatements(count)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@contextlib.contextmanager</span>
+    <span class="s2">def </span><span class="s1">assert_execution(self</span><span class="s3">, </span><span class="s1">db</span><span class="s3">, </span><span class="s1">*rules):</span>
+        <span class="s2">with </span><span class="s1">self.sql_execution_asserter(db) </span><span class="s2">as </span><span class="s1">asserter:</span>
+            <span class="s2">yield</span>
+        <span class="s1">asserter.assert_(*rules)</span>
+
+    <span class="s2">def </span><span class="s1">assert_statement_count(self</span><span class="s3">, </span><span class="s1">db</span><span class="s3">, </span><span class="s1">count):</span>
+        <span class="s2">return </span><span class="s1">self.assert_execution(db</span><span class="s3">, </span><span class="s1">assertsql.CountStatements(count))</span>
+
+    <span class="s1">@contextlib.contextmanager</span>
+    <span class="s2">def </span><span class="s1">assert_statement_count_multi_db(self</span><span class="s3">, </span><span class="s1">dbs</span><span class="s3">, </span><span class="s1">counts):</span>
+        <span class="s1">recs = [</span>
+            <span class="s1">(self.sql_execution_asserter(db)</span><span class="s3">, </span><span class="s1">db</span><span class="s3">, </span><span class="s1">count)</span>
+            <span class="s2">for </span><span class="s1">(db</span><span class="s3">, </span><span class="s1">count) </span><span class="s2">in </span><span class="s1">zip(dbs</span><span class="s3">, </span><span class="s1">counts)</span>
+        <span class="s1">]</span>
+        <span class="s1">asserters = []</span>
+        <span class="s2">for </span><span class="s1">ctx</span><span class="s3">, </span><span class="s1">db</span><span class="s3">, </span><span class="s1">count </span><span class="s2">in </span><span class="s1">recs:</span>
+            <span class="s1">asserters.append(ctx.__enter__())</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">yield</span>
+        <span class="s2">finally</span><span class="s1">:</span>
+            <span class="s2">for </span><span class="s1">asserter</span><span class="s3">, </span><span class="s1">(ctx</span><span class="s3">, </span><span class="s1">db</span><span class="s3">, </span><span class="s1">count) </span><span class="s2">in </span><span class="s1">zip(asserters</span><span class="s3">, </span><span class="s1">recs):</span>
+                <span class="s1">ctx.__exit__(</span><span class="s2">None</span><span class="s3">, </span><span class="s2">None</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+                <span class="s1">asserter.assert_(assertsql.CountStatements(count))</span>
+
+
+<span class="s2">class </span><span class="s1">ComparesIndexes:</span>
+    <span class="s2">def </span><span class="s1">compare_table_index_with_expected(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">table: schema.Table</span><span class="s3">, </span><span class="s1">expected: list</span><span class="s3">, </span><span class="s1">dialect_name: str</span>
+    <span class="s1">):</span>
+        <span class="s1">eq_(len(table.indexes)</span><span class="s3">, </span><span class="s1">len(expected))</span>
+        <span class="s1">idx_dict = {idx.name: idx </span><span class="s2">for </span><span class="s1">idx </span><span class="s2">in </span><span class="s1">table.indexes}</span>
+        <span class="s2">for </span><span class="s1">exp </span><span class="s2">in </span><span class="s1">expected:</span>
+            <span class="s1">idx = idx_dict[exp[</span><span class="s4">&quot;name&quot;</span><span class="s1">]]</span>
+            <span class="s1">eq_(idx.unique</span><span class="s3">, </span><span class="s1">exp[</span><span class="s4">&quot;unique&quot;</span><span class="s1">])</span>
+            <span class="s1">cols = [c </span><span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">exp[</span><span class="s4">&quot;column_names&quot;</span><span class="s1">] </span><span class="s2">if </span><span class="s1">c </span><span class="s2">is not None</span><span class="s1">]</span>
+            <span class="s1">eq_(len(idx.columns)</span><span class="s3">, </span><span class="s1">len(cols))</span>
+            <span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">cols:</span>
+                <span class="s1">is_true(c </span><span class="s2">in </span><span class="s1">idx.columns)</span>
+            <span class="s1">exprs = exp.get(</span><span class="s4">&quot;expressions&quot;</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">exprs:</span>
+                <span class="s1">eq_(len(idx.expressions)</span><span class="s3">, </span><span class="s1">len(exprs))</span>
+                <span class="s2">for </span><span class="s1">idx_exp</span><span class="s3">, </span><span class="s1">expr</span><span class="s3">, </span><span class="s1">col </span><span class="s2">in </span><span class="s1">zip(</span>
+                    <span class="s1">idx.expressions</span><span class="s3">, </span><span class="s1">exprs</span><span class="s3">, </span><span class="s1">exp[</span><span class="s4">&quot;column_names&quot;</span><span class="s1">]</span>
+                <span class="s1">):</span>
+                    <span class="s2">if </span><span class="s1">col </span><span class="s2">is None</span><span class="s1">:</span>
+                        <span class="s1">eq_(idx_exp.text</span><span class="s3">, </span><span class="s1">expr)</span>
+            <span class="s2">if </span><span class="s1">(</span>
+                <span class="s1">exp.get(</span><span class="s4">&quot;dialect_options&quot;</span><span class="s1">)</span>
+                <span class="s2">and </span><span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">dialect_name</span><span class="s7">}</span><span class="s4">_include&quot; </span><span class="s2">in </span><span class="s1">exp[</span><span class="s4">&quot;dialect_options&quot;</span><span class="s1">]</span>
+            <span class="s1">):</span>
+                <span class="s1">eq_(</span>
+                    <span class="s1">idx.dialect_options[dialect_name][</span><span class="s4">&quot;include&quot;</span><span class="s1">]</span><span class="s3">,</span>
+                    <span class="s1">exp[</span><span class="s4">&quot;dialect_options&quot;</span><span class="s1">][</span><span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">dialect_name</span><span class="s7">}</span><span class="s4">_include&quot;</span><span class="s1">]</span><span class="s3">,</span>
+                <span class="s1">)</span>
+</pre>
+</body>
+</html>

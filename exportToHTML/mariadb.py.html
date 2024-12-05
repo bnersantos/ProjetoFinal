@@ -1,0 +1,53 @@
+<html>
+<head>
+<title>mariadb.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+mariadb.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/mysql/mariadb.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+<span class="s2">from </span><span class="s1">.base </span><span class="s2">import </span><span class="s1">MariaDBIdentifierPreparer</span>
+<span class="s2">from </span><span class="s1">.base </span><span class="s2">import </span><span class="s1">MySQLDialect</span>
+
+
+<span class="s2">class </span><span class="s1">MariaDBDialect(MySQLDialect):</span>
+    <span class="s1">is_mariadb = </span><span class="s2">True</span>
+    <span class="s1">supports_statement_cache = </span><span class="s2">True</span>
+    <span class="s1">name = </span><span class="s3">&quot;mariadb&quot;</span>
+    <span class="s1">preparer = MariaDBIdentifierPreparer</span>
+
+
+<span class="s2">def </span><span class="s1">loader(driver):</span>
+    <span class="s1">driver_mod = __import__(</span>
+        <span class="s3">&quot;sqlalchemy.dialects.mysql.%s&quot; </span><span class="s1">% driver</span>
+    <span class="s1">).dialects.mysql</span>
+    <span class="s1">driver_cls = getattr(driver_mod</span><span class="s4">, </span><span class="s1">driver).dialect</span>
+
+    <span class="s2">return </span><span class="s1">type(</span>
+        <span class="s3">&quot;MariaDBDialect_%s&quot; </span><span class="s1">% driver</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s1">MariaDBDialect</span><span class="s4">,</span>
+            <span class="s1">driver_cls</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">{</span><span class="s3">&quot;supports_statement_cache&quot;</span><span class="s1">: </span><span class="s2">True</span><span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span>
+</pre>
+</body>
+</html>

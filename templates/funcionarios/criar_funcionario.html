@@ -1,0 +1,76 @@
+{% extends 'modelo_base3.html' %}
+
+
+
+{% block conteudoNav %}
+<div class="nav-bar">
+    <ul class="menu">
+        <div class="usuario-btn">
+          <button id="usuario-btn">login</button>
+        </div>
+        <li><a href="{{ url_for('home') }}">MENU</a></li>
+        <li><a href="{{ url_for('gerenciar_funcionarios') }}">Voltar</a></li>
+        <li><a href="{{ url_for('grafico_movimentacoes') }}">RELATORIO</a></li>
+    </ul>
+    <span class="search-icon" id="search-icon">
+        <i class="fas fa-search"></i> <!-- Ícone de lupa do Font Awesome -->
+    </span>
+    <div class="search-box" id="search-box">
+        <input type="text" id="search-input" placeholder="Buscar...">
+        <button id="search-btn">Buscar</button>
+    </div>
+</div>
+{% endblock %}
+
+
+{% block conteudo %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="mensagens">
+            {% for category, message in messages %}
+                <div class="alert {{ 'alert-success' if category == 'success' else 'alert-danger' }}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+
+    <form class="criar" action="{{ url_for('criar_funcionario') }}" method="POST">
+        <label class="criar" for="nome">Nome:</label>
+        <input class="criar" type="text" name="nome" id="nome" required><br>
+
+        <label class="criar" for="cpf">CPF:</label>
+        <input class="criar" type="text" name="cpf" id="cpf" required pattern="\d{11}" title="O CPF deve conter exatamente 11 dígitos."><br>
+
+        <label class="criar" for="email">Email:</label>
+        <input class="criar" type="email" name="email" id="email" required><br>
+
+        <label class="criar" for="telefone">Telefone:</label>
+        <input class="criar" type="tel" name="telefone" id="telefone" required pattern="\d+" title="O telefone deve conter apenas números."><br>
+        {% if telefone_erro %}
+        <div class="erro">{{ telefone_erro }}</div>
+        {% endif %}
+
+        <label class="criar" for="cargo">Cargo:</label>
+        <select class="criar" name="cargo" id="cargo" required>
+            <option value="CEO">CEO</option>
+            <option value="CTO">CTO</option>
+            <option value="COO">COO</option>
+            <option value="Gerente de Operações">Gerente de Operações</option>
+            <option value="Analista Administrativo">Analista Administrativo</option>
+            <option value="Gerente de Marketing">Gerente de Marketing</option>
+            <option value="Designer Gráfico">Designer Gráfico</option>
+            <option value="Suporte Técnico">Suporte Técnico</option>
+            <option value="Contador">Contador</option>
+            <option value="Repositor">Repositor</option>
+            <option value="Analista de RH">Analista de RH</option>
+        </select><br>
+
+        <button class="criar" type="submit">Criar Funcionário</button>
+    </form>
+    <br>
+
+{% endblock %}

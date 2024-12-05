@@ -1,0 +1,1189 @@
+<html>
+<head>
+<title>visitors.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+visitors.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/visitors.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Visitor/traversal interface and library functions. 
+ 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">collections </span><span class="s3">import </span><span class="s1">deque</span>
+<span class="s3">from </span><span class="s1">enum </span><span class="s3">import </span><span class="s1">Enum</span>
+<span class="s3">import </span><span class="s1">itertools</span>
+<span class="s3">import </span><span class="s1">operator</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">ClassVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">langhelpers</span>
+<span class="s3">from </span><span class="s1">..util._has_cy </span><span class="s3">import </span><span class="s1">HAS_CYEXTENSION</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Protocol</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Self</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.annotation </span><span class="s3">import </span><span class="s1">_AnnotationDict</span>
+    <span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">ColumnElement</span>
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING </span><span class="s3">or not </span><span class="s1">HAS_CYEXTENSION:</span>
+    <span class="s3">from </span><span class="s1">._py_util </span><span class="s3">import </span><span class="s1">prefix_anon_map </span><span class="s3">as </span><span class="s1">prefix_anon_map</span>
+    <span class="s3">from </span><span class="s1">._py_util </span><span class="s3">import </span><span class="s1">cache_anon_map </span><span class="s3">as </span><span class="s1">anon_map</span>
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s3">from </span><span class="s1">sqlalchemy.cyextension.util </span><span class="s3">import </span><span class="s1">(  </span><span class="s0"># noqa: F401,E501</span>
+        <span class="s1">prefix_anon_map </span><span class="s3">as </span><span class="s1">prefix_anon_map</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s3">from </span><span class="s1">sqlalchemy.cyextension.util </span><span class="s3">import </span><span class="s1">(  </span><span class="s0"># noqa: F401,E501</span>
+        <span class="s1">cache_anon_map </span><span class="s3">as </span><span class="s1">anon_map</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s1">__all__ = [</span>
+    <span class="s5">&quot;iterate&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;traverse_using&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;traverse&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;cloned_traverse&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;replacement_traverse&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;Visitable&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;ExternalTraversal&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;InternalTraversal&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;anon_map&quot;</span><span class="s4">,</span>
+<span class="s1">]</span>
+
+
+<span class="s3">class </span><span class="s1">_CompilerDispatchType(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(_self</span><span class="s4">, </span><span class="s1">self: Visitable</span><span class="s4">, </span><span class="s1">visitor: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; Any: ...</span>
+
+
+<span class="s3">class </span><span class="s1">Visitable:</span>
+    <span class="s2">&quot;&quot;&quot;Base class for visitable objects. 
+ 
+    :class:`.Visitable` is used to implement the SQL compiler dispatch 
+    functions.    Other forms of traversal such as for cache key generation 
+    are implemented separately using the :class:`.HasTraverseInternals` 
+    interface. 
+ 
+    .. versionchanged:: 2.0  The :class:`.Visitable` class was named 
+       :class:`.Traversible` in the 1.4 series; the name is changed back 
+       to :class:`.Visitable` in 2.0 which is what it was prior to 1.4. 
+ 
+       Both names remain importable in both 1.4 and 2.0 versions. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">__visit_name__: str</span>
+
+    <span class="s1">_original_compiler_dispatch: _CompilerDispatchType</span>
+
+    <span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">_compiler_dispatch(self</span><span class="s4">, </span><span class="s1">visitor: Any</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; str: ...</span>
+
+    <span class="s3">def </span><span class="s1">__init_subclass__(cls) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s5">&quot;__visit_name__&quot; </span><span class="s3">in </span><span class="s1">cls.__dict__:</span>
+            <span class="s1">cls._generate_compiler_dispatch()</span>
+        <span class="s1">super().__init_subclass__()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_generate_compiler_dispatch(cls) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">visit_name = cls.__visit_name__</span>
+
+        <span class="s3">if </span><span class="s5">&quot;_compiler_dispatch&quot; </span><span class="s3">in </span><span class="s1">cls.__dict__:</span>
+            <span class="s0"># class has a fixed _compiler_dispatch() method.</span>
+            <span class="s0"># copy it to &quot;original&quot; so that we can get it back if</span>
+            <span class="s0"># sqlalchemy.ext.compiles overrides it.</span>
+            <span class="s1">cls._original_compiler_dispatch = cls._compiler_dispatch</span>
+            <span class="s3">return</span>
+
+        <span class="s3">if not </span><span class="s1">isinstance(visit_name</span><span class="s4">, </span><span class="s1">str):</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s5">f&quot;__visit_name__ on class </span><span class="s6">{</span><span class="s1">cls.__name__</span><span class="s6">} </span><span class="s5">must be a string &quot;</span>
+                <span class="s5">&quot;at the class level&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">name = </span><span class="s5">&quot;visit_%s&quot; </span><span class="s1">% visit_name</span>
+        <span class="s1">getter = operator.attrgetter(name)</span>
+
+        <span class="s3">def </span><span class="s1">_compiler_dispatch(</span>
+            <span class="s1">self: Visitable</span><span class="s4">, </span><span class="s1">visitor: Any</span><span class="s4">, </span><span class="s1">**kw: Any</span>
+        <span class="s1">) -&gt; str:</span>
+            <span class="s2">&quot;&quot;&quot;Look for an attribute named &quot;visit_&lt;visit_name&gt;&quot; on the 
+            visitor, and call it with the same kw params. 
+ 
+            &quot;&quot;&quot;</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">meth = getter(visitor)</span>
+            <span class="s3">except </span><span class="s1">AttributeError </span><span class="s3">as </span><span class="s1">err:</span>
+                <span class="s3">return </span><span class="s1">visitor.visit_unsupported_compilation(self</span><span class="s4">, </span><span class="s1">err</span><span class="s4">, </span><span class="s1">**kw)  </span><span class="s0"># type: ignore  # noqa: E501</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">meth(self</span><span class="s4">, </span><span class="s1">**kw)  </span><span class="s0"># type: ignore  # noqa: E501</span>
+
+        <span class="s1">cls._compiler_dispatch = (  </span><span class="s0"># type: ignore</span>
+            <span class="s1">cls._original_compiler_dispatch</span>
+        <span class="s1">) = _compiler_dispatch</span>
+
+    <span class="s3">def </span><span class="s1">__class_getitem__(cls</span><span class="s4">, </span><span class="s1">key: Any) -&gt; Any:</span>
+        <span class="s0"># allow generic classes in py3.9+</span>
+        <span class="s3">return </span><span class="s1">cls</span>
+
+
+<span class="s3">class </span><span class="s1">InternalTraversal(Enum):</span>
+    <span class="s2">r&quot;&quot;&quot;Defines visitor symbols used for internal traversal. 
+ 
+    The :class:`.InternalTraversal` class is used in two ways.  One is that 
+    it can serve as the superclass for an object that implements the 
+    various visit methods of the class.   The other is that the symbols 
+    themselves of :class:`.InternalTraversal` are used within 
+    the ``_traverse_internals`` collection.   Such as, the :class:`.Case` 
+    object defines ``_traverse_internals`` as :: 
+ 
+        class Case(ColumnElement[_T]): 
+            _traverse_internals = [ 
+                (&quot;value&quot;, InternalTraversal.dp_clauseelement), 
+                (&quot;whens&quot;, InternalTraversal.dp_clauseelement_tuples), 
+                (&quot;else_&quot;, InternalTraversal.dp_clauseelement), 
+            ] 
+ 
+    Above, the :class:`.Case` class indicates its internal state as the 
+    attributes named ``value``, ``whens``, and ``else_``.    They each 
+    link to an :class:`.InternalTraversal` method which indicates the type 
+    of datastructure to which each attribute refers. 
+ 
+    Using the ``_traverse_internals`` structure, objects of type 
+    :class:`.InternalTraversible` will have the following methods automatically 
+    implemented: 
+ 
+    * :meth:`.HasTraverseInternals.get_children` 
+ 
+    * :meth:`.HasTraverseInternals._copy_internals` 
+ 
+    * :meth:`.HasCacheKey._gen_cache_key` 
+ 
+    Subclasses can also implement these methods directly, particularly for the 
+    :meth:`.HasTraverseInternals._copy_internals` method, when special steps 
+    are needed. 
+ 
+    .. versionadded:: 1.4 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_has_cache_key = </span><span class="s5">&quot;HC&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a :class:`.HasCacheKey` object.&quot;&quot;&quot;</span>
+
+    <span class="s1">dp_has_cache_key_list = </span><span class="s5">&quot;HL&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a list of :class:`.HasCacheKey` objects.&quot;&quot;&quot;</span>
+
+    <span class="s1">dp_clauseelement = </span><span class="s5">&quot;CE&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a :class:`_expression.ClauseElement` object.&quot;&quot;&quot;</span>
+
+    <span class="s1">dp_fromclause_canonical_column_collection = </span><span class="s5">&quot;FC&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a :class:`_expression.FromClause` object in the context of the 
+    ``columns`` attribute. 
+ 
+    The column collection is &quot;canonical&quot;, meaning it is the originally 
+    defined location of the :class:`.ColumnClause` objects.   Right now 
+    this means that the object being visited is a 
+    :class:`_expression.TableClause` 
+    or :class:`_schema.Table` object only. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_clauseelement_tuples = </span><span class="s5">&quot;CTS&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a list of tuples which contain :class:`_expression.ClauseElement` 
+    objects. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_clauseelement_list = </span><span class="s5">&quot;CL&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a list of :class:`_expression.ClauseElement` objects. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_clauseelement_tuple = </span><span class="s5">&quot;CT&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a tuple of :class:`_expression.ClauseElement` objects. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_executable_options = </span><span class="s5">&quot;EO&quot;</span>
+
+    <span class="s1">dp_with_context_options = </span><span class="s5">&quot;WC&quot;</span>
+
+    <span class="s1">dp_fromclause_ordered_set = </span><span class="s5">&quot;CO&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit an ordered set of :class:`_expression.FromClause` objects. &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_string = </span><span class="s5">&quot;S&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a plain string value. 
+ 
+    Examples include table and column names, bound parameter keys, special 
+    keywords such as &quot;UNION&quot;, &quot;UNION ALL&quot;. 
+ 
+    The string value is considered to be significant for cache key 
+    generation. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_string_list = </span><span class="s5">&quot;SL&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a list of strings.&quot;&quot;&quot;</span>
+
+    <span class="s1">dp_anon_name = </span><span class="s5">&quot;AN&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a potentially &quot;anonymized&quot; string value. 
+ 
+    The string value is considered to be significant for cache key 
+    generation. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_boolean = </span><span class="s5">&quot;B&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a boolean value. 
+ 
+    The boolean value is considered to be significant for cache key 
+    generation. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_operator = </span><span class="s5">&quot;O&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit an operator. 
+ 
+    The operator is a function from the :mod:`sqlalchemy.sql.operators` 
+    module. 
+ 
+    The operator value is considered to be significant for cache key 
+    generation. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_type = </span><span class="s5">&quot;T&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a :class:`.TypeEngine` object 
+ 
+    The type object is considered to be significant for cache key 
+    generation. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_plain_dict = </span><span class="s5">&quot;PD&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a dictionary with string keys. 
+ 
+    The keys of the dictionary should be strings, the values should 
+    be immutable and hashable.   The dictionary is considered to be 
+    significant for cache key generation. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_dialect_options = </span><span class="s5">&quot;DO&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a dialect options structure.&quot;&quot;&quot;</span>
+
+    <span class="s1">dp_string_clauseelement_dict = </span><span class="s5">&quot;CD&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a dictionary of string keys to :class:`_expression.ClauseElement` 
+    objects. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_string_multi_dict = </span><span class="s5">&quot;MD&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a dictionary of string keys to values which may either be 
+    plain immutable/hashable or :class:`.HasCacheKey` objects. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_annotations_key = </span><span class="s5">&quot;AK&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit the _annotations_cache_key element. 
+ 
+    This is a dictionary of additional information about a ClauseElement 
+    that modifies its role.  It should be included when comparing or caching 
+    objects, however generating this key is relatively expensive.   Visitors 
+    should check the &quot;_annotations&quot; dict for non-None first before creating 
+    this key. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_plain_obj = </span><span class="s5">&quot;PO&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a plain python object. 
+ 
+    The value should be immutable and hashable, such as an integer. 
+    The value is considered to be significant for cache key generation. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_named_ddl_element = </span><span class="s5">&quot;DD&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a simple named DDL element. 
+ 
+    The current object used by this method is the :class:`.Sequence`. 
+ 
+    The object is only considered to be important for cache key generation 
+    as far as its name, but not any other aspects of it. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_prefix_sequence = </span><span class="s5">&quot;PS&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit the sequence represented by :class:`_expression.HasPrefixes` 
+    or :class:`_expression.HasSuffixes`. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_table_hint_list = </span><span class="s5">&quot;TH&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit the ``_hints`` collection of a :class:`_expression.Select` 
+    object. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_setup_join_tuple = </span><span class="s5">&quot;SJ&quot;</span>
+
+    <span class="s1">dp_memoized_select_entities = </span><span class="s5">&quot;ME&quot;</span>
+
+    <span class="s1">dp_statement_hint_list = </span><span class="s5">&quot;SH&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit the ``_statement_hints`` collection of a 
+    :class:`_expression.Select` 
+    object. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_unknown_structure = </span><span class="s5">&quot;UK&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit an unknown structure. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_dml_ordered_values = </span><span class="s5">&quot;DML_OV&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit the values() ordered tuple list of an 
+    :class:`_expression.Update` object.&quot;&quot;&quot;</span>
+
+    <span class="s1">dp_dml_values = </span><span class="s5">&quot;DML_V&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit the values() dictionary of a :class:`.ValuesBase` 
+    (e.g. Insert or Update) object. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_dml_multi_values = </span><span class="s5">&quot;DML_MV&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit the values() multi-valued list of dictionaries of an 
+    :class:`_expression.Insert` object. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_propagate_attrs = </span><span class="s5">&quot;PA&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit the propagate attrs dict.  This hardcodes to the particular 
+    elements we care about right now.&quot;&quot;&quot;</span>
+
+    <span class="s5">&quot;&quot;&quot;Symbols that follow are additional symbols that are useful in 
+    caching applications. 
+ 
+    Traversals for :class:`_expression.ClauseElement` objects only need to use 
+    those symbols present in :class:`.InternalTraversal`.  However, for 
+    additional caching use cases within the ORM, symbols dealing with the 
+    :class:`.HasCacheKey` class are added here. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_ignore = </span><span class="s5">&quot;IG&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Specify an object that should be ignored entirely. 
+ 
+    This currently applies function call argument caching where some 
+    arguments should not be considered to be part of a cache key. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_inspectable = </span><span class="s5">&quot;IS&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit an inspectable object where the return value is a 
+    :class:`.HasCacheKey` object.&quot;&quot;&quot;</span>
+
+    <span class="s1">dp_multi = </span><span class="s5">&quot;M&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit an object that may be a :class:`.HasCacheKey` or may be a 
+    plain hashable object.&quot;&quot;&quot;</span>
+
+    <span class="s1">dp_multi_list = </span><span class="s5">&quot;MT&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a tuple containing elements that may be :class:`.HasCacheKey` or 
+    may be a plain hashable object.&quot;&quot;&quot;</span>
+
+    <span class="s1">dp_has_cache_key_tuples = </span><span class="s5">&quot;HT&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a list of tuples which contain :class:`.HasCacheKey` 
+    objects. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dp_inspectable_list = </span><span class="s5">&quot;IL&quot;</span>
+    <span class="s5">&quot;&quot;&quot;Visit a list of inspectable objects which upon inspection are 
+    HasCacheKey objects.&quot;&quot;&quot;</span>
+
+
+<span class="s1">_TraverseInternalsType = List[Tuple[str</span><span class="s4">, </span><span class="s1">InternalTraversal]]</span>
+<span class="s5">&quot;&quot;&quot;a structure that defines how a HasTraverseInternals should be 
+traversed. 
+ 
+This structure consists of a list of (attributename, internaltraversal) 
+tuples, where the &quot;attributename&quot; refers to the name of an attribute on an 
+instance of the HasTraverseInternals object, and &quot;internaltraversal&quot; refers 
+to an :class:`.InternalTraversal` enumeration symbol defining what kind 
+of data this attribute stores, which indicates to the traverser how it should 
+be handled. 
+ 
+&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">HasTraverseInternals:</span>
+    <span class="s2">&quot;&quot;&quot;base for classes that have a &quot;traverse internals&quot; element, 
+    which defines all kinds of ways of traversing the elements of an object. 
+ 
+    Compared to :class:`.Visitable`, which relies upon an external visitor to 
+    define how the object is travered (i.e. the :class:`.SQLCompiler`), the 
+    :class:`.HasTraverseInternals` interface allows classes to define their own 
+    traversal, that is, what attributes are accessed and in what order. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_traverse_internals: _TraverseInternalsType</span>
+
+    <span class="s1">_is_immutable: bool = </span><span class="s3">False</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s5">&quot;sqlalchemy.sql.traversals&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">get_children(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">omit_attrs: Tuple[str</span><span class="s4">, </span><span class="s1">...] = ()</span><span class="s4">, </span><span class="s1">**kw: Any</span>
+    <span class="s1">) -&gt; Iterable[HasTraverseInternals]:</span>
+        <span class="s2">r&quot;&quot;&quot;Return immediate child :class:`.visitors.HasTraverseInternals` 
+        elements of this :class:`.visitors.HasTraverseInternals`. 
+ 
+        This is used for visit traversal. 
+ 
+        \**kw may contain flags that change the collection that is 
+        returned, for example to return a subset of items in order to 
+        cut down on larger traversals, or to return child items from a 
+        different context (such as schema-level collections instead of 
+        clause-level). 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">traversals = util.preloaded.sql_traversals</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">traverse_internals = self._traverse_internals</span>
+        <span class="s3">except </span><span class="s1">AttributeError:</span>
+            <span class="s0"># user-defined classes may not have a _traverse_internals</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s1">dispatch = traversals._get_children.run_generated_dispatch</span>
+        <span class="s3">return </span><span class="s1">itertools.chain.from_iterable(</span>
+            <span class="s1">meth(obj</span><span class="s4">, </span><span class="s1">**kw)</span>
+            <span class="s3">for </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">obj</span><span class="s4">, </span><span class="s1">meth </span><span class="s3">in </span><span class="s1">dispatch(</span>
+                <span class="s1">self</span><span class="s4">, </span><span class="s1">traverse_internals</span><span class="s4">, </span><span class="s5">&quot;_generated_get_children_traversal&quot;</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">attrname </span><span class="s3">not in </span><span class="s1">omit_attrs </span><span class="s3">and </span><span class="s1">obj </span><span class="s3">is not None</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">_InternalTraversalDispatchType(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(s</span><span class="s4">, </span><span class="s1">self: object</span><span class="s4">, </span><span class="s1">visitor: HasTraversalDispatch) -&gt; Any: ...</span>
+
+
+<span class="s3">class </span><span class="s1">HasTraversalDispatch:</span>
+    <span class="s2">r&quot;&quot;&quot;Define infrastructure for classes that perform internal traversals 
+ 
+    .. versionadded:: 2.0 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_dispatch_lookup: ClassVar[Dict[Union[InternalTraversal</span><span class="s4">, </span><span class="s1">str]</span><span class="s4">, </span><span class="s1">str]] = {}</span>
+
+    <span class="s3">def </span><span class="s1">dispatch(self</span><span class="s4">, </span><span class="s1">visit_symbol: InternalTraversal) -&gt; Callable[...</span><span class="s4">, </span><span class="s1">Any]:</span>
+        <span class="s2">&quot;&quot;&quot;Given a method from :class:`.HasTraversalDispatch`, return the 
+        corresponding method on a subclass. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">name = _dispatch_lookup[visit_symbol]</span>
+        <span class="s3">return </span><span class="s1">getattr(self</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)  </span><span class="s0"># type: ignore</span>
+
+    <span class="s3">def </span><span class="s1">run_generated_dispatch(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">target: object</span><span class="s4">,</span>
+        <span class="s1">internal_dispatch: _TraverseInternalsType</span><span class="s4">,</span>
+        <span class="s1">generate_dispatcher_name: str</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s1">dispatcher: _InternalTraversalDispatchType</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">dispatcher = target.__class__.__dict__[generate_dispatcher_name]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s0"># traversals.py -&gt; _preconfigure_traversals()</span>
+            <span class="s0"># may be used to run these ahead of time, but</span>
+            <span class="s0"># is not enabled right now.</span>
+            <span class="s0"># this block will generate any remaining dispatchers.</span>
+            <span class="s1">dispatcher = self.generate_dispatch(</span>
+                <span class="s1">target.__class__</span><span class="s4">, </span><span class="s1">internal_dispatch</span><span class="s4">, </span><span class="s1">generate_dispatcher_name</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">dispatcher(target</span><span class="s4">, </span><span class="s1">self)</span>
+
+    <span class="s3">def </span><span class="s1">generate_dispatch(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">target_cls: Type[object]</span><span class="s4">,</span>
+        <span class="s1">internal_dispatch: _TraverseInternalsType</span><span class="s4">,</span>
+        <span class="s1">generate_dispatcher_name: str</span><span class="s4">,</span>
+    <span class="s1">) -&gt; _InternalTraversalDispatchType:</span>
+        <span class="s1">dispatcher = self._generate_dispatcher(</span>
+            <span class="s1">internal_dispatch</span><span class="s4">, </span><span class="s1">generate_dispatcher_name</span>
+        <span class="s1">)</span>
+        <span class="s0"># assert isinstance(target_cls, type)</span>
+        <span class="s1">setattr(target_cls</span><span class="s4">, </span><span class="s1">generate_dispatcher_name</span><span class="s4">, </span><span class="s1">dispatcher)</span>
+        <span class="s3">return </span><span class="s1">dispatcher</span>
+
+    <span class="s3">def </span><span class="s1">_generate_dispatcher(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">internal_dispatch: _TraverseInternalsType</span><span class="s4">, </span><span class="s1">method_name: str</span>
+    <span class="s1">) -&gt; _InternalTraversalDispatchType:</span>
+        <span class="s1">names = []</span>
+        <span class="s3">for </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">visit_sym </span><span class="s3">in </span><span class="s1">internal_dispatch:</span>
+            <span class="s1">meth = self.dispatch(visit_sym)</span>
+            <span class="s3">if </span><span class="s1">meth </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">visit_name = _dispatch_lookup[visit_sym]</span>
+                <span class="s1">names.append((attrname</span><span class="s4">, </span><span class="s1">visit_name))</span>
+
+        <span class="s1">code = (</span>
+            <span class="s1">(</span><span class="s5">&quot;    return [</span><span class="s6">\n</span><span class="s5">&quot;</span><span class="s1">)</span>
+            <span class="s1">+ (</span>
+                <span class="s5">&quot;, </span><span class="s6">\n</span><span class="s5">&quot;</span><span class="s1">.join(</span>
+                    <span class="s5">&quot;        (%r, self.%s, visitor.%s)&quot;</span>
+                    <span class="s1">% (attrname</span><span class="s4">, </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">visit_name)</span>
+                    <span class="s3">for </span><span class="s1">attrname</span><span class="s4">, </span><span class="s1">visit_name </span><span class="s3">in </span><span class="s1">names</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">+ (</span><span class="s5">&quot;</span><span class="s6">\n    </span><span class="s5">]</span><span class="s6">\n</span><span class="s5">&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">meth_text = (</span><span class="s5">&quot;def %s(self, visitor):</span><span class="s6">\n</span><span class="s5">&quot; </span><span class="s1">% method_name) + code + </span><span class="s5">&quot;</span><span class="s6">\n</span><span class="s5">&quot;</span>
+        <span class="s3">return </span><span class="s1">cast(</span>
+            <span class="s1">_InternalTraversalDispatchType</span><span class="s4">,</span>
+            <span class="s1">langhelpers._exec_code_in_env(meth_text</span><span class="s4">, </span><span class="s1">{}</span><span class="s4">, </span><span class="s1">method_name)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s1">ExtendedInternalTraversal = InternalTraversal</span>
+
+
+<span class="s3">def </span><span class="s1">_generate_traversal_dispatch() -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+    <span class="s1">lookup = _dispatch_lookup</span>
+
+    <span class="s3">for </span><span class="s1">sym </span><span class="s3">in </span><span class="s1">InternalTraversal:</span>
+        <span class="s1">key = sym.name</span>
+        <span class="s3">if </span><span class="s1">key.startswith(</span><span class="s5">&quot;dp_&quot;</span><span class="s1">):</span>
+            <span class="s1">visit_key = key.replace(</span><span class="s5">&quot;dp_&quot;</span><span class="s4">, </span><span class="s5">&quot;visit_&quot;</span><span class="s1">)</span>
+            <span class="s1">sym_name = sym.value</span>
+            <span class="s3">assert </span><span class="s1">sym_name </span><span class="s3">not in </span><span class="s1">lookup</span><span class="s4">, </span><span class="s1">sym_name</span>
+            <span class="s1">lookup[sym] = lookup[sym_name] = visit_key</span>
+
+
+<span class="s1">_dispatch_lookup = HasTraversalDispatch._dispatch_lookup</span>
+<span class="s1">_generate_traversal_dispatch()</span>
+
+
+<span class="s3">class </span><span class="s1">ExternallyTraversible(HasTraverseInternals</span><span class="s4">, </span><span class="s1">Visitable):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_annotations: Mapping[Any</span><span class="s4">, </span><span class="s1">Any] = util.EMPTY_DICT</span>
+
+    <span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">_annotate(self</span><span class="s4">, </span><span class="s1">values: _AnnotationDict) -&gt; Self: ...</span>
+
+        <span class="s3">def </span><span class="s1">get_children(</span>
+            <span class="s1">self</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">omit_attrs: Tuple[str</span><span class="s4">, </span><span class="s1">...] = ()</span><span class="s4">, </span><span class="s1">**kw: Any</span>
+        <span class="s1">) -&gt; Iterable[ExternallyTraversible]: ...</span>
+
+    <span class="s3">def </span><span class="s1">_clone(self</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; Self:</span>
+        <span class="s2">&quot;&quot;&quot;clone this element&quot;&quot;&quot;</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">_copy_internals(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">omit_attrs: Tuple[str</span><span class="s4">, </span><span class="s1">...] = ()</span><span class="s4">, </span><span class="s1">**kw: Any</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Reassign internal elements to be clones of themselves. 
+ 
+        Called during a copy-and-traverse operation on newly 
+        shallow-copied elements to create a deep copy. 
+ 
+        The given clone function should be used, which may be applying 
+        additional transformations to the element (i.e. replacement 
+        traversal, cloned traversal, annotations). 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s1">_ET = TypeVar(</span><span class="s5">&quot;_ET&quot;</span><span class="s4">, </span><span class="s1">bound=ExternallyTraversible)</span>
+
+<span class="s1">_CE = TypeVar(</span><span class="s5">&quot;_CE&quot;</span><span class="s4">, </span><span class="s1">bound=</span><span class="s5">&quot;ColumnElement[Any]&quot;</span><span class="s1">)</span>
+
+<span class="s1">_TraverseCallableType = Callable[[_ET]</span><span class="s4">, </span><span class="s3">None</span><span class="s1">]</span>
+
+
+<span class="s3">class </span><span class="s1">_CloneCallableType(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s4">, </span><span class="s1">element: _ET</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; _ET: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_TraverseTransformCallableType(Protocol[_ET]):</span>
+    <span class="s3">def </span><span class="s1">__call__(self</span><span class="s4">, </span><span class="s1">element: _ET</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; Optional[_ET]: ...</span>
+
+
+<span class="s1">_ExtT = TypeVar(</span><span class="s5">&quot;_ExtT&quot;</span><span class="s4">, </span><span class="s1">bound=</span><span class="s5">&quot;ExternalTraversal&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">ExternalTraversal(util.MemoizedSlots):</span>
+    <span class="s2">&quot;&quot;&quot;Base class for visitor objects which can traverse externally using 
+    the :func:`.visitors.traverse` function. 
+ 
+    Direct usage of the :func:`.visitors.traverse` function is usually 
+    preferred. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s5">&quot;_visitor_dict&quot;</span><span class="s4">, </span><span class="s5">&quot;_next&quot;</span><span class="s1">)</span>
+
+    <span class="s1">__traverse_options__: Dict[str</span><span class="s4">, </span><span class="s1">Any] = {}</span>
+    <span class="s1">_next: Optional[ExternalTraversal]</span>
+
+    <span class="s3">def </span><span class="s1">traverse_single(self</span><span class="s4">, </span><span class="s1">obj: Visitable</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; Any:</span>
+        <span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">self.visitor_iterator:</span>
+            <span class="s1">meth = getattr(v</span><span class="s4">, </span><span class="s5">&quot;visit_%s&quot; </span><span class="s1">% obj.__visit_name__</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">meth:</span>
+                <span class="s3">return </span><span class="s1">meth(obj</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">iterate(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">obj: Optional[ExternallyTraversible]</span>
+    <span class="s1">) -&gt; Iterator[ExternallyTraversible]:</span>
+        <span class="s2">&quot;&quot;&quot;Traverse the given expression structure, returning an iterator 
+        of all elements. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">iterate(obj</span><span class="s4">, </span><span class="s1">self.__traverse_options__)</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">traverse(self</span><span class="s4">, </span><span class="s1">obj: Literal[</span><span class="s3">None</span><span class="s1">]) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">traverse(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">obj: ExternallyTraversible</span>
+    <span class="s1">) -&gt; ExternallyTraversible: ...</span>
+
+    <span class="s3">def </span><span class="s1">traverse(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">obj: Optional[ExternallyTraversible]</span>
+    <span class="s1">) -&gt; Optional[ExternallyTraversible]:</span>
+        <span class="s2">&quot;&quot;&quot;Traverse and visit the given expression structure.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">traverse(obj</span><span class="s4">, </span><span class="s1">self.__traverse_options__</span><span class="s4">, </span><span class="s1">self._visitor_dict)</span>
+
+    <span class="s3">def </span><span class="s1">_memoized_attr__visitor_dict(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Dict[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]:</span>
+        <span class="s1">visitors = {}</span>
+
+        <span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">dir(self):</span>
+            <span class="s3">if </span><span class="s1">name.startswith(</span><span class="s5">&quot;visit_&quot;</span><span class="s1">):</span>
+                <span class="s1">visitors[name[</span><span class="s7">6</span><span class="s1">:]] = getattr(self</span><span class="s4">, </span><span class="s1">name)</span>
+        <span class="s3">return </span><span class="s1">visitors</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">visitor_iterator(self) -&gt; Iterator[ExternalTraversal]:</span>
+        <span class="s2">&quot;&quot;&quot;Iterate through this visitor and each 'chained' visitor.&quot;&quot;&quot;</span>
+
+        <span class="s1">v: Optional[ExternalTraversal] = self</span>
+        <span class="s3">while </span><span class="s1">v:</span>
+            <span class="s3">yield </span><span class="s1">v</span>
+            <span class="s1">v = getattr(v</span><span class="s4">, </span><span class="s5">&quot;_next&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">chain(self: _ExtT</span><span class="s4">, </span><span class="s1">visitor: ExternalTraversal) -&gt; _ExtT:</span>
+        <span class="s2">&quot;&quot;&quot;'Chain' an additional ExternalTraversal onto this ExternalTraversal 
+ 
+        The chained visitor will receive all visit events after this one. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">tail = list(self.visitor_iterator)[-</span><span class="s7">1</span><span class="s1">]</span>
+        <span class="s1">tail._next = visitor</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+
+<span class="s3">class </span><span class="s1">CloningExternalTraversal(ExternalTraversal):</span>
+    <span class="s2">&quot;&quot;&quot;Base class for visitor objects which can traverse using 
+    the :func:`.visitors.cloned_traverse` function. 
+ 
+    Direct usage of the :func:`.visitors.cloned_traverse` function is usually 
+    preferred. 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">copy_and_process(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">list_: List[ExternallyTraversible]</span>
+    <span class="s1">) -&gt; List[ExternallyTraversible]:</span>
+        <span class="s2">&quot;&quot;&quot;Apply cloned traversal to the given list of elements, and return 
+        the new list. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">[self.traverse(x) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">list_]</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">traverse(self</span><span class="s4">, </span><span class="s1">obj: Literal[</span><span class="s3">None</span><span class="s1">]) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">traverse(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">obj: ExternallyTraversible</span>
+    <span class="s1">) -&gt; ExternallyTraversible: ...</span>
+
+    <span class="s3">def </span><span class="s1">traverse(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">obj: Optional[ExternallyTraversible]</span>
+    <span class="s1">) -&gt; Optional[ExternallyTraversible]:</span>
+        <span class="s2">&quot;&quot;&quot;Traverse and visit the given expression structure.&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">cloned_traverse(</span>
+            <span class="s1">obj</span><span class="s4">, </span><span class="s1">self.__traverse_options__</span><span class="s4">, </span><span class="s1">self._visitor_dict</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">ReplacingExternalTraversal(CloningExternalTraversal):</span>
+    <span class="s2">&quot;&quot;&quot;Base class for visitor objects which can traverse using 
+    the :func:`.visitors.replacement_traverse` function. 
+ 
+    Direct usage of the :func:`.visitors.replacement_traverse` function is 
+    usually preferred. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">replace(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">elem: ExternallyTraversible</span>
+    <span class="s1">) -&gt; Optional[ExternallyTraversible]:</span>
+        <span class="s2">&quot;&quot;&quot;Receive pre-copied elements during a cloning traversal. 
+ 
+        If the method returns a new element, the element is used 
+        instead of creating a simple copy of the element.  Traversal 
+        will halt on the newly returned element if it is re-encountered. 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return None</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">traverse(self</span><span class="s4">, </span><span class="s1">obj: Literal[</span><span class="s3">None</span><span class="s1">]) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">traverse(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">obj: ExternallyTraversible</span>
+    <span class="s1">) -&gt; ExternallyTraversible: ...</span>
+
+    <span class="s3">def </span><span class="s1">traverse(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">obj: Optional[ExternallyTraversible]</span>
+    <span class="s1">) -&gt; Optional[ExternallyTraversible]:</span>
+        <span class="s2">&quot;&quot;&quot;Traverse and visit the given expression structure.&quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">replace(</span>
+            <span class="s1">element: ExternallyTraversible</span><span class="s4">,</span>
+            <span class="s1">**kw: Any</span><span class="s4">,</span>
+        <span class="s1">) -&gt; Optional[ExternallyTraversible]:</span>
+            <span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">self.visitor_iterator:</span>
+                <span class="s1">e = cast(ReplacingExternalTraversal</span><span class="s4">, </span><span class="s1">v).replace(element)</span>
+                <span class="s3">if </span><span class="s1">e </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s3">return </span><span class="s1">e</span>
+
+            <span class="s3">return None</span>
+
+        <span class="s3">return </span><span class="s1">replacement_traverse(obj</span><span class="s4">, </span><span class="s1">self.__traverse_options__</span><span class="s4">, </span><span class="s1">replace)</span>
+
+
+<span class="s0"># backwards compatibility</span>
+<span class="s1">Traversible = Visitable</span>
+
+<span class="s1">ClauseVisitor = ExternalTraversal</span>
+<span class="s1">CloningVisitor = CloningExternalTraversal</span>
+<span class="s1">ReplacingCloningVisitor = ReplacingExternalTraversal</span>
+
+
+<span class="s3">def </span><span class="s1">iterate(</span>
+    <span class="s1">obj: Optional[ExternallyTraversible]</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any] = util.EMPTY_DICT</span><span class="s4">,</span>
+<span class="s1">) -&gt; Iterator[ExternallyTraversible]:</span>
+    <span class="s2">r&quot;&quot;&quot;Traverse the given expression structure, returning an iterator. 
+ 
+    Traversal is configured to be breadth-first. 
+ 
+    The central API feature used by the :func:`.visitors.iterate` 
+    function is the 
+    :meth:`_expression.ClauseElement.get_children` method of 
+    :class:`_expression.ClauseElement` objects.  This method should return all 
+    the :class:`_expression.ClauseElement` objects which are associated with a 
+    particular :class:`_expression.ClauseElement` object. For example, a 
+    :class:`.Case` structure will refer to a series of 
+    :class:`_expression.ColumnElement` objects within its &quot;whens&quot; and &quot;else\_&quot; 
+    member variables. 
+ 
+    :param obj: :class:`_expression.ClauseElement` structure to be traversed 
+ 
+    :param opts: dictionary of iteration options.   This dictionary is usually 
+     empty in modern usage. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">obj </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s3">return</span>
+
+    <span class="s3">yield </span><span class="s1">obj</span>
+    <span class="s1">children = obj.get_children(**opts)</span>
+
+    <span class="s3">if not </span><span class="s1">children:</span>
+        <span class="s3">return</span>
+
+    <span class="s1">stack = deque([children])</span>
+    <span class="s3">while </span><span class="s1">stack:</span>
+        <span class="s1">t_iterator = stack.popleft()</span>
+        <span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">t_iterator:</span>
+            <span class="s3">yield </span><span class="s1">t</span>
+            <span class="s1">stack.append(t.get_children(**opts))</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">traverse_using(</span>
+    <span class="s1">iterator: Iterable[ExternallyTraversible]</span><span class="s4">,</span>
+    <span class="s1">obj: Literal[</span><span class="s3">None</span><span class="s1">]</span><span class="s4">,</span>
+    <span class="s1">visitors: Mapping[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">traverse_using(</span>
+    <span class="s1">iterator: Iterable[ExternallyTraversible]</span><span class="s4">,</span>
+    <span class="s1">obj: ExternallyTraversible</span><span class="s4">,</span>
+    <span class="s1">visitors: Mapping[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; ExternallyTraversible: ...</span>
+
+
+<span class="s3">def </span><span class="s1">traverse_using(</span>
+    <span class="s1">iterator: Iterable[ExternallyTraversible]</span><span class="s4">,</span>
+    <span class="s1">obj: Optional[ExternallyTraversible]</span><span class="s4">,</span>
+    <span class="s1">visitors: Mapping[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; Optional[ExternallyTraversible]:</span>
+    <span class="s2">&quot;&quot;&quot;Visit the given expression structure using the given iterator of 
+    objects. 
+ 
+    :func:`.visitors.traverse_using` is usually called internally as the result 
+    of the :func:`.visitors.traverse` function. 
+ 
+    :param iterator: an iterable or sequence which will yield 
+     :class:`_expression.ClauseElement` 
+     structures; the iterator is assumed to be the 
+     product of the :func:`.visitors.iterate` function. 
+ 
+    :param obj: the :class:`_expression.ClauseElement` 
+     that was used as the target of the 
+     :func:`.iterate` function. 
+ 
+    :param visitors: dictionary of visit functions.  See :func:`.traverse` 
+     for details on this dictionary. 
+ 
+    .. seealso:: 
+ 
+        :func:`.traverse` 
+ 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">for </span><span class="s1">target </span><span class="s3">in </span><span class="s1">iterator:</span>
+        <span class="s1">meth = visitors.get(target.__visit_name__</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">meth:</span>
+            <span class="s1">meth(target)</span>
+    <span class="s3">return </span><span class="s1">obj</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">traverse(</span>
+    <span class="s1">obj: Literal[</span><span class="s3">None</span><span class="s1">]</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">visitors: Mapping[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">traverse(</span>
+    <span class="s1">obj: ExternallyTraversible</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">visitors: Mapping[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; ExternallyTraversible: ...</span>
+
+
+<span class="s3">def </span><span class="s1">traverse(</span>
+    <span class="s1">obj: Optional[ExternallyTraversible]</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">visitors: Mapping[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; Optional[ExternallyTraversible]:</span>
+    <span class="s2">&quot;&quot;&quot;Traverse and visit the given expression structure using the default 
+    iterator. 
+ 
+     e.g.:: 
+ 
+        from sqlalchemy.sql import visitors 
+ 
+        stmt = select(some_table).where(some_table.c.foo == 'bar') 
+ 
+        def visit_bindparam(bind_param): 
+            print(&quot;found bound value: %s&quot; % bind_param.value) 
+ 
+        visitors.traverse(stmt, {}, {&quot;bindparam&quot;: visit_bindparam}) 
+ 
+    The iteration of objects uses the :func:`.visitors.iterate` function, 
+    which does a breadth-first traversal using a stack. 
+ 
+    :param obj: :class:`_expression.ClauseElement` structure to be traversed 
+ 
+    :param opts: dictionary of iteration options.   This dictionary is usually 
+     empty in modern usage. 
+ 
+    :param visitors: dictionary of visit functions.   The dictionary should 
+     have strings as keys, each of which would correspond to the 
+     ``__visit_name__`` of a particular kind of SQL expression object, and 
+     callable functions  as values, each of which represents a visitor function 
+     for that kind of object. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">return </span><span class="s1">traverse_using(iterate(obj</span><span class="s4">, </span><span class="s1">opts)</span><span class="s4">, </span><span class="s1">obj</span><span class="s4">, </span><span class="s1">visitors)</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">cloned_traverse(</span>
+    <span class="s1">obj: Literal[</span><span class="s3">None</span><span class="s1">]</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">visitors: Mapping[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s0"># a bit of controversy here, as the clone of the lead element</span>
+<span class="s0"># *could* in theory replace with an entirely different kind of element.</span>
+<span class="s0"># however this is really not how cloned_traverse is ever used internally</span>
+<span class="s0"># at least.</span>
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">cloned_traverse(</span>
+    <span class="s1">obj: _ET</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">visitors: Mapping[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; _ET: ...</span>
+
+
+<span class="s3">def </span><span class="s1">cloned_traverse(</span>
+    <span class="s1">obj: Optional[ExternallyTraversible]</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">visitors: Mapping[str</span><span class="s4">, </span><span class="s1">_TraverseCallableType[Any]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; Optional[ExternallyTraversible]:</span>
+    <span class="s2">&quot;&quot;&quot;Clone the given expression structure, allowing modifications by 
+    visitors for mutable objects. 
+ 
+    Traversal usage is the same as that of :func:`.visitors.traverse`. 
+    The visitor functions present in the ``visitors`` dictionary may also 
+    modify the internals of the given structure as the traversal proceeds. 
+ 
+    The :func:`.cloned_traverse` function does **not** provide objects that are 
+    part of the :class:`.Immutable` interface to the visit methods (this 
+    primarily includes :class:`.ColumnClause`, :class:`.Column`, 
+    :class:`.TableClause` and :class:`.Table` objects). As this traversal is 
+    only intended to allow in-place mutation of objects, :class:`.Immutable` 
+    objects are skipped. The :meth:`.Immutable._clone` method is still called 
+    on each object to allow for objects to replace themselves with a different 
+    object based on a clone of their sub-internals (e.g. a 
+    :class:`.ColumnClause` that clones its subquery to return a new 
+    :class:`.ColumnClause`). 
+ 
+    .. versionchanged:: 2.0  The :func:`.cloned_traverse` function omits 
+       objects that are part of the :class:`.Immutable` interface. 
+ 
+    The central API feature used by the :func:`.visitors.cloned_traverse` 
+    and :func:`.visitors.replacement_traverse` functions, in addition to the 
+    :meth:`_expression.ClauseElement.get_children` 
+    function that is used to achieve 
+    the iteration, is the :meth:`_expression.ClauseElement._copy_internals` 
+    method. 
+    For a :class:`_expression.ClauseElement` 
+    structure to support cloning and replacement 
+    traversals correctly, it needs to be able to pass a cloning function into 
+    its internal members in order to make copies of them. 
+ 
+    .. seealso:: 
+ 
+        :func:`.visitors.traverse` 
+ 
+        :func:`.visitors.replacement_traverse` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">cloned: Dict[int</span><span class="s4">, </span><span class="s1">ExternallyTraversible] = {}</span>
+    <span class="s1">stop_on = set(opts.get(</span><span class="s5">&quot;stop_on&quot;</span><span class="s4">, </span><span class="s1">[]))</span>
+
+    <span class="s3">def </span><span class="s1">deferred_copy_internals(</span>
+        <span class="s1">obj: ExternallyTraversible</span><span class="s4">,</span>
+    <span class="s1">) -&gt; ExternallyTraversible:</span>
+        <span class="s3">return </span><span class="s1">cloned_traverse(obj</span><span class="s4">, </span><span class="s1">opts</span><span class="s4">, </span><span class="s1">visitors)</span>
+
+    <span class="s3">def </span><span class="s1">clone(elem: ExternallyTraversible</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; ExternallyTraversible:</span>
+        <span class="s3">if </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">stop_on:</span>
+            <span class="s3">return </span><span class="s1">elem</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">id(elem) </span><span class="s3">not in </span><span class="s1">cloned:</span>
+                <span class="s3">if </span><span class="s5">&quot;replace&quot; </span><span class="s3">in </span><span class="s1">kw:</span>
+                    <span class="s1">newelem = cast(</span>
+                        <span class="s1">Optional[ExternallyTraversible]</span><span class="s4">, </span><span class="s1">kw[</span><span class="s5">&quot;replace&quot;</span><span class="s1">](elem)</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">newelem </span><span class="s3">is not None</span><span class="s1">:</span>
+                        <span class="s1">cloned[id(elem)] = newelem</span>
+                        <span class="s3">return </span><span class="s1">newelem</span>
+
+                <span class="s0"># the _clone method for immutable normally returns &quot;self&quot;.</span>
+                <span class="s0"># however, the method is still allowed to return a</span>
+                <span class="s0"># different object altogether; ColumnClause._clone() will</span>
+                <span class="s0"># based on options clone the subquery to which it is associated</span>
+                <span class="s0"># and return the new corresponding column.</span>
+                <span class="s1">cloned[id(elem)] = newelem = elem._clone(clone=clone</span><span class="s4">, </span><span class="s1">**kw)</span>
+                <span class="s1">newelem._copy_internals(clone=clone</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+                <span class="s0"># however, visit methods which are tasked with in-place</span>
+                <span class="s0"># mutation of the object should not get access to the immutable</span>
+                <span class="s0"># object.</span>
+                <span class="s3">if not </span><span class="s1">elem._is_immutable:</span>
+                    <span class="s1">meth = visitors.get(newelem.__visit_name__</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">meth:</span>
+                        <span class="s1">meth(newelem)</span>
+            <span class="s3">return </span><span class="s1">cloned[id(elem)]</span>
+
+    <span class="s3">if </span><span class="s1">obj </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">obj = clone(</span>
+            <span class="s1">obj</span><span class="s4">, </span><span class="s1">deferred_copy_internals=deferred_copy_internals</span><span class="s4">, </span><span class="s1">**opts</span>
+        <span class="s1">)</span>
+    <span class="s1">clone = </span><span class="s3">None  </span><span class="s0"># type: ignore[assignment]  # remove gc cycles</span>
+    <span class="s3">return </span><span class="s1">obj</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">replacement_traverse(</span>
+    <span class="s1">obj: Literal[</span><span class="s3">None</span><span class="s1">]</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">replace: _TraverseTransformCallableType[Any]</span><span class="s4">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">replacement_traverse(</span>
+    <span class="s1">obj: _CE</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">replace: _TraverseTransformCallableType[Any]</span><span class="s4">,</span>
+<span class="s1">) -&gt; _CE: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">replacement_traverse(</span>
+    <span class="s1">obj: ExternallyTraversible</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">replace: _TraverseTransformCallableType[Any]</span><span class="s4">,</span>
+<span class="s1">) -&gt; ExternallyTraversible: ...</span>
+
+
+<span class="s3">def </span><span class="s1">replacement_traverse(</span>
+    <span class="s1">obj: Optional[ExternallyTraversible]</span><span class="s4">,</span>
+    <span class="s1">opts: Mapping[str</span><span class="s4">, </span><span class="s1">Any]</span><span class="s4">,</span>
+    <span class="s1">replace: _TraverseTransformCallableType[Any]</span><span class="s4">,</span>
+<span class="s1">) -&gt; Optional[ExternallyTraversible]:</span>
+    <span class="s2">&quot;&quot;&quot;Clone the given expression structure, allowing element 
+    replacement by a given replacement function. 
+ 
+    This function is very similar to the :func:`.visitors.cloned_traverse` 
+    function, except instead of being passed a dictionary of visitors, all 
+    elements are unconditionally passed into the given replace function. 
+    The replace function then has the option to return an entirely new object 
+    which will replace the one given.  If it returns ``None``, then the object 
+    is kept in place. 
+ 
+    The difference in usage between :func:`.visitors.cloned_traverse` and 
+    :func:`.visitors.replacement_traverse` is that in the former case, an 
+    already-cloned object is passed to the visitor function, and the visitor 
+    function can then manipulate the internal state of the object. 
+    In the case of the latter, the visitor function should only return an 
+    entirely different object, or do nothing. 
+ 
+    The use case for :func:`.visitors.replacement_traverse` is that of 
+    replacing a FROM clause inside of a SQL structure with a different one, 
+    as is a common use case within the ORM. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">cloned = {}</span>
+    <span class="s1">stop_on = {id(x) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">opts.get(</span><span class="s5">&quot;stop_on&quot;</span><span class="s4">, </span><span class="s1">[])}</span>
+
+    <span class="s3">def </span><span class="s1">deferred_copy_internals(</span>
+        <span class="s1">obj: ExternallyTraversible</span><span class="s4">,</span>
+    <span class="s1">) -&gt; ExternallyTraversible:</span>
+        <span class="s3">return </span><span class="s1">replacement_traverse(obj</span><span class="s4">, </span><span class="s1">opts</span><span class="s4">, </span><span class="s1">replace)</span>
+
+    <span class="s3">def </span><span class="s1">clone(elem: ExternallyTraversible</span><span class="s4">, </span><span class="s1">**kw: Any) -&gt; ExternallyTraversible:</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">id(elem) </span><span class="s3">in </span><span class="s1">stop_on</span>
+            <span class="s3">or </span><span class="s5">&quot;no_replacement_traverse&quot; </span><span class="s3">in </span><span class="s1">elem._annotations</span>
+        <span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">elem</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">newelem = replace(elem)</span>
+            <span class="s3">if </span><span class="s1">newelem </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">stop_on.add(id(newelem))</span>
+                <span class="s3">return </span><span class="s1">newelem  </span><span class="s0"># type: ignore</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s0"># base &quot;already seen&quot; on id(), not hash, so that we don't</span>
+                <span class="s0"># replace an Annotated element with its non-annotated one, and</span>
+                <span class="s0"># vice versa</span>
+                <span class="s1">id_elem = id(elem)</span>
+                <span class="s3">if </span><span class="s1">id_elem </span><span class="s3">not in </span><span class="s1">cloned:</span>
+                    <span class="s3">if </span><span class="s5">&quot;replace&quot; </span><span class="s3">in </span><span class="s1">kw:</span>
+                        <span class="s1">newelem = kw[</span><span class="s5">&quot;replace&quot;</span><span class="s1">](elem)</span>
+                        <span class="s3">if </span><span class="s1">newelem </span><span class="s3">is not None</span><span class="s1">:</span>
+                            <span class="s1">cloned[id_elem] = newelem</span>
+                            <span class="s3">return </span><span class="s1">newelem  </span><span class="s0"># type: ignore</span>
+
+                    <span class="s1">cloned[id_elem] = newelem = elem._clone(**kw)</span>
+                    <span class="s1">newelem._copy_internals(clone=clone</span><span class="s4">, </span><span class="s1">**kw)</span>
+                <span class="s3">return </span><span class="s1">cloned[id_elem]  </span><span class="s0"># type: ignore</span>
+
+    <span class="s3">if </span><span class="s1">obj </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s1">obj = clone(</span>
+            <span class="s1">obj</span><span class="s4">, </span><span class="s1">deferred_copy_internals=deferred_copy_internals</span><span class="s4">, </span><span class="s1">**opts</span>
+        <span class="s1">)</span>
+    <span class="s1">clone = </span><span class="s3">None  </span><span class="s0"># type: ignore[assignment]  # remove gc cycles</span>
+    <span class="s3">return </span><span class="s1">obj</span>
+</pre>
+</body>
+</html>

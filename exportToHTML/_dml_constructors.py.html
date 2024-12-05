@@ -1,0 +1,160 @@
+<html>
+<head>
+<title>_dml_constructors.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_dml_constructors.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/_dml_constructors.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+
+<span class="s2">from </span><span class="s1">.dml </span><span class="s2">import </span><span class="s1">Delete</span>
+<span class="s2">from </span><span class="s1">.dml </span><span class="s2">import </span><span class="s1">Insert</span>
+<span class="s2">from </span><span class="s1">.dml </span><span class="s2">import </span><span class="s1">Update</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">._typing </span><span class="s2">import </span><span class="s1">_DMLTableArgument</span>
+
+
+<span class="s2">def </span><span class="s1">insert(table: _DMLTableArgument) -&gt; Insert:</span>
+    <span class="s3">&quot;&quot;&quot;Construct an :class:`_expression.Insert` object. 
+ 
+    E.g.:: 
+ 
+        from sqlalchemy import insert 
+ 
+        stmt = ( 
+            insert(user_table). 
+            values(name='username', fullname='Full Username') 
+        ) 
+ 
+    Similar functionality is available via the 
+    :meth:`_expression.TableClause.insert` method on 
+    :class:`_schema.Table`. 
+ 
+    .. seealso:: 
+ 
+        :ref:`tutorial_core_insert` - in the :ref:`unified_tutorial` 
+ 
+ 
+    :param table: :class:`_expression.TableClause` 
+     which is the subject of the 
+     insert. 
+ 
+    :param values: collection of values to be inserted; see 
+     :meth:`_expression.Insert.values` 
+     for a description of allowed formats here. 
+     Can be omitted entirely; a :class:`_expression.Insert` construct 
+     will also dynamically render the VALUES clause at execution time 
+     based on the parameters passed to :meth:`_engine.Connection.execute`. 
+ 
+    :param inline: if True, no attempt will be made to retrieve the 
+     SQL-generated default values to be provided within the statement; 
+     in particular, 
+     this allows SQL expressions to be rendered 'inline' within the 
+     statement without the need to pre-execute them beforehand; for 
+     backends that support &quot;returning&quot;, this turns off the &quot;implicit 
+     returning&quot; feature for the statement. 
+ 
+    If both :paramref:`_expression.insert.values` and compile-time bind 
+    parameters are present, the compile-time bind parameters override the 
+    information specified within :paramref:`_expression.insert.values` on a 
+    per-key basis. 
+ 
+    The keys within :paramref:`_expression.Insert.values` can be either 
+    :class:`~sqlalchemy.schema.Column` objects or their string 
+    identifiers. Each key may reference one of: 
+ 
+    * a literal data value (i.e. string, number, etc.); 
+    * a Column object; 
+    * a SELECT statement. 
+ 
+    If a ``SELECT`` statement is specified which references this 
+    ``INSERT`` statement's table, the statement will be correlated 
+    against the ``INSERT`` statement. 
+ 
+    .. seealso:: 
+ 
+        :ref:`tutorial_core_insert` - in the :ref:`unified_tutorial` 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">Insert(table)</span>
+
+
+<span class="s2">def </span><span class="s1">update(table: _DMLTableArgument) -&gt; Update:</span>
+    <span class="s3">r&quot;&quot;&quot;Construct an :class:`_expression.Update` object. 
+ 
+    E.g.:: 
+ 
+        from sqlalchemy import update 
+ 
+        stmt = ( 
+            update(user_table). 
+            where(user_table.c.id == 5). 
+            values(name='user #5') 
+        ) 
+ 
+    Similar functionality is available via the 
+    :meth:`_expression.TableClause.update` method on 
+    :class:`_schema.Table`. 
+ 
+    :param table: A :class:`_schema.Table` 
+     object representing the database 
+     table to be updated. 
+ 
+ 
+    .. seealso:: 
+ 
+        :ref:`tutorial_core_update_delete` - in the :ref:`unified_tutorial` 
+ 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">Update(table)</span>
+
+
+<span class="s2">def </span><span class="s1">delete(table: _DMLTableArgument) -&gt; Delete:</span>
+    <span class="s3">r&quot;&quot;&quot;Construct :class:`_expression.Delete` object. 
+ 
+    E.g.:: 
+ 
+        from sqlalchemy import delete 
+ 
+        stmt = ( 
+            delete(user_table). 
+            where(user_table.c.id == 5) 
+        ) 
+ 
+    Similar functionality is available via the 
+    :meth:`_expression.TableClause.delete` method on 
+    :class:`_schema.Table`. 
+ 
+    :param table: The table to delete rows from. 
+ 
+    .. seealso:: 
+ 
+        :ref:`tutorial_core_update_delete` - in the :ref:`unified_tutorial` 
+ 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">Delete(table)</span>
+</pre>
+</body>
+</html>

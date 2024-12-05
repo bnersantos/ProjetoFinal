@@ -1,0 +1,225 @@
+<html>
+<head>
+<title>tool_support.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+tool_support.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># util/tool_support.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+<span class="s2">&quot;&quot;&quot;support routines for the helpers in tools/. 
+ 
+These aren't imported by the enclosing util package as the are not 
+needed for normal library use. 
+ 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">argparse </span><span class="s3">import </span><span class="s1">ArgumentParser</span>
+<span class="s3">from </span><span class="s1">argparse </span><span class="s3">import </span><span class="s1">Namespace</span>
+<span class="s3">import </span><span class="s1">contextlib</span>
+<span class="s3">import </span><span class="s1">difflib</span>
+<span class="s3">import </span><span class="s1">os</span>
+<span class="s3">from </span><span class="s1">pathlib </span><span class="s3">import </span><span class="s1">Path</span>
+<span class="s3">import </span><span class="s1">shlex</span>
+<span class="s3">import </span><span class="s1">shutil</span>
+<span class="s3">import </span><span class="s1">subprocess</span>
+<span class="s3">import </span><span class="s1">sys</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">compat</span>
+
+
+<span class="s3">class </span><span class="s1">code_writer_cmd:</span>
+    <span class="s1">parser: ArgumentParser</span>
+    <span class="s1">args: Namespace</span>
+    <span class="s1">suppress_output: bool</span>
+    <span class="s1">diffs_detected: bool</span>
+    <span class="s1">source_root: Path</span>
+    <span class="s1">pyproject_toml_path: Path</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">tool_script: str):</span>
+        <span class="s1">self.source_root = Path(tool_script).parent.parent</span>
+        <span class="s1">self.pyproject_toml_path = self.source_root / Path(</span><span class="s5">&quot;pyproject.toml&quot;</span><span class="s1">)</span>
+        <span class="s3">assert </span><span class="s1">self.pyproject_toml_path.exists()</span>
+
+        <span class="s1">self.parser = ArgumentParser()</span>
+        <span class="s1">self.parser.add_argument(</span>
+            <span class="s5">&quot;--stdout&quot;</span><span class="s4">,</span>
+            <span class="s1">action=</span><span class="s5">&quot;store_true&quot;</span><span class="s4">,</span>
+            <span class="s1">help=</span><span class="s5">&quot;Write to stdout instead of saving to file&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self.parser.add_argument(</span>
+            <span class="s5">&quot;-c&quot;</span><span class="s4">,</span>
+            <span class="s5">&quot;--check&quot;</span><span class="s4">,</span>
+            <span class="s1">help=</span><span class="s5">&quot;Don't write the files back, just return the &quot;</span>
+            <span class="s5">&quot;status. Return code 0 means nothing would change. &quot;</span>
+            <span class="s5">&quot;Return code 1 means some files would be reformatted&quot;</span><span class="s4">,</span>
+            <span class="s1">action=</span><span class="s5">&quot;store_true&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">run_zimports(self</span><span class="s4">, </span><span class="s1">tempfile: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._run_console_script(</span>
+            <span class="s1">str(tempfile)</span><span class="s4">,</span>
+            <span class="s1">{</span>
+                <span class="s5">&quot;entrypoint&quot;</span><span class="s1">: </span><span class="s5">&quot;zimports&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;options&quot;</span><span class="s1">: </span><span class="s5">f&quot;--toml-config </span><span class="s6">{</span><span class="s1">self.pyproject_toml_path</span><span class="s6">}</span><span class="s5">&quot;</span><span class="s4">,</span>
+            <span class="s1">}</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">run_black(self</span><span class="s4">, </span><span class="s1">tempfile: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._run_console_script(</span>
+            <span class="s1">str(tempfile)</span><span class="s4">,</span>
+            <span class="s1">{</span>
+                <span class="s5">&quot;entrypoint&quot;</span><span class="s1">: </span><span class="s5">&quot;black&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;options&quot;</span><span class="s1">: </span><span class="s5">f&quot;--config </span><span class="s6">{</span><span class="s1">self.pyproject_toml_path</span><span class="s6">}</span><span class="s5">&quot;</span><span class="s4">,</span>
+            <span class="s1">}</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_run_console_script(self</span><span class="s4">, </span><span class="s1">path: str</span><span class="s4">, </span><span class="s1">options: Dict[str</span><span class="s4">, </span><span class="s1">Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Run a Python console application from within the process. 
+ 
+        Used for black, zimports 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">is_posix = os.name == </span><span class="s5">&quot;posix&quot;</span>
+
+        <span class="s1">entrypoint_name = options[</span><span class="s5">&quot;entrypoint&quot;</span><span class="s1">]</span>
+
+        <span class="s3">for </span><span class="s1">entry </span><span class="s3">in </span><span class="s1">compat.importlib_metadata_get(</span><span class="s5">&quot;console_scripts&quot;</span><span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">entry.name == entrypoint_name:</span>
+                <span class="s1">impl = entry</span>
+                <span class="s3">break</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">Exception(</span>
+                <span class="s5">f&quot;Could not find entrypoint console_scripts.</span><span class="s6">{</span><span class="s1">entrypoint_name</span><span class="s6">}</span><span class="s5">&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">cmdline_options_str = options.get(</span><span class="s5">&quot;options&quot;</span><span class="s4">, </span><span class="s5">&quot;&quot;</span><span class="s1">)</span>
+        <span class="s1">cmdline_options_list = shlex.split(</span>
+            <span class="s1">cmdline_options_str</span><span class="s4">, </span><span class="s1">posix=is_posix</span>
+        <span class="s1">) + [path]</span>
+
+        <span class="s1">kw: Dict[str</span><span class="s4">, </span><span class="s1">Any] = {}</span>
+        <span class="s3">if </span><span class="s1">self.suppress_output:</span>
+            <span class="s1">kw[</span><span class="s5">&quot;stdout&quot;</span><span class="s1">] = kw[</span><span class="s5">&quot;stderr&quot;</span><span class="s1">] = subprocess.DEVNULL</span>
+
+        <span class="s1">subprocess.run(</span>
+            <span class="s1">[</span>
+                <span class="s1">sys.executable</span><span class="s4">,</span>
+                <span class="s5">&quot;-c&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;import %s; %s.%s()&quot; </span><span class="s1">% (impl.module</span><span class="s4">, </span><span class="s1">impl.module</span><span class="s4">, </span><span class="s1">impl.attr)</span><span class="s4">,</span>
+            <span class="s1">]</span>
+            <span class="s1">+ cmdline_options_list</span><span class="s4">,</span>
+            <span class="s1">cwd=str(self.source_root)</span><span class="s4">,</span>
+            <span class="s1">**kw</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">write_status(self</span><span class="s4">, </span><span class="s1">*text: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if not </span><span class="s1">self.suppress_output:</span>
+            <span class="s1">sys.stderr.write(</span><span class="s5">&quot; &quot;</span><span class="s1">.join(text))</span>
+
+    <span class="s3">def </span><span class="s1">write_output_file_from_text(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">text: str</span><span class="s4">, </span><span class="s1">destination_path: Union[str</span><span class="s4">, </span><span class="s1">Path]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">self.args.check:</span>
+            <span class="s1">self._run_diff(destination_path</span><span class="s4">, </span><span class="s1">source=text)</span>
+        <span class="s3">elif </span><span class="s1">self.args.stdout:</span>
+            <span class="s1">print(text)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.write_status(</span><span class="s5">f&quot;Writing </span><span class="s6">{</span><span class="s1">destination_path</span><span class="s6">}</span><span class="s5">...&quot;</span><span class="s1">)</span>
+            <span class="s1">Path(destination_path).write_text(</span>
+                <span class="s1">text</span><span class="s4">, </span><span class="s1">encoding=</span><span class="s5">&quot;utf-8&quot;</span><span class="s4">, </span><span class="s1">newline=</span><span class="s5">&quot;</span><span class="s6">\n</span><span class="s5">&quot;</span>
+            <span class="s1">)</span>
+            <span class="s1">self.write_status(</span><span class="s5">&quot;done</span><span class="s6">\n</span><span class="s5">&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">write_output_file_from_tempfile(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">tempfile: str</span><span class="s4">, </span><span class="s1">destination_path: str</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">self.args.check:</span>
+            <span class="s1">self._run_diff(destination_path</span><span class="s4">, </span><span class="s1">source_file=tempfile)</span>
+            <span class="s1">os.unlink(tempfile)</span>
+        <span class="s3">elif </span><span class="s1">self.args.stdout:</span>
+            <span class="s3">with </span><span class="s1">open(tempfile) </span><span class="s3">as </span><span class="s1">tf:</span>
+                <span class="s1">print(tf.read())</span>
+            <span class="s1">os.unlink(tempfile)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.write_status(</span><span class="s5">f&quot;Writing </span><span class="s6">{</span><span class="s1">destination_path</span><span class="s6">}</span><span class="s5">...&quot;</span><span class="s1">)</span>
+            <span class="s1">shutil.move(tempfile</span><span class="s4">, </span><span class="s1">destination_path)</span>
+            <span class="s1">self.write_status(</span><span class="s5">&quot;done</span><span class="s6">\n</span><span class="s5">&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_run_diff(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">destination_path: Union[str</span><span class="s4">, </span><span class="s1">Path]</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">source: Optional[str] = </span><span class="s3">None</span><span class="s4">,</span>
+        <span class="s1">source_file: Optional[str] = </span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">source_file:</span>
+            <span class="s3">with </span><span class="s1">open(source_file</span><span class="s4">, </span><span class="s1">encoding=</span><span class="s5">&quot;utf-8&quot;</span><span class="s1">) </span><span class="s3">as </span><span class="s1">tf:</span>
+                <span class="s1">source_lines = list(tf)</span>
+        <span class="s3">elif </span><span class="s1">source </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">source_lines = source.splitlines(keepends=</span><span class="s3">True</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">assert False</span><span class="s4">, </span><span class="s5">&quot;source or source_file is required&quot;</span>
+
+        <span class="s3">with </span><span class="s1">open(destination_path</span><span class="s4">, </span><span class="s1">encoding=</span><span class="s5">&quot;utf-8&quot;</span><span class="s1">) </span><span class="s3">as </span><span class="s1">dp:</span>
+            <span class="s1">d = difflib.unified_diff(</span>
+                <span class="s1">list(dp)</span><span class="s4">,</span>
+                <span class="s1">source_lines</span><span class="s4">,</span>
+                <span class="s1">fromfile=Path(destination_path).as_posix()</span><span class="s4">,</span>
+                <span class="s1">tofile=</span><span class="s5">&quot;&lt;proposed changes&gt;&quot;</span><span class="s4">,</span>
+                <span class="s1">n=</span><span class="s7">3</span><span class="s4">,</span>
+                <span class="s1">lineterm=</span><span class="s5">&quot;</span><span class="s6">\n</span><span class="s5">&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s1">d_as_list = list(d)</span>
+            <span class="s3">if </span><span class="s1">d_as_list:</span>
+                <span class="s1">self.diffs_detected = </span><span class="s3">True</span>
+                <span class="s1">print(</span><span class="s5">&quot;&quot;</span><span class="s1">.join(d_as_list))</span>
+
+    <span class="s1">@contextlib.contextmanager</span>
+    <span class="s3">def </span><span class="s1">add_arguments(self) -&gt; Iterator[ArgumentParser]:</span>
+        <span class="s3">yield </span><span class="s1">self.parser</span>
+
+    <span class="s1">@contextlib.contextmanager</span>
+    <span class="s3">def </span><span class="s1">run_program(self) -&gt; Iterator[</span><span class="s3">None</span><span class="s1">]:</span>
+        <span class="s1">self.args = self.parser.parse_args()</span>
+        <span class="s3">if </span><span class="s1">self.args.check:</span>
+            <span class="s1">self.diffs_detected = </span><span class="s3">False</span>
+            <span class="s1">self.suppress_output = </span><span class="s3">True</span>
+        <span class="s3">elif </span><span class="s1">self.args.stdout:</span>
+            <span class="s1">self.suppress_output = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.suppress_output = </span><span class="s3">False</span>
+        <span class="s3">yield</span>
+
+        <span class="s3">if </span><span class="s1">self.args.check </span><span class="s3">and </span><span class="s1">self.diffs_detected:</span>
+            <span class="s1">sys.exit(</span><span class="s7">1</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">sys.exit(</span><span class="s7">0</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

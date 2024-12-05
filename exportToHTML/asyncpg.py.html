@@ -1,0 +1,1299 @@
+<html>
+<head>
+<title>asyncpg.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #717ed3; font-style: italic;}
+.s8 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+asyncpg.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/asyncpg.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors &lt;see AUTHORS</span>
+<span class="s0"># file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">r&quot;&quot;&quot; 
+.. dialect:: postgresql+asyncpg 
+    :name: asyncpg 
+    :dbapi: asyncpg 
+    :connectstring: postgresql+asyncpg://user:password@host:port/dbname[?key=value&amp;key=value...] 
+    :url: https://magicstack.github.io/asyncpg/ 
+ 
+The asyncpg dialect is SQLAlchemy's first Python asyncio dialect. 
+ 
+Using a special asyncio mediation layer, the asyncpg dialect is usable 
+as the backend for the :ref:`SQLAlchemy asyncio &lt;asyncio_toplevel&gt;` 
+extension package. 
+ 
+This dialect should normally be used only with the 
+:func:`_asyncio.create_async_engine` engine creation function:: 
+ 
+    from sqlalchemy.ext.asyncio import create_async_engine 
+    engine = create_async_engine(&quot;postgresql+asyncpg://user:pass@hostname/dbname&quot;) 
+ 
+.. versionadded:: 1.4 
+ 
+.. note:: 
+ 
+    By default asyncpg does not decode the ``json`` and ``jsonb`` types and 
+    returns them as strings. SQLAlchemy sets default type decoder for ``json`` 
+    and ``jsonb`` types using the python builtin ``json.loads`` function. 
+    The json implementation used can be changed by setting the attribute 
+    ``json_deserializer`` when creating the engine with 
+    :func:`create_engine` or :func:`create_async_engine`. 
+ 
+.. _asyncpg_multihost: 
+ 
+Multihost Connections 
+-------------------------- 
+ 
+The asyncpg dialect features support for multiple fallback hosts in the 
+same way as that of the psycopg2 and psycopg dialects.  The 
+syntax is the same, 
+using ``host=&lt;host&gt;:&lt;port&gt;`` combinations as additional query string arguments; 
+however, there is no default port, so all hosts must have a complete port number 
+present, otherwise an exception is raised:: 
+ 
+    engine = create_async_engine( 
+        &quot;postgresql+asyncpg://user:password@/dbname?host=HostA:5432&amp;host=HostB:5432&amp;host=HostC:5432&quot; 
+    ) 
+ 
+For complete background on this syntax, see :ref:`psycopg2_multi_host`. 
+ 
+.. versionadded:: 2.0.18 
+ 
+.. seealso:: 
+ 
+    :ref:`psycopg2_multi_host` 
+ 
+.. _asyncpg_prepared_statement_cache: 
+ 
+Prepared Statement Cache 
+-------------------------- 
+ 
+The asyncpg SQLAlchemy dialect makes use of ``asyncpg.connection.prepare()`` 
+for all statements.   The prepared statement objects are cached after 
+construction which appears to grant a 10% or more performance improvement for 
+statement invocation.   The cache is on a per-DBAPI connection basis, which 
+means that the primary storage for prepared statements is within DBAPI 
+connections pooled within the connection pool.   The size of this cache 
+defaults to 100 statements per DBAPI connection and may be adjusted using the 
+``prepared_statement_cache_size`` DBAPI argument (note that while this argument 
+is implemented by SQLAlchemy, it is part of the DBAPI emulation portion of the 
+asyncpg dialect, therefore is handled as a DBAPI argument, not a dialect 
+argument):: 
+ 
+ 
+    engine = create_async_engine(&quot;postgresql+asyncpg://user:pass@hostname/dbname?prepared_statement_cache_size=500&quot;) 
+ 
+To disable the prepared statement cache, use a value of zero:: 
+ 
+    engine = create_async_engine(&quot;postgresql+asyncpg://user:pass@hostname/dbname?prepared_statement_cache_size=0&quot;) 
+ 
+.. versionadded:: 1.4.0b2 Added ``prepared_statement_cache_size`` for asyncpg. 
+ 
+ 
+.. warning::  The ``asyncpg`` database driver necessarily uses caches for 
+   PostgreSQL type OIDs, which become stale when custom PostgreSQL datatypes 
+   such as ``ENUM`` objects are changed via DDL operations.   Additionally, 
+   prepared statements themselves which are optionally cached by SQLAlchemy's 
+   driver as described above may also become &quot;stale&quot; when DDL has been emitted 
+   to the PostgreSQL database which modifies the tables or other objects 
+   involved in a particular prepared statement. 
+ 
+   The SQLAlchemy asyncpg dialect will invalidate these caches within its local 
+   process when statements that represent DDL are emitted on a local 
+   connection, but this is only controllable within a single Python process / 
+   database engine.     If DDL changes are made from other database engines 
+   and/or processes, a running application may encounter asyncpg exceptions 
+   ``InvalidCachedStatementError`` and/or ``InternalServerError(&quot;cache lookup 
+   failed for type &lt;oid&gt;&quot;)`` if it refers to pooled database connections which 
+   operated upon the previous structures. The SQLAlchemy asyncpg dialect will 
+   recover from these error cases when the driver raises these exceptions by 
+   clearing its internal caches as well as those of the asyncpg driver in 
+   response to them, but cannot prevent them from being raised in the first 
+   place if the cached prepared statement or asyncpg type caches have gone 
+   stale, nor can it retry the statement as the PostgreSQL transaction is 
+   invalidated when these errors occur. 
+ 
+.. _asyncpg_prepared_statement_name: 
+ 
+Prepared Statement Name with PGBouncer 
+-------------------------------------- 
+ 
+By default, asyncpg enumerates prepared statements in numeric order, which 
+can lead to errors if a name has already been taken for another prepared 
+statement. This issue can arise if your application uses database proxies 
+such as PgBouncer to handle connections. One possible workaround is to 
+use dynamic prepared statement names, which asyncpg now supports through 
+an optional ``name`` value for the statement name. This allows you to 
+generate your own unique names that won't conflict with existing ones. 
+To achieve this, you can provide a function that will be called every time 
+a prepared statement is prepared:: 
+ 
+    from uuid import uuid4 
+ 
+    engine = create_async_engine( 
+        &quot;postgresql+asyncpg://user:pass@somepgbouncer/dbname&quot;, 
+        poolclass=NullPool, 
+        connect_args={ 
+            'prepared_statement_name_func': lambda:  f'__asyncpg_{uuid4()}__', 
+        }, 
+    ) 
+ 
+.. seealso:: 
+ 
+   https://github.com/MagicStack/asyncpg/issues/837 
+ 
+   https://github.com/sqlalchemy/sqlalchemy/issues/6467 
+ 
+.. warning:: When using PGBouncer, to prevent a buildup of useless prepared statements in 
+   your application, it's important to use the :class:`.NullPool` pool 
+   class, and to configure PgBouncer to use `DISCARD &lt;https://www.postgresql.org/docs/current/sql-discard.html&gt;`_ 
+   when returning connections.  The DISCARD command is used to release resources held by the db connection, 
+   including prepared statements. Without proper setup, prepared statements can 
+   accumulate quickly and cause performance issues. 
+ 
+Disabling the PostgreSQL JIT to improve ENUM datatype handling 
+--------------------------------------------------------------- 
+ 
+Asyncpg has an `issue &lt;https://github.com/MagicStack/asyncpg/issues/727&gt;`_ when 
+using PostgreSQL ENUM datatypes, where upon the creation of new database 
+connections, an expensive query may be emitted in order to retrieve metadata 
+regarding custom types which has been shown to negatively affect performance. 
+To mitigate this issue, the PostgreSQL &quot;jit&quot; setting may be disabled from the 
+client using this setting passed to :func:`_asyncio.create_async_engine`:: 
+ 
+    engine = create_async_engine( 
+        &quot;postgresql+asyncpg://user:password@localhost/tmp&quot;, 
+        connect_args={&quot;server_settings&quot;: {&quot;jit&quot;: &quot;off&quot;}}, 
+    ) 
+ 
+.. seealso:: 
+ 
+    https://github.com/MagicStack/asyncpg/issues/727 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">collections </span><span class="s3">import </span><span class="s1">deque</span>
+<span class="s3">import </span><span class="s1">decimal</span>
+<span class="s3">import </span><span class="s1">json </span><span class="s3">as </span><span class="s1">_py_json</span>
+<span class="s3">import </span><span class="s1">re</span>
+<span class="s3">import </span><span class="s1">time</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">json</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">ranges</span>
+<span class="s3">from </span><span class="s1">.array </span><span class="s3">import </span><span class="s1">ARRAY </span><span class="s3">as </span><span class="s1">PGARRAY</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_DECIMAL_TYPES</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_FLOAT_TYPES</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">_INT_TYPES</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">ENUM</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">INTERVAL</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">OID</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGCompiler</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGDialect</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGExecutionContext</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PGIdentifierPreparer</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">REGCLASS</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">REGCONFIG</span>
+<span class="s3">from </span><span class="s1">.types </span><span class="s3">import </span><span class="s1">BIT</span>
+<span class="s3">from </span><span class="s1">.types </span><span class="s3">import </span><span class="s1">BYTEA</span>
+<span class="s3">from </span><span class="s1">.types </span><span class="s3">import </span><span class="s1">CITEXT</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">pool</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">AdaptedConnection</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">processors</span>
+<span class="s3">from </span><span class="s1">...sql </span><span class="s3">import </span><span class="s1">sqltypes</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">asyncio</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">await_fallback</span>
+<span class="s3">from </span><span class="s1">...util.concurrency </span><span class="s3">import </span><span class="s1">await_only</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgARRAY(PGARRAY):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgString(sqltypes.String):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgREGCONFIG(REGCONFIG):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgTime(sqltypes.Time):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgBit(BIT):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgByteA(BYTEA):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgDate(sqltypes.Date):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgDateTime(sqltypes.DateTime):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgBoolean(sqltypes.Boolean):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncPgInterval(INTERVAL):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">adapt_emulated_to_native(cls</span><span class="s4">, </span><span class="s1">interval</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">AsyncPgInterval(precision=interval.second_precision)</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncPgEnum(ENUM):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgInteger(sqltypes.Integer):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgBigInteger(sqltypes.BigInteger):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgJSON(json.JSON):</span>
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgJSONB(json.JSONB):</span>
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgJSONIndexType(sqltypes.JSON.JSONIndexType):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgJSONIntIndexType(sqltypes.JSON.JSONIntIndexType):</span>
+    <span class="s1">__visit_name__ = </span><span class="s2">&quot;json_int_index&quot;</span>
+
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgJSONStrIndexType(sqltypes.JSON.JSONStrIndexType):</span>
+    <span class="s1">__visit_name__ = </span><span class="s2">&quot;json_str_index&quot;</span>
+
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgJSONPathType(json.JSONPathType):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s3">def </span><span class="s1">process(value):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">str):</span>
+                <span class="s0"># If it's already a string assume that it's in json path</span>
+                <span class="s0"># format. This allows using cast with json paths literals</span>
+                <span class="s3">return </span><span class="s1">value</span>
+            <span class="s3">elif </span><span class="s1">value:</span>
+                <span class="s1">tokens = [str(elem) </span><span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">value]</span>
+                <span class="s3">return </span><span class="s1">tokens</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s3">return </span><span class="s1">process</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgNumeric(sqltypes.Numeric):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">if </span><span class="s1">self.asdecimal:</span>
+            <span class="s3">if </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_FLOAT_TYPES:</span>
+                <span class="s3">return </span><span class="s1">processors.to_decimal_processor_factory(</span>
+                    <span class="s1">decimal.Decimal</span><span class="s4">, </span><span class="s1">self._effective_decimal_return_scale</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_DECIMAL_TYPES </span><span class="s3">or </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_INT_TYPES:</span>
+                <span class="s0"># pg8000 returns Decimal natively for 1700</span>
+                <span class="s3">return None</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s2">&quot;Unknown PG numeric type: %d&quot; </span><span class="s1">% coltype</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_FLOAT_TYPES:</span>
+                <span class="s0"># pg8000 returns float natively for 701</span>
+                <span class="s3">return None</span>
+            <span class="s3">elif </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_DECIMAL_TYPES </span><span class="s3">or </span><span class="s1">coltype </span><span class="s3">in </span><span class="s1">_INT_TYPES:</span>
+                <span class="s3">return </span><span class="s1">processors.to_float</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s2">&quot;Unknown PG numeric type: %d&quot; </span><span class="s1">% coltype</span>
+                <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgFloat(AsyncpgNumeric</span><span class="s4">, </span><span class="s1">sqltypes.Float):</span>
+    <span class="s1">__visit_name__ = </span><span class="s2">&quot;float&quot;</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgREGCLASS(REGCLASS):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgOID(OID):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncpgCHAR(sqltypes.CHAR):</span>
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_AsyncpgRange(ranges.AbstractSingleRangeImpl):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s1">asyncpg_Range = dialect.dbapi.asyncpg.Range</span>
+
+        <span class="s3">def </span><span class="s1">to_range(value):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">ranges.Range):</span>
+                <span class="s1">value = asyncpg_Range(</span>
+                    <span class="s1">value.lower</span><span class="s4">,</span>
+                    <span class="s1">value.upper</span><span class="s4">,</span>
+                    <span class="s1">lower_inc=value.bounds[</span><span class="s5">0</span><span class="s1">] == </span><span class="s2">&quot;[&quot;</span><span class="s4">,</span>
+                    <span class="s1">upper_inc=value.bounds[</span><span class="s5">1</span><span class="s1">] == </span><span class="s2">&quot;]&quot;</span><span class="s4">,</span>
+                    <span class="s1">empty=value.empty</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">to_range</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">def </span><span class="s1">to_range(value):</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">empty = value.isempty</span>
+                <span class="s1">value = ranges.Range(</span>
+                    <span class="s1">value.lower</span><span class="s4">,</span>
+                    <span class="s1">value.upper</span><span class="s4">,</span>
+                    <span class="s1">bounds=</span><span class="s2">f&quot;</span><span class="s6">{</span><span class="s2">'[' </span><span class="s3">if </span><span class="s1">empty </span><span class="s3">or </span><span class="s1">value.lower_inc </span><span class="s3">else </span><span class="s2">'('</span><span class="s6">}</span><span class="s2">&quot;  </span><span class="s0"># type: ignore  # noqa: E501</span>
+                    <span class="s2">f&quot;</span><span class="s6">{</span><span class="s2">']' </span><span class="s3">if not </span><span class="s1">empty </span><span class="s3">and </span><span class="s1">value.upper_inc </span><span class="s3">else </span><span class="s2">')'</span><span class="s6">}</span><span class="s2">&quot;</span><span class="s4">,</span>
+                    <span class="s1">empty=empty</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">to_range</span>
+
+
+<span class="s3">class </span><span class="s1">_AsyncpgMultiRange(ranges.AbstractMultiRangeImpl):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s4">, </span><span class="s1">dialect):</span>
+        <span class="s1">asyncpg_Range = dialect.dbapi.asyncpg.Range</span>
+
+        <span class="s1">NoneType = type(</span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">to_range(value):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">(str</span><span class="s4">, </span><span class="s1">NoneType)):</span>
+                <span class="s3">return </span><span class="s1">value</span>
+
+            <span class="s3">def </span><span class="s1">to_range(value):</span>
+                <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s4">, </span><span class="s1">ranges.Range):</span>
+                    <span class="s1">value = asyncpg_Range(</span>
+                        <span class="s1">value.lower</span><span class="s4">,</span>
+                        <span class="s1">value.upper</span><span class="s4">,</span>
+                        <span class="s1">lower_inc=value.bounds[</span><span class="s5">0</span><span class="s1">] == </span><span class="s2">&quot;[&quot;</span><span class="s4">,</span>
+                        <span class="s1">upper_inc=value.bounds[</span><span class="s5">1</span><span class="s1">] == </span><span class="s2">&quot;]&quot;</span><span class="s4">,</span>
+                        <span class="s1">empty=value.empty</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">return </span><span class="s1">value</span>
+
+            <span class="s3">return </span><span class="s1">[to_range(element) </span><span class="s3">for </span><span class="s1">element </span><span class="s3">in </span><span class="s1">value]</span>
+
+        <span class="s3">return </span><span class="s1">to_range</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s3">def </span><span class="s1">to_range_array(value):</span>
+            <span class="s3">def </span><span class="s1">to_range(rvalue):</span>
+                <span class="s3">if </span><span class="s1">rvalue </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s1">empty = rvalue.isempty</span>
+                    <span class="s1">rvalue = ranges.Range(</span>
+                        <span class="s1">rvalue.lower</span><span class="s4">,</span>
+                        <span class="s1">rvalue.upper</span><span class="s4">,</span>
+                        <span class="s1">bounds=</span><span class="s2">f&quot;</span><span class="s6">{</span><span class="s2">'[' </span><span class="s3">if </span><span class="s1">empty </span><span class="s3">or </span><span class="s1">rvalue.lower_inc </span><span class="s3">else </span><span class="s2">'('</span><span class="s6">}</span><span class="s2">&quot;  </span><span class="s0"># type: ignore  # noqa: E501</span>
+                        <span class="s2">f&quot;</span><span class="s6">{</span><span class="s2">']' </span><span class="s3">if not </span><span class="s1">empty </span><span class="s3">and </span><span class="s1">rvalue.upper_inc </span><span class="s3">else </span><span class="s2">')'</span><span class="s6">}</span><span class="s2">&quot;</span><span class="s4">,</span>
+                        <span class="s1">empty=empty</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">return </span><span class="s1">rvalue</span>
+
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">value = ranges.MultiRange(to_range(elem) </span><span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">value)</span>
+
+            <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">to_range_array</span>
+
+
+<span class="s3">class </span><span class="s1">PGExecutionContext_asyncpg(PGExecutionContext):</span>
+    <span class="s3">def </span><span class="s1">handle_dbapi_exception(self</span><span class="s4">, </span><span class="s1">e):</span>
+        <span class="s3">if </span><span class="s1">isinstance(</span>
+            <span class="s1">e</span><span class="s4">,</span>
+            <span class="s1">(</span>
+                <span class="s1">self.dialect.dbapi.InvalidCachedStatementError</span><span class="s4">,</span>
+                <span class="s1">self.dialect.dbapi.InternalServerError</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">):</span>
+            <span class="s1">self.dialect._invalidate_schema_cache()</span>
+
+    <span class="s3">def </span><span class="s1">pre_exec(self):</span>
+        <span class="s3">if </span><span class="s1">self.isddl:</span>
+            <span class="s1">self.dialect._invalidate_schema_cache()</span>
+
+        <span class="s1">self.cursor._invalidate_schema_cache_asof = (</span>
+            <span class="s1">self.dialect._invalidate_schema_cache_asof</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if not </span><span class="s1">self.compiled:</span>
+            <span class="s3">return</span>
+
+    <span class="s3">def </span><span class="s1">create_server_side_cursor(self):</span>
+        <span class="s3">return </span><span class="s1">self._dbapi_connection.cursor(server_side=</span><span class="s3">True</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">PGCompiler_asyncpg(PGCompiler):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">PGIdentifierPreparer_asyncpg(PGIdentifierPreparer):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_asyncpg_cursor:</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s2">&quot;_adapt_connection&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_connection&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_rows&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;description&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;arraysize&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;rowcount&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_cursor&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_invalidate_schema_cache_asof&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">server_side = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">adapt_connection):</span>
+        <span class="s1">self._adapt_connection = adapt_connection</span>
+        <span class="s1">self._connection = adapt_connection._connection</span>
+        <span class="s1">self._rows = deque()</span>
+        <span class="s1">self._cursor = </span><span class="s3">None</span>
+        <span class="s1">self.description = </span><span class="s3">None</span>
+        <span class="s1">self.arraysize = </span><span class="s5">1</span>
+        <span class="s1">self.rowcount = -</span><span class="s5">1</span>
+        <span class="s1">self._invalidate_schema_cache_asof = </span><span class="s5">0</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s1">self._rows.clear()</span>
+
+    <span class="s3">def </span><span class="s1">_handle_exception(self</span><span class="s4">, </span><span class="s1">error):</span>
+        <span class="s1">self._adapt_connection._handle_exception(error)</span>
+
+    <span class="s3">async def </span><span class="s1">_prepare_and_execute(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">parameters):</span>
+        <span class="s1">adapt_connection = self._adapt_connection</span>
+
+        <span class="s3">async with </span><span class="s1">adapt_connection._execute_mutex:</span>
+            <span class="s3">if not </span><span class="s1">adapt_connection._started:</span>
+                <span class="s3">await </span><span class="s1">adapt_connection._start_transaction()</span>
+
+            <span class="s3">if </span><span class="s1">parameters </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">parameters = ()</span>
+
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">prepared_stmt</span><span class="s4">, </span><span class="s1">attributes = </span><span class="s3">await </span><span class="s1">adapt_connection._prepare(</span>
+                    <span class="s1">operation</span><span class="s4">, </span><span class="s1">self._invalidate_schema_cache_asof</span>
+                <span class="s1">)</span>
+
+                <span class="s3">if </span><span class="s1">attributes:</span>
+                    <span class="s1">self.description = [</span>
+                        <span class="s1">(</span>
+                            <span class="s1">attr.name</span><span class="s4">,</span>
+                            <span class="s1">attr.type.oid</span><span class="s4">,</span>
+                            <span class="s3">None</span><span class="s4">,</span>
+                            <span class="s3">None</span><span class="s4">,</span>
+                            <span class="s3">None</span><span class="s4">,</span>
+                            <span class="s3">None</span><span class="s4">,</span>
+                            <span class="s3">None</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+                        <span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">attributes</span>
+                    <span class="s1">]</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">self.description = </span><span class="s3">None</span>
+
+                <span class="s3">if </span><span class="s1">self.server_side:</span>
+                    <span class="s1">self._cursor = </span><span class="s3">await </span><span class="s1">prepared_stmt.cursor(*parameters)</span>
+                    <span class="s1">self.rowcount = -</span><span class="s5">1</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">self._rows = deque(</span><span class="s3">await </span><span class="s1">prepared_stmt.fetch(*parameters))</span>
+                    <span class="s1">status = prepared_stmt.get_statusmsg()</span>
+
+                    <span class="s1">reg = re.match(</span>
+                        <span class="s2">r&quot;(?:SELECT|UPDATE|DELETE|INSERT \d+) (\d+)&quot;</span><span class="s4">, </span><span class="s1">status</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">reg:</span>
+                        <span class="s1">self.rowcount = int(reg.group(</span><span class="s5">1</span><span class="s1">))</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">self.rowcount = -</span><span class="s5">1</span>
+
+            <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+                <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">async def </span><span class="s1">_executemany(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">seq_of_parameters):</span>
+        <span class="s1">adapt_connection = self._adapt_connection</span>
+
+        <span class="s1">self.description = </span><span class="s3">None</span>
+        <span class="s3">async with </span><span class="s1">adapt_connection._execute_mutex:</span>
+            <span class="s3">await </span><span class="s1">adapt_connection._check_type_cache_invalidation(</span>
+                <span class="s1">self._invalidate_schema_cache_asof</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if not </span><span class="s1">adapt_connection._started:</span>
+                <span class="s3">await </span><span class="s1">adapt_connection._start_transaction()</span>
+
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s3">return await </span><span class="s1">self._connection.executemany(</span>
+                    <span class="s1">operation</span><span class="s4">, </span><span class="s1">seq_of_parameters</span>
+                <span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+                <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">execute(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">parameters=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">self._adapt_connection.await_(</span>
+            <span class="s1">self._prepare_and_execute(operation</span><span class="s4">, </span><span class="s1">parameters)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">executemany(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">seq_of_parameters):</span>
+        <span class="s3">return </span><span class="s1">self._adapt_connection.await_(</span>
+            <span class="s1">self._executemany(operation</span><span class="s4">, </span><span class="s1">seq_of_parameters)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">setinputsizes(self</span><span class="s4">, </span><span class="s1">*inputsizes):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self):</span>
+        <span class="s3">while </span><span class="s1">self._rows:</span>
+            <span class="s3">yield </span><span class="s1">self._rows.popleft()</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self):</span>
+        <span class="s3">if </span><span class="s1">self._rows:</span>
+            <span class="s3">return </span><span class="s1">self._rows.popleft()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s4">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">size </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">size = self.arraysize</span>
+
+        <span class="s1">rr = self._rows</span>
+        <span class="s3">return </span><span class="s1">[rr.popleft() </span><span class="s3">for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">range(min(size</span><span class="s4">, </span><span class="s1">len(rr)))]</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self):</span>
+        <span class="s1">retval = list(self._rows)</span>
+        <span class="s1">self._rows.clear()</span>
+        <span class="s3">return </span><span class="s1">retval</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_asyncpg_ss_cursor(AsyncAdapt_asyncpg_cursor):</span>
+    <span class="s1">server_side = </span><span class="s3">True</span>
+    <span class="s1">__slots__ = (</span><span class="s2">&quot;_rowbuffer&quot;</span><span class="s4">,</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">adapt_connection):</span>
+        <span class="s1">super().__init__(adapt_connection)</span>
+        <span class="s1">self._rowbuffer = deque()</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s1">self._cursor = </span><span class="s3">None</span>
+        <span class="s1">self._rowbuffer.clear()</span>
+
+    <span class="s3">def </span><span class="s1">_buffer_rows(self):</span>
+        <span class="s3">assert </span><span class="s1">self._cursor </span><span class="s3">is not None</span>
+        <span class="s1">new_rows = self._adapt_connection.await_(self._cursor.fetch(</span><span class="s5">50</span><span class="s1">))</span>
+        <span class="s1">self._rowbuffer.extend(new_rows)</span>
+
+    <span class="s3">def </span><span class="s1">__aiter__(self):</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">async def </span><span class="s1">__anext__(self):</span>
+        <span class="s3">while True</span><span class="s1">:</span>
+            <span class="s3">while </span><span class="s1">self._rowbuffer:</span>
+                <span class="s3">yield </span><span class="s1">self._rowbuffer.popleft()</span>
+
+            <span class="s1">self._buffer_rows()</span>
+            <span class="s3">if not </span><span class="s1">self._rowbuffer:</span>
+                <span class="s3">break</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self):</span>
+        <span class="s3">if not </span><span class="s1">self._rowbuffer:</span>
+            <span class="s1">self._buffer_rows()</span>
+            <span class="s3">if not </span><span class="s1">self._rowbuffer:</span>
+                <span class="s3">return None</span>
+        <span class="s3">return </span><span class="s1">self._rowbuffer.popleft()</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s4">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">size </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.fetchall()</span>
+
+        <span class="s3">if not </span><span class="s1">self._rowbuffer:</span>
+            <span class="s1">self._buffer_rows()</span>
+
+        <span class="s3">assert </span><span class="s1">self._cursor </span><span class="s3">is not None</span>
+        <span class="s1">rb = self._rowbuffer</span>
+        <span class="s1">lb = len(rb)</span>
+        <span class="s3">if </span><span class="s1">size &gt; lb:</span>
+            <span class="s1">rb.extend(</span>
+                <span class="s1">self._adapt_connection.await_(self._cursor.fetch(size - lb))</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">[rb.popleft() </span><span class="s3">for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">range(min(size</span><span class="s4">, </span><span class="s1">len(rb)))]</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self):</span>
+        <span class="s1">ret = list(self._rowbuffer)</span>
+        <span class="s1">ret.extend(self._adapt_connection.await_(self._all()))</span>
+        <span class="s1">self._rowbuffer.clear()</span>
+        <span class="s3">return </span><span class="s1">ret</span>
+
+    <span class="s3">async def </span><span class="s1">_all(self):</span>
+        <span class="s1">rows = []</span>
+
+        <span class="s0"># TODO: looks like we have to hand-roll some kind of batching here.</span>
+        <span class="s0"># hardcoding for the moment but this should be improved.</span>
+        <span class="s3">while True</span><span class="s1">:</span>
+            <span class="s1">batch = </span><span class="s3">await </span><span class="s1">self._cursor.fetch(</span><span class="s5">1000</span><span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">batch:</span>
+                <span class="s1">rows.extend(batch)</span>
+                <span class="s3">continue</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">break</span>
+        <span class="s3">return </span><span class="s1">rows</span>
+
+    <span class="s3">def </span><span class="s1">executemany(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">seq_of_parameters):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+            <span class="s2">&quot;server side cursor doesn't support executemany yet&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_asyncpg_connection(AdaptedConnection):</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s2">&quot;dbapi&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;isolation_level&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_isolation_setting&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;readonly&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;deferrable&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_transaction&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_started&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_prepared_statement_cache&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_prepared_statement_name_func&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_invalidate_schema_cache_asof&quot;</span><span class="s4">,</span>
+        <span class="s2">&quot;_execute_mutex&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">await_ = staticmethod(await_only)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">dbapi</span><span class="s4">,</span>
+        <span class="s1">connection</span><span class="s4">,</span>
+        <span class="s1">prepared_statement_cache_size=</span><span class="s5">100</span><span class="s4">,</span>
+        <span class="s1">prepared_statement_name_func=</span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.dbapi = dbapi</span>
+        <span class="s1">self._connection = connection</span>
+        <span class="s1">self.isolation_level = self._isolation_setting = </span><span class="s2">&quot;read_committed&quot;</span>
+        <span class="s1">self.readonly = </span><span class="s3">False</span>
+        <span class="s1">self.deferrable = </span><span class="s3">False</span>
+        <span class="s1">self._transaction = </span><span class="s3">None</span>
+        <span class="s1">self._started = </span><span class="s3">False</span>
+        <span class="s1">self._invalidate_schema_cache_asof = time.time()</span>
+        <span class="s1">self._execute_mutex = asyncio.Lock()</span>
+
+        <span class="s3">if </span><span class="s1">prepared_statement_cache_size:</span>
+            <span class="s1">self._prepared_statement_cache = util.LRUCache(</span>
+                <span class="s1">prepared_statement_cache_size</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._prepared_statement_cache = </span><span class="s3">None</span>
+
+        <span class="s3">if </span><span class="s1">prepared_statement_name_func:</span>
+            <span class="s1">self._prepared_statement_name_func = prepared_statement_name_func</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._prepared_statement_name_func = self._default_name_func</span>
+
+    <span class="s3">async def </span><span class="s1">_check_type_cache_invalidation(self</span><span class="s4">, </span><span class="s1">invalidate_timestamp):</span>
+        <span class="s3">if </span><span class="s1">invalidate_timestamp &gt; self._invalidate_schema_cache_asof:</span>
+            <span class="s3">await </span><span class="s1">self._connection.reload_schema_state()</span>
+            <span class="s1">self._invalidate_schema_cache_asof = invalidate_timestamp</span>
+
+    <span class="s3">async def </span><span class="s1">_prepare(self</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">invalidate_timestamp):</span>
+        <span class="s3">await </span><span class="s1">self._check_type_cache_invalidation(invalidate_timestamp)</span>
+
+        <span class="s1">cache = self._prepared_statement_cache</span>
+        <span class="s3">if </span><span class="s1">cache </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">prepared_stmt = </span><span class="s3">await </span><span class="s1">self._connection.prepare(</span>
+                <span class="s1">operation</span><span class="s4">, </span><span class="s1">name=self._prepared_statement_name_func()</span>
+            <span class="s1">)</span>
+            <span class="s1">attributes = prepared_stmt.get_attributes()</span>
+            <span class="s3">return </span><span class="s1">prepared_stmt</span><span class="s4">, </span><span class="s1">attributes</span>
+
+        <span class="s0"># asyncpg uses a type cache for the &quot;attributes&quot; which seems to go</span>
+        <span class="s0"># stale independently of the PreparedStatement itself, so place that</span>
+        <span class="s0"># collection in the cache as well.</span>
+        <span class="s3">if </span><span class="s1">operation </span><span class="s3">in </span><span class="s1">cache:</span>
+            <span class="s1">prepared_stmt</span><span class="s4">, </span><span class="s1">attributes</span><span class="s4">, </span><span class="s1">cached_timestamp = cache[operation]</span>
+
+            <span class="s0"># preparedstatements themselves also go stale for certain DDL</span>
+            <span class="s0"># changes such as size of a VARCHAR changing, so there is also</span>
+            <span class="s0"># a cross-connection invalidation timestamp</span>
+            <span class="s3">if </span><span class="s1">cached_timestamp &gt; invalidate_timestamp:</span>
+                <span class="s3">return </span><span class="s1">prepared_stmt</span><span class="s4">, </span><span class="s1">attributes</span>
+
+        <span class="s1">prepared_stmt = </span><span class="s3">await </span><span class="s1">self._connection.prepare(</span>
+            <span class="s1">operation</span><span class="s4">, </span><span class="s1">name=self._prepared_statement_name_func()</span>
+        <span class="s1">)</span>
+        <span class="s1">attributes = prepared_stmt.get_attributes()</span>
+        <span class="s1">cache[operation] = (prepared_stmt</span><span class="s4">, </span><span class="s1">attributes</span><span class="s4">, </span><span class="s1">time.time())</span>
+
+        <span class="s3">return </span><span class="s1">prepared_stmt</span><span class="s4">, </span><span class="s1">attributes</span>
+
+    <span class="s3">def </span><span class="s1">_handle_exception(self</span><span class="s4">, </span><span class="s1">error):</span>
+        <span class="s3">if </span><span class="s1">self._connection.is_closed():</span>
+            <span class="s1">self._transaction = </span><span class="s3">None</span>
+            <span class="s1">self._started = </span><span class="s3">False</span>
+
+        <span class="s3">if not </span><span class="s1">isinstance(error</span><span class="s4">, </span><span class="s1">AsyncAdapt_asyncpg_dbapi.Error):</span>
+            <span class="s1">exception_mapping = self.dbapi._asyncpg_error_translate</span>
+
+            <span class="s3">for </span><span class="s1">super_ </span><span class="s3">in </span><span class="s1">type(error).__mro__:</span>
+                <span class="s3">if </span><span class="s1">super_ </span><span class="s3">in </span><span class="s1">exception_mapping:</span>
+                    <span class="s1">translated_error = exception_mapping[super_](</span>
+                        <span class="s2">&quot;%s: %s&quot; </span><span class="s1">% (type(error)</span><span class="s4">, </span><span class="s1">error)</span>
+                    <span class="s1">)</span>
+                    <span class="s1">translated_error.pgcode = translated_error.sqlstate = (</span>
+                        <span class="s1">getattr(error</span><span class="s4">, </span><span class="s2">&quot;sqlstate&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+                    <span class="s1">)</span>
+                    <span class="s3">raise </span><span class="s1">translated_error </span><span class="s3">from </span><span class="s1">error</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">error</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">error</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">autocommit(self):</span>
+        <span class="s3">return </span><span class="s1">self.isolation_level == </span><span class="s2">&quot;autocommit&quot;</span>
+
+    <span class="s1">@autocommit.setter</span>
+    <span class="s3">def </span><span class="s1">autocommit(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s3">if </span><span class="s1">value:</span>
+            <span class="s1">self.isolation_level = </span><span class="s2">&quot;autocommit&quot;</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.isolation_level = self._isolation_setting</span>
+
+    <span class="s3">def </span><span class="s1">ping(self):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">_ = self.await_(self._async_ping())</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">async def </span><span class="s1">_async_ping(self):</span>
+        <span class="s3">if </span><span class="s1">self._transaction </span><span class="s3">is None and </span><span class="s1">self.isolation_level != </span><span class="s2">&quot;autocommit&quot;</span><span class="s1">:</span>
+            <span class="s0"># create a tranasction explicitly to support pgbouncer</span>
+            <span class="s0"># transaction mode.   See #10226</span>
+            <span class="s1">tr = self._connection.transaction()</span>
+            <span class="s3">await </span><span class="s1">tr.start()</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s3">await </span><span class="s1">self._connection.fetchrow(</span><span class="s2">&quot;;&quot;</span><span class="s1">)</span>
+            <span class="s3">finally</span><span class="s1">:</span>
+                <span class="s3">await </span><span class="s1">tr.rollback()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">await </span><span class="s1">self._connection.fetchrow(</span><span class="s2">&quot;;&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">set_isolation_level(self</span><span class="s4">, </span><span class="s1">level):</span>
+        <span class="s3">if </span><span class="s1">self._started:</span>
+            <span class="s1">self.rollback()</span>
+        <span class="s1">self.isolation_level = self._isolation_setting = level</span>
+
+    <span class="s3">async def </span><span class="s1">_start_transaction(self):</span>
+        <span class="s3">if </span><span class="s1">self.isolation_level == </span><span class="s2">&quot;autocommit&quot;</span><span class="s1">:</span>
+            <span class="s3">return</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self._transaction = self._connection.transaction(</span>
+                <span class="s1">isolation=self.isolation_level</span><span class="s4">,</span>
+                <span class="s1">readonly=self.readonly</span><span class="s4">,</span>
+                <span class="s1">deferrable=self.deferrable</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s3">await </span><span class="s1">self._transaction.start()</span>
+        <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+            <span class="s1">self._handle_exception(error)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._started = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">cursor(self</span><span class="s4">, </span><span class="s1">server_side=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">server_side:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_asyncpg_ss_cursor(self)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_asyncpg_cursor(self)</span>
+
+    <span class="s3">async def </span><span class="s1">_rollback_and_discard(self):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">await </span><span class="s1">self._transaction.rollback()</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s0"># if asyncpg .rollback() was actually called, then whether or</span>
+            <span class="s0"># not it raised or succeeded, the transation is done, discard it</span>
+            <span class="s1">self._transaction = </span><span class="s3">None</span>
+            <span class="s1">self._started = </span><span class="s3">False</span>
+
+    <span class="s3">async def </span><span class="s1">_commit_and_discard(self):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">await </span><span class="s1">self._transaction.commit()</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s0"># if asyncpg .commit() was actually called, then whether or</span>
+            <span class="s0"># not it raised or succeeded, the transation is done, discard it</span>
+            <span class="s1">self._transaction = </span><span class="s3">None</span>
+            <span class="s1">self._started = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">rollback(self):</span>
+        <span class="s3">if </span><span class="s1">self._started:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">self.await_(self._rollback_and_discard())</span>
+                <span class="s1">self._transaction = </span><span class="s3">None</span>
+                <span class="s1">self._started = </span><span class="s3">False</span>
+            <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+                <span class="s0"># don't dereference asyncpg transaction if we didn't</span>
+                <span class="s0"># actually try to call rollback() on it</span>
+                <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">commit(self):</span>
+        <span class="s3">if </span><span class="s1">self._started:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">self.await_(self._commit_and_discard())</span>
+                <span class="s1">self._transaction = </span><span class="s3">None</span>
+                <span class="s1">self._started = </span><span class="s3">False</span>
+            <span class="s3">except </span><span class="s1">Exception </span><span class="s3">as </span><span class="s1">error:</span>
+                <span class="s0"># don't dereference asyncpg transaction if we didn't</span>
+                <span class="s0"># actually try to call commit() on it</span>
+                <span class="s1">self._handle_exception(error)</span>
+
+    <span class="s3">def </span><span class="s1">close(self):</span>
+        <span class="s1">self.rollback()</span>
+
+        <span class="s1">self.await_(self._connection.close())</span>
+
+    <span class="s3">def </span><span class="s1">terminate(self):</span>
+        <span class="s3">if </span><span class="s1">util.concurrency.in_greenlet():</span>
+            <span class="s0"># in a greenlet; this is the connection was invalidated</span>
+            <span class="s0"># case.</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s0"># try to gracefully close; see #10717</span>
+                <span class="s0"># timeout added in asyncpg 0.14.0 December 2017</span>
+                <span class="s1">self.await_(self._connection.close(timeout=</span><span class="s5">2</span><span class="s1">))</span>
+            <span class="s3">except </span><span class="s1">(</span>
+                <span class="s1">asyncio.TimeoutError</span><span class="s4">,</span>
+                <span class="s1">asyncio.CancelledError</span><span class="s4">,</span>
+                <span class="s1">OSError</span><span class="s4">,</span>
+                <span class="s1">self.dbapi.asyncpg.PostgresError</span><span class="s4">,</span>
+            <span class="s1">):</span>
+                <span class="s0"># in the case where we are recycling an old connection</span>
+                <span class="s0"># that may have already been disconnected, close() will</span>
+                <span class="s0"># fail with the above timeout.  in this case, terminate</span>
+                <span class="s0"># the connection without any further waiting.</span>
+                <span class="s0"># see issue #8419</span>
+                <span class="s1">self._connection.terminate()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># not in a greenlet; this is the gc cleanup case</span>
+            <span class="s1">self._connection.terminate()</span>
+        <span class="s1">self._started = </span><span class="s3">False</span>
+
+    <span class="s1">@staticmethod</span>
+    <span class="s3">def </span><span class="s1">_default_name_func():</span>
+        <span class="s3">return None</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdaptFallback_asyncpg_connection(AsyncAdapt_asyncpg_connection):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">await_ = staticmethod(await_fallback)</span>
+
+
+<span class="s3">class </span><span class="s1">AsyncAdapt_asyncpg_dbapi:</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">asyncpg):</span>
+        <span class="s1">self.asyncpg = asyncpg</span>
+        <span class="s1">self.paramstyle = </span><span class="s2">&quot;numeric_dollar&quot;</span>
+
+    <span class="s3">def </span><span class="s1">connect(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">async_fallback = kw.pop(</span><span class="s2">&quot;async_fallback&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">creator_fn = kw.pop(</span><span class="s2">&quot;async_creator_fn&quot;</span><span class="s4">, </span><span class="s1">self.asyncpg.connect)</span>
+        <span class="s1">prepared_statement_cache_size = kw.pop(</span>
+            <span class="s2">&quot;prepared_statement_cache_size&quot;</span><span class="s4">, </span><span class="s5">100</span>
+        <span class="s1">)</span>
+        <span class="s1">prepared_statement_name_func = kw.pop(</span>
+            <span class="s2">&quot;prepared_statement_name_func&quot;</span><span class="s4">, </span><span class="s3">None</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">util.asbool(async_fallback):</span>
+            <span class="s3">return </span><span class="s1">AsyncAdaptFallback_asyncpg_connection(</span>
+                <span class="s1">self</span><span class="s4">,</span>
+                <span class="s1">await_fallback(creator_fn(*arg</span><span class="s4">, </span><span class="s1">**kw))</span><span class="s4">,</span>
+                <span class="s1">prepared_statement_cache_size=prepared_statement_cache_size</span><span class="s4">,</span>
+                <span class="s1">prepared_statement_name_func=prepared_statement_name_func</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">AsyncAdapt_asyncpg_connection(</span>
+                <span class="s1">self</span><span class="s4">,</span>
+                <span class="s1">await_only(creator_fn(*arg</span><span class="s4">, </span><span class="s1">**kw))</span><span class="s4">,</span>
+                <span class="s1">prepared_statement_cache_size=prepared_statement_cache_size</span><span class="s4">,</span>
+                <span class="s1">prepared_statement_name_func=prepared_statement_name_func</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">class </span><span class="s1">Error(Exception):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">Warning(Exception):  </span><span class="s0"># noqa</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">InterfaceError(Error):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">DatabaseError(Error):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">InternalError(DatabaseError):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">OperationalError(DatabaseError):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">ProgrammingError(DatabaseError):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">IntegrityError(DatabaseError):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">DataError(DatabaseError):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">NotSupportedError(DatabaseError):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">InternalServerError(InternalError):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">class </span><span class="s1">InvalidCachedStatementError(NotSupportedError):</span>
+        <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">message):</span>
+            <span class="s1">super().__init__(</span>
+                <span class="s1">message + </span><span class="s2">&quot; (SQLAlchemy asyncpg dialect will now invalidate &quot;</span>
+                <span class="s2">&quot;all prepared caches in response to this exception)&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+    <span class="s0"># pep-249 datatype placeholders.  As of SQLAlchemy 2.0 these aren't</span>
+    <span class="s0"># used, however the test suite looks for these in a few cases.</span>
+    <span class="s1">STRING = util.symbol(</span><span class="s2">&quot;STRING&quot;</span><span class="s1">)</span>
+    <span class="s1">NUMBER = util.symbol(</span><span class="s2">&quot;NUMBER&quot;</span><span class="s1">)</span>
+    <span class="s1">DATETIME = util.symbol(</span><span class="s2">&quot;DATETIME&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_asyncpg_error_translate(self):</span>
+        <span class="s3">import </span><span class="s1">asyncpg</span>
+
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s1">asyncpg.exceptions.IntegrityConstraintViolationError: self.IntegrityError</span><span class="s4">,  </span><span class="s0"># noqa: E501</span>
+            <span class="s1">asyncpg.exceptions.PostgresError: self.Error</span><span class="s4">,</span>
+            <span class="s1">asyncpg.exceptions.SyntaxOrAccessError: self.ProgrammingError</span><span class="s4">,</span>
+            <span class="s1">asyncpg.exceptions.InterfaceError: self.InterfaceError</span><span class="s4">,</span>
+            <span class="s1">asyncpg.exceptions.InvalidCachedStatementError: self.InvalidCachedStatementError</span><span class="s4">,  </span><span class="s0"># noqa: E501</span>
+            <span class="s1">asyncpg.exceptions.InternalServerError: self.InternalServerError</span><span class="s4">,</span>
+        <span class="s1">}</span>
+
+    <span class="s3">def </span><span class="s1">Binary(self</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s3">return </span><span class="s1">value</span>
+
+
+<span class="s3">class </span><span class="s1">PGDialect_asyncpg(PGDialect):</span>
+    <span class="s1">driver = </span><span class="s2">&quot;asyncpg&quot;</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s1">supports_server_side_cursors = </span><span class="s3">True</span>
+
+    <span class="s1">render_bind_cast = </span><span class="s3">True</span>
+    <span class="s1">has_terminate = </span><span class="s3">True</span>
+
+    <span class="s1">default_paramstyle = </span><span class="s2">&quot;numeric_dollar&quot;</span>
+    <span class="s1">supports_sane_multi_rowcount = </span><span class="s3">False</span>
+    <span class="s1">execution_ctx_cls = PGExecutionContext_asyncpg</span>
+    <span class="s1">statement_compiler = PGCompiler_asyncpg</span>
+    <span class="s1">preparer = PGIdentifierPreparer_asyncpg</span>
+
+    <span class="s1">colspecs = util.update_copy(</span>
+        <span class="s1">PGDialect.colspecs</span><span class="s4">,</span>
+        <span class="s1">{</span>
+            <span class="s1">sqltypes.String: AsyncpgString</span><span class="s4">,</span>
+            <span class="s1">sqltypes.ARRAY: AsyncpgARRAY</span><span class="s4">,</span>
+            <span class="s1">BIT: AsyncpgBit</span><span class="s4">,</span>
+            <span class="s1">CITEXT: CITEXT</span><span class="s4">,</span>
+            <span class="s1">REGCONFIG: AsyncpgREGCONFIG</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Time: AsyncpgTime</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Date: AsyncpgDate</span><span class="s4">,</span>
+            <span class="s1">sqltypes.DateTime: AsyncpgDateTime</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Interval: AsyncPgInterval</span><span class="s4">,</span>
+            <span class="s1">INTERVAL: AsyncPgInterval</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Boolean: AsyncpgBoolean</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Integer: AsyncpgInteger</span><span class="s4">,</span>
+            <span class="s1">sqltypes.BigInteger: AsyncpgBigInteger</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Numeric: AsyncpgNumeric</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Float: AsyncpgFloat</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON: AsyncpgJSON</span><span class="s4">,</span>
+            <span class="s1">sqltypes.LargeBinary: AsyncpgByteA</span><span class="s4">,</span>
+            <span class="s1">json.JSONB: AsyncpgJSONB</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONPathType: AsyncpgJSONPathType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONIndexType: AsyncpgJSONIndexType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONIntIndexType: AsyncpgJSONIntIndexType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.JSON.JSONStrIndexType: AsyncpgJSONStrIndexType</span><span class="s4">,</span>
+            <span class="s1">sqltypes.Enum: AsyncPgEnum</span><span class="s4">,</span>
+            <span class="s1">OID: AsyncpgOID</span><span class="s4">,</span>
+            <span class="s1">REGCLASS: AsyncpgREGCLASS</span><span class="s4">,</span>
+            <span class="s1">sqltypes.CHAR: AsyncpgCHAR</span><span class="s4">,</span>
+            <span class="s1">ranges.AbstractSingleRange: _AsyncpgRange</span><span class="s4">,</span>
+            <span class="s1">ranges.AbstractMultiRange: _AsyncpgMultiRange</span><span class="s4">,</span>
+        <span class="s1">}</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">is_async = </span><span class="s3">True</span>
+    <span class="s1">_invalidate_schema_cache_asof = </span><span class="s5">0</span>
+
+    <span class="s3">def </span><span class="s1">_invalidate_schema_cache(self):</span>
+        <span class="s1">self._invalidate_schema_cache_asof = time.time()</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_dbapi_version(self):</span>
+        <span class="s3">if </span><span class="s1">self.dbapi </span><span class="s3">and </span><span class="s1">hasattr(self.dbapi</span><span class="s4">, </span><span class="s2">&quot;__version__&quot;</span><span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">tuple(</span>
+                <span class="s1">[</span>
+                    <span class="s1">int(x)</span>
+                    <span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">re.findall(</span>
+                        <span class="s2">r&quot;(\d+)(?:[-\.]?|$)&quot;</span><span class="s4">, </span><span class="s1">self.dbapi.__version__</span>
+                    <span class="s1">)</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">(</span><span class="s5">99</span><span class="s4">, </span><span class="s5">99</span><span class="s4">, </span><span class="s5">99</span><span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">return </span><span class="s1">AsyncAdapt_asyncpg_dbapi(__import__(</span><span class="s2">&quot;asyncpg&quot;</span><span class="s1">))</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_isolation_lookup(self):</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s2">&quot;AUTOCOMMIT&quot;</span><span class="s1">: </span><span class="s2">&quot;autocommit&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;READ COMMITTED&quot;</span><span class="s1">: </span><span class="s2">&quot;read_committed&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;REPEATABLE READ&quot;</span><span class="s1">: </span><span class="s2">&quot;repeatable_read&quot;</span><span class="s4">,</span>
+            <span class="s2">&quot;SERIALIZABLE&quot;</span><span class="s1">: </span><span class="s2">&quot;serializable&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span>
+
+    <span class="s3">def </span><span class="s1">get_isolation_level_values(self</span><span class="s4">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s3">return </span><span class="s1">list(self._isolation_lookup)</span>
+
+    <span class="s3">def </span><span class="s1">set_isolation_level(self</span><span class="s4">, </span><span class="s1">dbapi_connection</span><span class="s4">, </span><span class="s1">level):</span>
+        <span class="s1">dbapi_connection.set_isolation_level(self._isolation_lookup[level])</span>
+
+    <span class="s3">def </span><span class="s1">set_readonly(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">connection.readonly = value</span>
+
+    <span class="s3">def </span><span class="s1">get_readonly(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection.readonly</span>
+
+    <span class="s3">def </span><span class="s1">set_deferrable(self</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">value):</span>
+        <span class="s1">connection.deferrable = value</span>
+
+    <span class="s3">def </span><span class="s1">get_deferrable(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection.deferrable</span>
+
+    <span class="s3">def </span><span class="s1">do_terminate(self</span><span class="s4">, </span><span class="s1">dbapi_connection) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">dbapi_connection.terminate()</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s1">opts = url.translate_connect_args(username=</span><span class="s2">&quot;user&quot;</span><span class="s1">)</span>
+        <span class="s1">multihosts</span><span class="s4">, </span><span class="s1">multiports = self._split_multihost_from_url(url)</span>
+
+        <span class="s1">opts.update(url.query)</span>
+
+        <span class="s3">if </span><span class="s1">multihosts:</span>
+            <span class="s3">assert </span><span class="s1">multiports</span>
+            <span class="s3">if </span><span class="s1">len(multihosts) == </span><span class="s5">1</span><span class="s1">:</span>
+                <span class="s1">opts[</span><span class="s2">&quot;host&quot;</span><span class="s1">] = multihosts[</span><span class="s5">0</span><span class="s1">]</span>
+                <span class="s3">if </span><span class="s1">multiports[</span><span class="s5">0</span><span class="s1">] </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s1">opts[</span><span class="s2">&quot;port&quot;</span><span class="s1">] = multiports[</span><span class="s5">0</span><span class="s1">]</span>
+            <span class="s3">elif not </span><span class="s1">all(multihosts):</span>
+                <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                    <span class="s2">&quot;All hosts are required to be present&quot;</span>
+                    <span class="s2">&quot; for asyncpg multiple host URL&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">elif not </span><span class="s1">all(multiports):</span>
+                <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                    <span class="s2">&quot;All ports are required to be present&quot;</span>
+                    <span class="s2">&quot; for asyncpg multiple host URL&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">opts[</span><span class="s2">&quot;host&quot;</span><span class="s1">] = list(multihosts)</span>
+                <span class="s1">opts[</span><span class="s2">&quot;port&quot;</span><span class="s1">] = list(multiports)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">util.coerce_kw_type(opts</span><span class="s4">, </span><span class="s2">&quot;port&quot;</span><span class="s4">, </span><span class="s1">int)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s4">, </span><span class="s2">&quot;prepared_statement_cache_size&quot;</span><span class="s4">, </span><span class="s1">int)</span>
+        <span class="s3">return </span><span class="s1">([]</span><span class="s4">, </span><span class="s1">opts)</span>
+
+    <span class="s3">def </span><span class="s1">do_ping(self</span><span class="s4">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s1">dbapi_connection.ping()</span>
+        <span class="s3">return True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_pool_class(cls</span><span class="s4">, </span><span class="s1">url):</span>
+        <span class="s1">async_fallback = url.query.get(</span><span class="s2">&quot;async_fallback&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">util.asbool(async_fallback):</span>
+            <span class="s3">return </span><span class="s1">pool.FallbackAsyncAdaptedQueuePool</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">pool.AsyncAdaptedQueuePool</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s4">, </span><span class="s1">e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+        <span class="s3">if </span><span class="s1">connection:</span>
+            <span class="s3">return </span><span class="s1">connection._connection.is_closed()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">isinstance(</span>
+                <span class="s1">e</span><span class="s4">, </span><span class="s1">self.dbapi.InterfaceError</span>
+            <span class="s1">) </span><span class="s3">and </span><span class="s2">&quot;connection is closed&quot; </span><span class="s3">in </span><span class="s1">str(e)</span>
+
+    <span class="s3">async def </span><span class="s1">setup_asyncpg_json_codec(self</span><span class="s4">, </span><span class="s1">conn):</span>
+        <span class="s7">&quot;&quot;&quot;set up JSON codec for asyncpg. 
+ 
+        This occurs for all new connections and 
+        can be overridden by third party dialects. 
+ 
+        .. versionadded:: 1.4.27 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">asyncpg_connection = conn._connection</span>
+        <span class="s1">deserializer = self._json_deserializer </span><span class="s3">or </span><span class="s1">_py_json.loads</span>
+
+        <span class="s3">def </span><span class="s1">_json_decoder(bin_value):</span>
+            <span class="s3">return </span><span class="s1">deserializer(bin_value.decode())</span>
+
+        <span class="s3">await </span><span class="s1">asyncpg_connection.set_type_codec(</span>
+            <span class="s2">&quot;json&quot;</span><span class="s4">,</span>
+            <span class="s1">encoder=str.encode</span><span class="s4">,</span>
+            <span class="s1">decoder=_json_decoder</span><span class="s4">,</span>
+            <span class="s1">schema=</span><span class="s2">&quot;pg_catalog&quot;</span><span class="s4">,</span>
+            <span class="s1">format=</span><span class="s2">&quot;binary&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">async def </span><span class="s1">setup_asyncpg_jsonb_codec(self</span><span class="s4">, </span><span class="s1">conn):</span>
+        <span class="s7">&quot;&quot;&quot;set up JSONB codec for asyncpg. 
+ 
+        This occurs for all new connections and 
+        can be overridden by third party dialects. 
+ 
+        .. versionadded:: 1.4.27 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">asyncpg_connection = conn._connection</span>
+        <span class="s1">deserializer = self._json_deserializer </span><span class="s3">or </span><span class="s1">_py_json.loads</span>
+
+        <span class="s3">def </span><span class="s1">_jsonb_encoder(str_value):</span>
+            <span class="s0"># \x01 is the prefix for jsonb used by PostgreSQL.</span>
+            <span class="s0"># asyncpg requires it when format='binary'</span>
+            <span class="s3">return </span><span class="s8">b&quot;</span><span class="s6">\x01</span><span class="s8">&quot; </span><span class="s1">+ str_value.encode()</span>
+
+        <span class="s1">deserializer = self._json_deserializer </span><span class="s3">or </span><span class="s1">_py_json.loads</span>
+
+        <span class="s3">def </span><span class="s1">_jsonb_decoder(bin_value):</span>
+            <span class="s0"># the byte is the \x01 prefix for jsonb used by PostgreSQL.</span>
+            <span class="s0"># asyncpg returns it when format='binary'</span>
+            <span class="s3">return </span><span class="s1">deserializer(bin_value[</span><span class="s5">1</span><span class="s1">:].decode())</span>
+
+        <span class="s3">await </span><span class="s1">asyncpg_connection.set_type_codec(</span>
+            <span class="s2">&quot;jsonb&quot;</span><span class="s4">,</span>
+            <span class="s1">encoder=_jsonb_encoder</span><span class="s4">,</span>
+            <span class="s1">decoder=_jsonb_decoder</span><span class="s4">,</span>
+            <span class="s1">schema=</span><span class="s2">&quot;pg_catalog&quot;</span><span class="s4">,</span>
+            <span class="s1">format=</span><span class="s2">&quot;binary&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">async def </span><span class="s1">_disable_asyncpg_inet_codecs(self</span><span class="s4">, </span><span class="s1">conn):</span>
+        <span class="s1">asyncpg_connection = conn._connection</span>
+
+        <span class="s3">await </span><span class="s1">asyncpg_connection.set_type_codec(</span>
+            <span class="s2">&quot;inet&quot;</span><span class="s4">,</span>
+            <span class="s1">encoder=</span><span class="s3">lambda </span><span class="s1">s: s</span><span class="s4">,</span>
+            <span class="s1">decoder=</span><span class="s3">lambda </span><span class="s1">s: s</span><span class="s4">,</span>
+            <span class="s1">schema=</span><span class="s2">&quot;pg_catalog&quot;</span><span class="s4">,</span>
+            <span class="s1">format=</span><span class="s2">&quot;text&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">await </span><span class="s1">asyncpg_connection.set_type_codec(</span>
+            <span class="s2">&quot;cidr&quot;</span><span class="s4">,</span>
+            <span class="s1">encoder=</span><span class="s3">lambda </span><span class="s1">s: s</span><span class="s4">,</span>
+            <span class="s1">decoder=</span><span class="s3">lambda </span><span class="s1">s: s</span><span class="s4">,</span>
+            <span class="s1">schema=</span><span class="s2">&quot;pg_catalog&quot;</span><span class="s4">,</span>
+            <span class="s1">format=</span><span class="s2">&quot;text&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">on_connect(self):</span>
+        <span class="s7">&quot;&quot;&quot;on_connect for asyncpg 
+ 
+        A major component of this for asyncpg is to set up type decoders at the 
+        asyncpg level. 
+ 
+        See https://github.com/MagicStack/asyncpg/issues/623 for 
+        notes on JSON/JSONB implementation. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">super_connect = super().on_connect()</span>
+
+        <span class="s3">def </span><span class="s1">connect(conn):</span>
+            <span class="s1">conn.await_(self.setup_asyncpg_json_codec(conn))</span>
+            <span class="s1">conn.await_(self.setup_asyncpg_jsonb_codec(conn))</span>
+
+            <span class="s3">if </span><span class="s1">self._native_inet_types </span><span class="s3">is False</span><span class="s1">:</span>
+                <span class="s1">conn.await_(self._disable_asyncpg_inet_codecs(conn))</span>
+            <span class="s3">if </span><span class="s1">super_connect </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">super_connect(conn)</span>
+
+        <span class="s3">return </span><span class="s1">connect</span>
+
+    <span class="s3">def </span><span class="s1">get_driver_connection(self</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection._connection</span>
+
+
+<span class="s1">dialect = PGDialect_asyncpg</span>
+</pre>
+</body>
+</html>

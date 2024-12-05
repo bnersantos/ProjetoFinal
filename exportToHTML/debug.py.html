@@ -1,0 +1,215 @@
+<html>
+<head>
+<title>debug.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #5d69bb;}
+.s5 { color: #96bf7d;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+debug.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">CodeType</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">TracebackType</span>
+
+<span class="s0">from </span><span class="s1">.exceptions </span><span class="s0">import </span><span class="s1">TemplateSyntaxError</span>
+<span class="s0">from </span><span class="s1">.utils </span><span class="s0">import </span><span class="s1">internal_code</span>
+<span class="s0">from </span><span class="s1">.utils </span><span class="s0">import </span><span class="s1">missing</span>
+
+<span class="s0">if </span><span class="s1">t.TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">.runtime </span><span class="s0">import </span><span class="s1">Context</span>
+
+
+<span class="s0">def </span><span class="s1">rewrite_traceback_stack(source: t.Optional[str] = </span><span class="s0">None</span><span class="s1">) -&gt; BaseException:</span>
+    <span class="s2">&quot;&quot;&quot;Rewrite the current exception to replace any tracebacks from 
+    within compiled template code with tracebacks that look like they 
+    came from the template source. 
+ 
+    This must be called within an ``except`` block. 
+ 
+    :param source: For ``TemplateSyntaxError``, the original source if 
+        known. 
+    :return: The original exception with the rewritten traceback. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">_</span><span class="s3">, </span><span class="s1">exc_value</span><span class="s3">, </span><span class="s1">tb = sys.exc_info()</span>
+    <span class="s1">exc_value = t.cast(BaseException</span><span class="s3">, </span><span class="s1">exc_value)</span>
+    <span class="s1">tb = t.cast(TracebackType</span><span class="s3">, </span><span class="s1">tb)</span>
+
+    <span class="s0">if </span><span class="s1">isinstance(exc_value</span><span class="s3">, </span><span class="s1">TemplateSyntaxError) </span><span class="s0">and not </span><span class="s1">exc_value.translated:</span>
+        <span class="s1">exc_value.translated = </span><span class="s0">True</span>
+        <span class="s1">exc_value.source = source</span>
+        <span class="s4"># Remove the old traceback, otherwise the frames from the</span>
+        <span class="s4"># compiler still show up.</span>
+        <span class="s1">exc_value.with_traceback(</span><span class="s0">None</span><span class="s1">)</span>
+        <span class="s4"># Outside of runtime, so the frame isn't executing template</span>
+        <span class="s4"># code, but it still needs to point at the template.</span>
+        <span class="s1">tb = fake_traceback(</span>
+            <span class="s1">exc_value</span><span class="s3">, </span><span class="s0">None</span><span class="s3">, </span><span class="s1">exc_value.filename </span><span class="s0">or </span><span class="s5">&quot;&lt;unknown&gt;&quot;</span><span class="s3">, </span><span class="s1">exc_value.lineno</span>
+        <span class="s1">)</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s4"># Skip the frame for the render function.</span>
+        <span class="s1">tb = tb.tb_next</span>
+
+    <span class="s1">stack = []</span>
+
+    <span class="s4"># Build the stack of traceback object, replacing any in template</span>
+    <span class="s4"># code with the source file and line information.</span>
+    <span class="s0">while </span><span class="s1">tb </span><span class="s0">is not None</span><span class="s1">:</span>
+        <span class="s4"># Skip frames decorated with @internalcode. These are internal</span>
+        <span class="s4"># calls that aren't useful in template debugging output.</span>
+        <span class="s0">if </span><span class="s1">tb.tb_frame.f_code </span><span class="s0">in </span><span class="s1">internal_code:</span>
+            <span class="s1">tb = tb.tb_next</span>
+            <span class="s0">continue</span>
+
+        <span class="s1">template = tb.tb_frame.f_globals.get(</span><span class="s5">&quot;__jinja_template__&quot;</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">template </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">lineno = template.get_corresponding_lineno(tb.tb_lineno)</span>
+            <span class="s1">fake_tb = fake_traceback(exc_value</span><span class="s3">, </span><span class="s1">tb</span><span class="s3">, </span><span class="s1">template.filename</span><span class="s3">, </span><span class="s1">lineno)</span>
+            <span class="s1">stack.append(fake_tb)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">stack.append(tb)</span>
+
+        <span class="s1">tb = tb.tb_next</span>
+
+    <span class="s1">tb_next = </span><span class="s0">None</span>
+
+    <span class="s4"># Assign tb_next in reverse to avoid circular references.</span>
+    <span class="s0">for </span><span class="s1">tb </span><span class="s0">in </span><span class="s1">reversed(stack):</span>
+        <span class="s1">tb.tb_next = tb_next</span>
+        <span class="s1">tb_next = tb</span>
+
+    <span class="s0">return </span><span class="s1">exc_value.with_traceback(tb_next)</span>
+
+
+<span class="s0">def </span><span class="s1">fake_traceback(  </span><span class="s4"># type: ignore</span>
+    <span class="s1">exc_value: BaseException</span><span class="s3">, </span><span class="s1">tb: t.Optional[TracebackType]</span><span class="s3">, </span><span class="s1">filename: str</span><span class="s3">, </span><span class="s1">lineno: int</span>
+<span class="s1">) -&gt; TracebackType:</span>
+    <span class="s2">&quot;&quot;&quot;Produce a new traceback object that looks like it came from the 
+    template source instead of the compiled code. The filename, line 
+    number, and location name will point to the template, and the local 
+    variables will be the current template context. 
+ 
+    :param exc_value: The original exception to be re-raised to create 
+        the new traceback. 
+    :param tb: The original traceback to get the local variables and 
+        code info from. 
+    :param filename: The template filename. 
+    :param lineno: The line number in the template source. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">tb </span><span class="s0">is not None</span><span class="s1">:</span>
+        <span class="s4"># Replace the real locals with the context that would be</span>
+        <span class="s4"># available at that point in the template.</span>
+        <span class="s1">locals = get_template_locals(tb.tb_frame.f_locals)</span>
+        <span class="s1">locals.pop(</span><span class="s5">&quot;__jinja_exception__&quot;</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">locals = {}</span>
+
+    <span class="s1">globals = {</span>
+        <span class="s5">&quot;__name__&quot;</span><span class="s1">: filename</span><span class="s3">,</span>
+        <span class="s5">&quot;__file__&quot;</span><span class="s1">: filename</span><span class="s3">,</span>
+        <span class="s5">&quot;__jinja_exception__&quot;</span><span class="s1">: exc_value</span><span class="s3">,</span>
+    <span class="s1">}</span>
+    <span class="s4"># Raise an exception at the correct line number.</span>
+    <span class="s1">code: CodeType = compile(</span>
+        <span class="s5">&quot;</span><span class="s6">\n</span><span class="s5">&quot; </span><span class="s1">* (lineno - </span><span class="s7">1</span><span class="s1">) + </span><span class="s5">&quot;raise __jinja_exception__&quot;</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">, </span><span class="s5">&quot;exec&quot;</span>
+    <span class="s1">)</span>
+
+    <span class="s4"># Build a new code object that points to the template file and</span>
+    <span class="s4"># replaces the location with a block name.</span>
+    <span class="s1">location = </span><span class="s5">&quot;template&quot;</span>
+
+    <span class="s0">if </span><span class="s1">tb </span><span class="s0">is not None</span><span class="s1">:</span>
+        <span class="s1">function = tb.tb_frame.f_code.co_name</span>
+
+        <span class="s0">if </span><span class="s1">function == </span><span class="s5">&quot;root&quot;</span><span class="s1">:</span>
+            <span class="s1">location = </span><span class="s5">&quot;top-level template code&quot;</span>
+        <span class="s0">elif </span><span class="s1">function.startswith(</span><span class="s5">&quot;block_&quot;</span><span class="s1">):</span>
+            <span class="s1">location = </span><span class="s5">f&quot;block </span><span class="s6">{</span><span class="s1">function[</span><span class="s7">6</span><span class="s1">:]</span><span class="s6">!r}</span><span class="s5">&quot;</span>
+
+    <span class="s0">if </span><span class="s1">sys.version_info &gt;= (</span><span class="s7">3</span><span class="s3">, </span><span class="s7">8</span><span class="s1">):</span>
+        <span class="s1">code = code.replace(co_name=location)</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">code = CodeType(</span>
+            <span class="s1">code.co_argcount</span><span class="s3">,</span>
+            <span class="s1">code.co_kwonlyargcount</span><span class="s3">,</span>
+            <span class="s1">code.co_nlocals</span><span class="s3">,</span>
+            <span class="s1">code.co_stacksize</span><span class="s3">,</span>
+            <span class="s1">code.co_flags</span><span class="s3">,</span>
+            <span class="s1">code.co_code</span><span class="s3">,</span>
+            <span class="s1">code.co_consts</span><span class="s3">,</span>
+            <span class="s1">code.co_names</span><span class="s3">,</span>
+            <span class="s1">code.co_varnames</span><span class="s3">,</span>
+            <span class="s1">code.co_filename</span><span class="s3">,</span>
+            <span class="s1">location</span><span class="s3">,</span>
+            <span class="s1">code.co_firstlineno</span><span class="s3">,</span>
+            <span class="s1">code.co_lnotab</span><span class="s3">,</span>
+            <span class="s1">code.co_freevars</span><span class="s3">,</span>
+            <span class="s1">code.co_cellvars</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s4"># Execute the new code, which is guaranteed to raise, and return</span>
+    <span class="s4"># the new traceback without this frame.</span>
+    <span class="s0">try</span><span class="s1">:</span>
+        <span class="s1">exec(code</span><span class="s3">, </span><span class="s1">globals</span><span class="s3">, </span><span class="s1">locals)</span>
+    <span class="s0">except </span><span class="s1">BaseException:</span>
+        <span class="s0">return </span><span class="s1">sys.exc_info()[</span><span class="s7">2</span><span class="s1">].tb_next  </span><span class="s4"># type: ignore</span>
+
+
+<span class="s0">def </span><span class="s1">get_template_locals(real_locals: t.Mapping[str</span><span class="s3">, </span><span class="s1">t.Any]) -&gt; t.Dict[str</span><span class="s3">, </span><span class="s1">t.Any]:</span>
+    <span class="s2">&quot;&quot;&quot;Based on the runtime locals, get the context that would be 
+    available at that point in the template. 
+    &quot;&quot;&quot;</span>
+    <span class="s4"># Start with the current template context.</span>
+    <span class="s1">ctx: </span><span class="s5">&quot;t.Optional[Context]&quot; </span><span class="s1">= real_locals.get(</span><span class="s5">&quot;context&quot;</span><span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">ctx </span><span class="s0">is not None</span><span class="s1">:</span>
+        <span class="s1">data: t.Dict[str</span><span class="s3">, </span><span class="s1">t.Any] = ctx.get_all().copy()</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">data = {}</span>
+
+    <span class="s4"># Might be in a derived context that only sets local variables</span>
+    <span class="s4"># rather than pushing a context. Local variables follow the scheme</span>
+    <span class="s4"># l_depth_name. Find the highest-depth local that has a value for</span>
+    <span class="s4"># each name.</span>
+    <span class="s1">local_overrides: t.Dict[str</span><span class="s3">, </span><span class="s1">t.Tuple[int</span><span class="s3">, </span><span class="s1">t.Any]] = {}</span>
+
+    <span class="s0">for </span><span class="s1">name</span><span class="s3">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">real_locals.items():</span>
+        <span class="s0">if not </span><span class="s1">name.startswith(</span><span class="s5">&quot;l_&quot;</span><span class="s1">) </span><span class="s0">or </span><span class="s1">value </span><span class="s0">is </span><span class="s1">missing:</span>
+            <span class="s4"># Not a template variable, or no longer relevant.</span>
+            <span class="s0">continue</span>
+
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">_</span><span class="s3">, </span><span class="s1">depth_str</span><span class="s3">, </span><span class="s1">name = name.split(</span><span class="s5">&quot;_&quot;</span><span class="s3">, </span><span class="s7">2</span><span class="s1">)</span>
+            <span class="s1">depth = int(depth_str)</span>
+        <span class="s0">except </span><span class="s1">ValueError:</span>
+            <span class="s0">continue</span>
+
+        <span class="s1">cur_depth = local_overrides.get(name</span><span class="s3">, </span><span class="s1">(-</span><span class="s7">1</span><span class="s3">,</span><span class="s1">))[</span><span class="s7">0</span><span class="s1">]</span>
+
+        <span class="s0">if </span><span class="s1">cur_depth &lt; depth:</span>
+            <span class="s1">local_overrides[name] = (depth</span><span class="s3">, </span><span class="s1">value)</span>
+
+    <span class="s4"># Modify the context with any derived context.</span>
+    <span class="s0">for </span><span class="s1">name</span><span class="s3">, </span><span class="s1">(_</span><span class="s3">, </span><span class="s1">value) </span><span class="s0">in </span><span class="s1">local_overrides.items():</span>
+        <span class="s0">if </span><span class="s1">value </span><span class="s0">is </span><span class="s1">missing:</span>
+            <span class="s1">data.pop(name</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">data[name] = value</span>
+
+    <span class="s0">return </span><span class="s1">data</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<html>
+<head>
+<title>_wrap.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc7832;}
+.s3 { color: #96bf7d;}
+.s4 { color: #bbb55b;}
+.s5 { color: #5d69bb;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_wrap.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">re</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Iterable</span><span class="s2">, </span><span class="s1">List</span><span class="s2">, </span><span class="s1">Tuple</span>
+
+<span class="s0">from </span><span class="s1">._loop </span><span class="s0">import </span><span class="s1">loop_last</span>
+<span class="s0">from </span><span class="s1">.cells </span><span class="s0">import </span><span class="s1">cell_len</span><span class="s2">, </span><span class="s1">chop_cells</span>
+
+<span class="s1">re_word = re.compile(</span><span class="s3">r&quot;\s*\S+\s*&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">words(text: str) -&gt; Iterable[Tuple[int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">str]]:</span>
+    <span class="s1">position = </span><span class="s4">0</span>
+    <span class="s1">word_match = re_word.match(text</span><span class="s2">, </span><span class="s1">position)</span>
+    <span class="s0">while </span><span class="s1">word_match </span><span class="s0">is not None</span><span class="s1">:</span>
+        <span class="s1">start</span><span class="s2">, </span><span class="s1">end = word_match.span()</span>
+        <span class="s1">word = word_match.group(</span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s0">yield </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">word</span>
+        <span class="s1">word_match = re_word.match(text</span><span class="s2">, </span><span class="s1">end)</span>
+
+
+<span class="s0">def </span><span class="s1">divide_line(text: str</span><span class="s2">, </span><span class="s1">width: int</span><span class="s2">, </span><span class="s1">fold: bool = </span><span class="s0">True</span><span class="s1">) -&gt; List[int]:</span>
+    <span class="s1">divides: List[int] = []</span>
+    <span class="s1">append = divides.append</span>
+    <span class="s1">line_position = </span><span class="s4">0</span>
+    <span class="s1">_cell_len = cell_len</span>
+    <span class="s0">for </span><span class="s1">start</span><span class="s2">, </span><span class="s1">_end</span><span class="s2">, </span><span class="s1">word </span><span class="s0">in </span><span class="s1">words(text):</span>
+        <span class="s1">word_length = _cell_len(word.rstrip())</span>
+        <span class="s0">if </span><span class="s1">line_position + word_length &gt; width:</span>
+            <span class="s0">if </span><span class="s1">word_length &gt; width:</span>
+                <span class="s0">if </span><span class="s1">fold:</span>
+                    <span class="s1">chopped_words = chop_cells(word</span><span class="s2">, </span><span class="s1">max_size=width</span><span class="s2">, </span><span class="s1">position=</span><span class="s4">0</span><span class="s1">)</span>
+                    <span class="s0">for </span><span class="s1">last</span><span class="s2">, </span><span class="s1">line </span><span class="s0">in </span><span class="s1">loop_last(chopped_words):</span>
+                        <span class="s0">if </span><span class="s1">start:</span>
+                            <span class="s1">append(start)</span>
+
+                        <span class="s0">if </span><span class="s1">last:</span>
+                            <span class="s1">line_position = _cell_len(line)</span>
+                        <span class="s0">else</span><span class="s1">:</span>
+                            <span class="s1">start += len(line)</span>
+                <span class="s0">else</span><span class="s1">:</span>
+                    <span class="s0">if </span><span class="s1">start:</span>
+                        <span class="s1">append(start)</span>
+                    <span class="s1">line_position = _cell_len(word)</span>
+            <span class="s0">elif </span><span class="s1">line_position </span><span class="s0">and </span><span class="s1">start:</span>
+                <span class="s1">append(start)</span>
+                <span class="s1">line_position = _cell_len(word)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">line_position += _cell_len(word)</span>
+    <span class="s0">return </span><span class="s1">divides</span>
+
+
+<span class="s0">if </span><span class="s1">__name__ == </span><span class="s3">&quot;__main__&quot;</span><span class="s1">:  </span><span class="s5"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">.console </span><span class="s0">import </span><span class="s1">Console</span>
+
+    <span class="s1">console = Console(width=</span><span class="s4">10</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;12345 abcdefghijklmnopqrstuvwyxzABCDEFGHIJKLMNOPQRSTUVWXYZ 12345&quot;</span><span class="s1">)</span>
+    <span class="s1">print(chop_cells(</span><span class="s3">&quot;abcdefghijklmnopqrstuvwxyz&quot;</span><span class="s2">, </span><span class="s4">10</span><span class="s2">, </span><span class="s1">position=</span><span class="s4">2</span><span class="s1">))</span>
+</pre>
+</body>
+</html>

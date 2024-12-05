@@ -1,0 +1,324 @@
+<html>
+<head>
+<title>identity.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+identity.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/identity.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">cast</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterator</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">List</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">NoReturn</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Set</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Tuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TypeVar</span>
+<span class="s2">import </span><span class="s1">weakref</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">util </span><span class="s2">as </span><span class="s1">orm_util</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">exc </span><span class="s2">as </span><span class="s1">sa_exc</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">._typing </span><span class="s2">import </span><span class="s1">_IdentityKeyType</span>
+    <span class="s2">from </span><span class="s1">.state </span><span class="s2">import </span><span class="s1">InstanceState</span>
+
+
+<span class="s1">_T = TypeVar(</span><span class="s3">&quot;_T&quot;</span><span class="s4">, </span><span class="s1">bound=Any)</span>
+
+<span class="s1">_O = TypeVar(</span><span class="s3">&quot;_O&quot;</span><span class="s4">, </span><span class="s1">bound=object)</span>
+
+
+<span class="s2">class </span><span class="s1">IdentityMap:</span>
+    <span class="s1">_wr: weakref.ref[IdentityMap]</span>
+
+    <span class="s1">_dict: Dict[_IdentityKeyType[Any]</span><span class="s4">, </span><span class="s1">Any]</span>
+    <span class="s1">_modified: Set[InstanceState[Any]]</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._dict = {}</span>
+        <span class="s1">self._modified = set()</span>
+        <span class="s1">self._wr = weakref.ref(self)</span>
+
+    <span class="s2">def </span><span class="s1">_kill(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._add_unpresent = _killed  </span><span class="s0"># type: ignore</span>
+
+    <span class="s2">def </span><span class="s1">all_states(self) -&gt; List[InstanceState[Any]]:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">contains_state(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; bool:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">__contains__(self</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[Any]) -&gt; bool:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">safe_discard(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">__getitem__(self</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[_O]) -&gt; _O:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">get(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[_O]</span><span class="s4">, </span><span class="s1">default: Optional[_O] = </span><span class="s2">None</span>
+    <span class="s1">) -&gt; Optional[_O]:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">fast_get_state(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[_O]</span>
+    <span class="s1">) -&gt; Optional[InstanceState[_O]]:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">keys(self) -&gt; Iterable[_IdentityKeyType[Any]]:</span>
+        <span class="s2">return </span><span class="s1">self._dict.keys()</span>
+
+    <span class="s2">def </span><span class="s1">values(self) -&gt; Iterable[object]:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">replace(self</span><span class="s4">, </span><span class="s1">state: InstanceState[_O]) -&gt; Optional[InstanceState[_O]]:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">add(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; bool:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">_fast_discard(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">_add_unpresent(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[Any]</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s5">&quot;&quot;&quot;optional inlined form of add() which can assume item isn't present 
+        in the map&quot;&quot;&quot;</span>
+        <span class="s1">self.add(state)</span>
+
+    <span class="s2">def </span><span class="s1">_manage_incoming_state(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">state._instance_dict = self._wr</span>
+
+        <span class="s2">if </span><span class="s1">state.modified:</span>
+            <span class="s1">self._modified.add(state)</span>
+
+    <span class="s2">def </span><span class="s1">_manage_removed_state(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">del </span><span class="s1">state._instance_dict</span>
+        <span class="s2">if </span><span class="s1">state.modified:</span>
+            <span class="s1">self._modified.discard(state)</span>
+
+    <span class="s2">def </span><span class="s1">_dirty_states(self) -&gt; Set[InstanceState[Any]]:</span>
+        <span class="s2">return </span><span class="s1">self._modified</span>
+
+    <span class="s2">def </span><span class="s1">check_modified(self) -&gt; bool:</span>
+        <span class="s5">&quot;&quot;&quot;return True if any InstanceStates present have been marked 
+        as 'modified'. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">bool(self._modified)</span>
+
+    <span class="s2">def </span><span class="s1">has_key(self</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[Any]) -&gt; bool:</span>
+        <span class="s2">return </span><span class="s1">key </span><span class="s2">in </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s2">return </span><span class="s1">len(self._dict)</span>
+
+
+<span class="s2">class </span><span class="s1">WeakInstanceDict(IdentityMap):</span>
+    <span class="s1">_dict: Dict[_IdentityKeyType[Any]</span><span class="s4">, </span><span class="s1">InstanceState[Any]]</span>
+
+    <span class="s2">def </span><span class="s1">__getitem__(self</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[_O]) -&gt; _O:</span>
+        <span class="s1">state = cast(</span><span class="s3">&quot;InstanceState[_O]&quot;</span><span class="s4">, </span><span class="s1">self._dict[key])</span>
+        <span class="s1">o = state.obj()</span>
+        <span class="s2">if </span><span class="s1">o </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">KeyError(key)</span>
+        <span class="s2">return </span><span class="s1">o</span>
+
+    <span class="s2">def </span><span class="s1">__contains__(self</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[Any]) -&gt; bool:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">key </span><span class="s2">in </span><span class="s1">self._dict:</span>
+                <span class="s1">state = self._dict[key]</span>
+                <span class="s1">o = state.obj()</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return False</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">return False</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">o </span><span class="s2">is not None</span>
+
+    <span class="s2">def </span><span class="s1">contains_state(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; bool:</span>
+        <span class="s2">if </span><span class="s1">state.key </span><span class="s2">in </span><span class="s1">self._dict:</span>
+            <span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+                <span class="s2">assert </span><span class="s1">state.key </span><span class="s2">is not None</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">self._dict[state.key] </span><span class="s2">is </span><span class="s1">state</span>
+            <span class="s2">except </span><span class="s1">KeyError:</span>
+                <span class="s2">return False</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return False</span>
+
+    <span class="s2">def </span><span class="s1">replace(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]</span>
+    <span class="s1">) -&gt; Optional[InstanceState[Any]]:</span>
+        <span class="s2">assert </span><span class="s1">state.key </span><span class="s2">is not None</span>
+        <span class="s2">if </span><span class="s1">state.key </span><span class="s2">in </span><span class="s1">self._dict:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">existing = existing_non_none = self._dict[state.key]</span>
+            <span class="s2">except </span><span class="s1">KeyError:</span>
+                <span class="s0"># catch gc removed the key after we just checked for it</span>
+                <span class="s1">existing = </span><span class="s2">None</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">existing_non_none </span><span class="s2">is not </span><span class="s1">state:</span>
+                    <span class="s1">self._manage_removed_state(existing_non_none)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">return None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">existing = </span><span class="s2">None</span>
+
+        <span class="s1">self._dict[state.key] = state</span>
+        <span class="s1">self._manage_incoming_state(state)</span>
+        <span class="s2">return </span><span class="s1">existing</span>
+
+    <span class="s2">def </span><span class="s1">add(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; bool:</span>
+        <span class="s1">key = state.key</span>
+        <span class="s2">assert </span><span class="s1">key </span><span class="s2">is not None</span>
+        <span class="s0"># inline of self.__contains__</span>
+        <span class="s2">if </span><span class="s1">key </span><span class="s2">in </span><span class="s1">self._dict:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">existing_state = self._dict[key]</span>
+            <span class="s2">except </span><span class="s1">KeyError:</span>
+                <span class="s0"># catch gc removed the key after we just checked for it</span>
+                <span class="s2">pass</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">existing_state </span><span class="s2">is not </span><span class="s1">state:</span>
+                    <span class="s1">o = existing_state.obj()</span>
+                    <span class="s2">if </span><span class="s1">o </span><span class="s2">is not None</span><span class="s1">:</span>
+                        <span class="s2">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                            <span class="s3">&quot;Can't attach instance &quot;</span>
+                            <span class="s3">&quot;%s; another instance with key %s is already &quot;</span>
+                            <span class="s3">&quot;present in this session.&quot;</span>
+                            <span class="s1">% (orm_util.state_str(state)</span><span class="s4">, </span><span class="s1">state.key)</span>
+                        <span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">return False</span>
+        <span class="s1">self._dict[key] = state</span>
+        <span class="s1">self._manage_incoming_state(state)</span>
+        <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">_add_unpresent(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[Any]</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0"># inlined form of add() called by loading.py</span>
+        <span class="s1">self._dict[key] = state</span>
+        <span class="s1">state._instance_dict = self._wr</span>
+
+    <span class="s2">def </span><span class="s1">fast_get_state(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[_O]</span>
+    <span class="s1">) -&gt; Optional[InstanceState[_O]]:</span>
+        <span class="s2">return </span><span class="s1">self._dict.get(key)</span>
+
+    <span class="s2">def </span><span class="s1">get(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[_O]</span><span class="s4">, </span><span class="s1">default: Optional[_O] = </span><span class="s2">None</span>
+    <span class="s1">) -&gt; Optional[_O]:</span>
+        <span class="s2">if </span><span class="s1">key </span><span class="s2">not in </span><span class="s1">self._dict:</span>
+            <span class="s2">return </span><span class="s1">default</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">state = cast(</span><span class="s3">&quot;InstanceState[_O]&quot;</span><span class="s4">, </span><span class="s1">self._dict[key])</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s0"># catch gc removed the key after we just checked for it</span>
+            <span class="s2">return </span><span class="s1">default</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">o = state.obj()</span>
+            <span class="s2">if </span><span class="s1">o </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">default</span>
+            <span class="s2">return </span><span class="s1">o</span>
+
+    <span class="s2">def </span><span class="s1">items(self) -&gt; List[Tuple[_IdentityKeyType[Any]</span><span class="s4">, </span><span class="s1">InstanceState[Any]]]:</span>
+        <span class="s1">values = self.all_states()</span>
+        <span class="s1">result = []</span>
+        <span class="s2">for </span><span class="s1">state </span><span class="s2">in </span><span class="s1">values:</span>
+            <span class="s1">value = state.obj()</span>
+            <span class="s1">key = state.key</span>
+            <span class="s2">assert </span><span class="s1">key </span><span class="s2">is not None</span>
+            <span class="s2">if </span><span class="s1">value </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">result.append((key</span><span class="s4">, </span><span class="s1">value))</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">values(self) -&gt; List[object]:</span>
+        <span class="s1">values = self.all_states()</span>
+        <span class="s1">result = []</span>
+        <span class="s2">for </span><span class="s1">state </span><span class="s2">in </span><span class="s1">values:</span>
+            <span class="s1">value = state.obj()</span>
+            <span class="s2">if </span><span class="s1">value </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">result.append(value)</span>
+
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">__iter__(self) -&gt; Iterator[_IdentityKeyType[Any]]:</span>
+        <span class="s2">return </span><span class="s1">iter(self.keys())</span>
+
+    <span class="s2">def </span><span class="s1">all_states(self) -&gt; List[InstanceState[Any]]:</span>
+        <span class="s2">return </span><span class="s1">list(self._dict.values())</span>
+
+    <span class="s2">def </span><span class="s1">_fast_discard(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0"># used by InstanceState for state being</span>
+        <span class="s0"># GC'ed, inlines _managed_removed_state</span>
+        <span class="s1">key = state.key</span>
+        <span class="s2">assert </span><span class="s1">key </span><span class="s2">is not None</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">st = self._dict[key]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s0"># catch gc removed the key after we just checked for it</span>
+            <span class="s2">pass</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">st </span><span class="s2">is </span><span class="s1">state:</span>
+                <span class="s1">self._dict.pop(key</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">discard(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self.safe_discard(state)</span>
+
+    <span class="s2">def </span><span class="s1">safe_discard(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">key = state.key</span>
+        <span class="s2">if </span><span class="s1">key </span><span class="s2">in </span><span class="s1">self._dict:</span>
+            <span class="s2">assert </span><span class="s1">key </span><span class="s2">is not None</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">st = self._dict[key]</span>
+            <span class="s2">except </span><span class="s1">KeyError:</span>
+                <span class="s0"># catch gc removed the key after we just checked for it</span>
+                <span class="s2">pass</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">st </span><span class="s2">is </span><span class="s1">state:</span>
+                    <span class="s1">self._dict.pop(key</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+                    <span class="s1">self._manage_removed_state(state)</span>
+
+
+<span class="s2">def </span><span class="s1">_killed(state: InstanceState[Any]</span><span class="s4">, </span><span class="s1">key: _IdentityKeyType[Any]) -&gt; NoReturn:</span>
+    <span class="s0"># external function to avoid creating cycles when assigned to</span>
+    <span class="s0"># the IdentityMap</span>
+    <span class="s2">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+        <span class="s3">&quot;Object %s cannot be converted to 'persistent' state, as this &quot;</span>
+        <span class="s3">&quot;identity map is no longer valid.  Has the owning Session &quot;</span>
+        <span class="s3">&quot;been closed?&quot; </span><span class="s1">% orm_util.state_str(state)</span><span class="s4">,</span>
+        <span class="s1">code=</span><span class="s3">&quot;lkrp&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+</pre>
+</body>
+</html>

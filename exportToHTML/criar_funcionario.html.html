@@ -1,0 +1,97 @@
+<html>
+<head>
+<title>criar_funcionario.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+.s1 { color: #e8bf6a;}
+.s2 { color: #bababa;}
+.s3 { color: #a5c261;}
+.s4 { color: #5d69bb;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+criar_funcionario.html</font>
+</center></td></tr></table>
+<pre><span class="s0">{% extends 'modelo_base3.html' %}</span>
+
+
+
+<span class="s0">{% block conteudoNav %}</span>
+<span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;nav-bar&quot;</span><span class="s1">&gt;</span>
+    <span class="s1">&lt;ul </span><span class="s2">class</span><span class="s3">=&quot;menu&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;usuario-btn&quot;</span><span class="s1">&gt;</span>
+          <span class="s1">&lt;button </span><span class="s2">id</span><span class="s3">=&quot;usuario-btn&quot;</span><span class="s1">&gt;</span><span class="s0">login</span><span class="s1">&lt;/button&gt;</span>
+        <span class="s1">&lt;/div&gt;</span>
+        <span class="s1">&lt;li&gt;&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('home') }}&quot;</span><span class="s1">&gt;</span><span class="s0">MENU</span><span class="s1">&lt;/a&gt;&lt;/li&gt;</span>
+        <span class="s1">&lt;li&gt;&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('gerenciar_funcionarios') }}&quot;</span><span class="s1">&gt;</span><span class="s0">Voltar</span><span class="s1">&lt;/a&gt;&lt;/li&gt;</span>
+        <span class="s1">&lt;li&gt;&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('grafico_movimentacoes') }}&quot;</span><span class="s1">&gt;</span><span class="s0">RELATORIO</span><span class="s1">&lt;/a&gt;&lt;/li&gt;</span>
+    <span class="s1">&lt;/ul&gt;</span>
+    <span class="s1">&lt;span </span><span class="s2">class</span><span class="s3">=&quot;search-icon&quot; </span><span class="s2">id</span><span class="s3">=&quot;search-icon&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;i </span><span class="s2">class</span><span class="s3">=&quot;fas fa-search&quot;</span><span class="s1">&gt;&lt;/i&gt; </span><span class="s4">&lt;!-- Ícone de lupa do Font Awesome --&gt;</span>
+    <span class="s1">&lt;/span&gt;</span>
+    <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;search-box&quot; </span><span class="s2">id</span><span class="s3">=&quot;search-box&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;input </span><span class="s2">type</span><span class="s3">=&quot;text&quot; </span><span class="s2">id</span><span class="s3">=&quot;search-input&quot; </span><span class="s2">placeholder</span><span class="s3">=&quot;Buscar...&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;button </span><span class="s2">id</span><span class="s3">=&quot;search-btn&quot;</span><span class="s1">&gt;</span><span class="s0">Buscar</span><span class="s1">&lt;/button&gt;</span>
+    <span class="s1">&lt;/div&gt;</span>
+<span class="s1">&lt;/div&gt;</span>
+<span class="s0">{% endblock %}</span>
+
+
+<span class="s0">{% block conteudo %}</span>
+
+<span class="s0">{% with messages = get_flashed_messages(with_categories=true) %}</span>
+    <span class="s0">{% if messages %}</span>
+        <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;mensagens&quot;</span><span class="s1">&gt;</span>
+            <span class="s0">{% for category, message in messages %}</span>
+                <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;alert {{ 'alert-success' if category == 'success' else 'alert-danger' }}&quot;</span><span class="s1">&gt;</span>
+                    <span class="s0">{{ message }}</span>
+                <span class="s1">&lt;/div&gt;</span>
+            <span class="s0">{% endfor %}</span>
+        <span class="s1">&lt;/div&gt;</span>
+    <span class="s0">{% endif %}</span>
+<span class="s0">{% endwith %}</span>
+
+
+    <span class="s1">&lt;form </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">action</span><span class="s3">=&quot;{{ url_for('criar_funcionario') }}&quot; </span><span class="s2">method</span><span class="s3">=&quot;POST&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;label </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">for</span><span class="s3">=&quot;nome&quot;</span><span class="s1">&gt;</span><span class="s0">Nome:</span><span class="s1">&lt;/label&gt;</span>
+        <span class="s1">&lt;input </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">type</span><span class="s3">=&quot;text&quot; </span><span class="s2">name</span><span class="s3">=&quot;nome&quot; </span><span class="s2">id</span><span class="s3">=&quot;nome&quot; </span><span class="s2">required</span><span class="s1">&gt;&lt;br&gt;</span>
+
+        <span class="s1">&lt;label </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">for</span><span class="s3">=&quot;cpf&quot;</span><span class="s1">&gt;</span><span class="s0">CPF:</span><span class="s1">&lt;/label&gt;</span>
+        <span class="s1">&lt;input </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">type</span><span class="s3">=&quot;text&quot; </span><span class="s2">name</span><span class="s3">=&quot;cpf&quot; </span><span class="s2">id</span><span class="s3">=&quot;cpf&quot; </span><span class="s2">required pattern</span><span class="s3">=&quot;\d{11}&quot; </span><span class="s2">title</span><span class="s3">=&quot;O CPF deve conter exatamente 11 dígitos.&quot;</span><span class="s1">&gt;&lt;br&gt;</span>
+
+        <span class="s1">&lt;label </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">for</span><span class="s3">=&quot;email&quot;</span><span class="s1">&gt;</span><span class="s0">Email:</span><span class="s1">&lt;/label&gt;</span>
+        <span class="s1">&lt;input </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">type</span><span class="s3">=&quot;email&quot; </span><span class="s2">name</span><span class="s3">=&quot;email&quot; </span><span class="s2">id</span><span class="s3">=&quot;email&quot; </span><span class="s2">required</span><span class="s1">&gt;&lt;br&gt;</span>
+
+        <span class="s1">&lt;label </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">for</span><span class="s3">=&quot;telefone&quot;</span><span class="s1">&gt;</span><span class="s0">Telefone:</span><span class="s1">&lt;/label&gt;</span>
+        <span class="s1">&lt;input </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">type</span><span class="s3">=&quot;tel&quot; </span><span class="s2">name</span><span class="s3">=&quot;telefone&quot; </span><span class="s2">id</span><span class="s3">=&quot;telefone&quot; </span><span class="s2">required pattern</span><span class="s3">=&quot;\d+&quot; </span><span class="s2">title</span><span class="s3">=&quot;O telefone deve conter apenas números.&quot;</span><span class="s1">&gt;&lt;br&gt;</span>
+        <span class="s0">{% if telefone_erro %}</span>
+        <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;erro&quot;</span><span class="s1">&gt;</span><span class="s0">{{ telefone_erro }}</span><span class="s1">&lt;/div&gt;</span>
+        <span class="s0">{% endif %}</span>
+
+        <span class="s1">&lt;label </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">for</span><span class="s3">=&quot;cargo&quot;</span><span class="s1">&gt;</span><span class="s0">Cargo:</span><span class="s1">&lt;/label&gt;</span>
+        <span class="s1">&lt;select </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">name</span><span class="s3">=&quot;cargo&quot; </span><span class="s2">id</span><span class="s3">=&quot;cargo&quot; </span><span class="s2">required</span><span class="s1">&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;CEO&quot;</span><span class="s1">&gt;</span><span class="s0">CEO</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;CTO&quot;</span><span class="s1">&gt;</span><span class="s0">CTO</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;COO&quot;</span><span class="s1">&gt;</span><span class="s0">COO</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;Gerente de Operações&quot;</span><span class="s1">&gt;</span><span class="s0">Gerente de Operações</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;Analista Administrativo&quot;</span><span class="s1">&gt;</span><span class="s0">Analista Administrativo</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;Gerente de Marketing&quot;</span><span class="s1">&gt;</span><span class="s0">Gerente de Marketing</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;Designer Gráfico&quot;</span><span class="s1">&gt;</span><span class="s0">Designer Gráfico</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;Suporte Técnico&quot;</span><span class="s1">&gt;</span><span class="s0">Suporte Técnico</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;Contador&quot;</span><span class="s1">&gt;</span><span class="s0">Contador</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;Repositor&quot;</span><span class="s1">&gt;</span><span class="s0">Repositor</span><span class="s1">&lt;/option&gt;</span>
+            <span class="s1">&lt;option </span><span class="s2">value</span><span class="s3">=&quot;Analista de RH&quot;</span><span class="s1">&gt;</span><span class="s0">Analista de RH</span><span class="s1">&lt;/option&gt;</span>
+        <span class="s1">&lt;/select&gt;&lt;br&gt;</span>
+
+        <span class="s1">&lt;button </span><span class="s2">class</span><span class="s3">=&quot;criar&quot; </span><span class="s2">type</span><span class="s3">=&quot;submit&quot;</span><span class="s1">&gt;</span><span class="s0">Criar Funcionário</span><span class="s1">&lt;/button&gt;</span>
+    <span class="s1">&lt;/form&gt;</span>
+    <span class="s1">&lt;br&gt;</span>
+
+<span class="s0">{% endblock %}</span>
+</pre>
+</body>
+</html>

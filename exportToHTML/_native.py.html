@@ -1,0 +1,28 @@
+<html>
+<head>
+<title>_native.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc7832;}
+.s3 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_native.py</font>
+</center></td></tr></table>
+<pre><span class="s0">def </span><span class="s1">_escape_inner(s: str</span><span class="s2">, </span><span class="s1">/) -&gt; str:</span>
+    <span class="s0">return </span><span class="s1">(</span>
+        <span class="s1">s.replace(</span><span class="s3">&quot;&amp;&quot;</span><span class="s2">, </span><span class="s3">&quot;&amp;amp;&quot;</span><span class="s1">)</span>
+        <span class="s1">.replace(</span><span class="s3">&quot;&gt;&quot;</span><span class="s2">, </span><span class="s3">&quot;&amp;gt;&quot;</span><span class="s1">)</span>
+        <span class="s1">.replace(</span><span class="s3">&quot;&lt;&quot;</span><span class="s2">, </span><span class="s3">&quot;&amp;lt;&quot;</span><span class="s1">)</span>
+        <span class="s1">.replace(</span><span class="s3">&quot;'&quot;</span><span class="s2">, </span><span class="s3">&quot;&amp;#39;&quot;</span><span class="s1">)</span>
+        <span class="s1">.replace(</span><span class="s3">'&quot;'</span><span class="s2">, </span><span class="s3">&quot;&amp;#34;&quot;</span><span class="s1">)</span>
+    <span class="s1">)</span>
+</pre>
+</body>
+</html>

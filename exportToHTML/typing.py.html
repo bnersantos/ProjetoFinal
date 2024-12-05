@@ -1,0 +1,653 @@
+<html>
+<head>
+<title>typing.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+typing.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># util/typing.py</span>
+<span class="s0"># Copyright (C) 2022-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">builtins</span>
+<span class="s2">import </span><span class="s1">collections.abc </span><span class="s2">as </span><span class="s1">collections_abc</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">cast</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">ForwardRef</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Generic</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Mapping</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">NewType</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">NoReturn</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">overload</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Set</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Tuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Type</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TypeVar</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">compat</span>
+
+<span class="s2">if True</span><span class="s1">:  </span><span class="s0"># zimports removes the tailing comments</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">Annotated </span><span class="s2">as </span><span class="s1">Annotated  </span><span class="s0"># 3.8</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">Concatenate </span><span class="s2">as </span><span class="s1">Concatenate  </span><span class="s0"># 3.10</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">(</span>
+        <span class="s1">dataclass_transform </span><span class="s2">as </span><span class="s1">dataclass_transform</span><span class="s3">,  </span><span class="s0"># 3.11,</span>
+    <span class="s1">)</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">Final </span><span class="s2">as </span><span class="s1">Final  </span><span class="s0"># 3.8</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">final </span><span class="s2">as </span><span class="s1">final  </span><span class="s0"># 3.8</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">get_args </span><span class="s2">as </span><span class="s1">get_args  </span><span class="s0"># 3.10</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">get_origin </span><span class="s2">as </span><span class="s1">get_origin  </span><span class="s0"># 3.10</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">Literal </span><span class="s2">as </span><span class="s1">Literal  </span><span class="s0"># 3.8</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">NotRequired </span><span class="s2">as </span><span class="s1">NotRequired  </span><span class="s0"># 3.11</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">ParamSpec </span><span class="s2">as </span><span class="s1">ParamSpec  </span><span class="s0"># 3.10</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">Protocol </span><span class="s2">as </span><span class="s1">Protocol  </span><span class="s0"># 3.8</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">SupportsIndex </span><span class="s2">as </span><span class="s1">SupportsIndex  </span><span class="s0"># 3.8</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">TypeAlias </span><span class="s2">as </span><span class="s1">TypeAlias  </span><span class="s0"># 3.10</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">TypedDict </span><span class="s2">as </span><span class="s1">TypedDict  </span><span class="s0"># 3.8</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">TypeGuard </span><span class="s2">as </span><span class="s1">TypeGuard  </span><span class="s0"># 3.10</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">Self </span><span class="s2">as </span><span class="s1">Self  </span><span class="s0"># 3.11</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">TypeAliasType </span><span class="s2">as </span><span class="s1">TypeAliasType  </span><span class="s0"># 3.12</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s3">, </span><span class="s1">bound=Any)</span>
+<span class="s1">_KT = TypeVar(</span><span class="s4">&quot;_KT&quot;</span><span class="s1">)</span>
+<span class="s1">_KT_co = TypeVar(</span><span class="s4">&quot;_KT_co&quot;</span><span class="s3">, </span><span class="s1">covariant=</span><span class="s2">True</span><span class="s1">)</span>
+<span class="s1">_KT_contra = TypeVar(</span><span class="s4">&quot;_KT_contra&quot;</span><span class="s3">, </span><span class="s1">contravariant=</span><span class="s2">True</span><span class="s1">)</span>
+<span class="s1">_VT = TypeVar(</span><span class="s4">&quot;_VT&quot;</span><span class="s1">)</span>
+<span class="s1">_VT_co = TypeVar(</span><span class="s4">&quot;_VT_co&quot;</span><span class="s3">, </span><span class="s1">covariant=</span><span class="s2">True</span><span class="s1">)</span>
+
+<span class="s2">if </span><span class="s1">compat.py38:</span>
+    <span class="s0"># typing_extensions.Literal is different from typing.Literal until</span>
+    <span class="s0"># Python 3.10.1</span>
+    <span class="s1">_LITERAL_TYPES = frozenset([typing.Literal</span><span class="s3">, </span><span class="s1">Literal])</span>
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s1">_LITERAL_TYPES = frozenset([Literal])</span>
+
+
+<span class="s2">if </span><span class="s1">compat.py310:</span>
+    <span class="s0"># why they took until py310 to put this in stdlib is beyond me,</span>
+    <span class="s0"># I've been wanting it since py27</span>
+    <span class="s2">from </span><span class="s1">types </span><span class="s2">import </span><span class="s1">NoneType </span><span class="s2">as </span><span class="s1">NoneType</span>
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s1">NoneType = type(</span><span class="s2">None</span><span class="s1">)  </span><span class="s0"># type: ignore</span>
+
+<span class="s1">NoneFwd = ForwardRef(</span><span class="s4">&quot;None&quot;</span><span class="s1">)</span>
+
+<span class="s1">typing_get_args = get_args</span>
+<span class="s1">typing_get_origin = get_origin</span>
+
+
+<span class="s1">_AnnotationScanType = Union[</span>
+    <span class="s1">Type[Any]</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, </span><span class="s1">ForwardRef</span><span class="s3">, </span><span class="s1">NewType</span><span class="s3">, </span><span class="s1">TypeAliasType</span><span class="s3">, </span><span class="s4">&quot;GenericProtocol[Any]&quot;</span>
+<span class="s1">]</span>
+
+
+<span class="s2">class </span><span class="s1">ArgsTypeProcotol(Protocol):</span>
+    <span class="s5">&quot;&quot;&quot;protocol for types that have ``__args__`` 
+ 
+    there's no public interface for this AFAIK 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__args__: Tuple[_AnnotationScanType</span><span class="s3">, </span><span class="s1">...]</span>
+
+
+<span class="s2">class </span><span class="s1">GenericProtocol(Protocol[_T]):</span>
+    <span class="s5">&quot;&quot;&quot;protocol for generic types. 
+ 
+    this since Python.typing _GenericAlias is private 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__args__: Tuple[_AnnotationScanType</span><span class="s3">, </span><span class="s1">...]</span>
+    <span class="s1">__origin__: Type[_T]</span>
+
+    <span class="s0"># Python's builtin _GenericAlias has this method, however builtins like</span>
+    <span class="s0"># list, dict, etc. do not, even though they have ``__origin__`` and</span>
+    <span class="s0"># ``__args__``</span>
+    <span class="s0">#</span>
+    <span class="s0"># def copy_with(self, params: Tuple[_AnnotationScanType, ...]) -&gt; Type[_T]:</span>
+    <span class="s0">#     ...</span>
+
+
+<span class="s0"># copied from TypeShed, required in order to implement</span>
+<span class="s0"># MutableMapping.update()</span>
+<span class="s2">class </span><span class="s1">SupportsKeysAndGetItem(Protocol[_KT</span><span class="s3">, </span><span class="s1">_VT_co]):</span>
+    <span class="s2">def </span><span class="s1">keys(self) -&gt; Iterable[_KT]: ...</span>
+
+    <span class="s2">def </span><span class="s1">__getitem__(self</span><span class="s3">, </span><span class="s1">__k: _KT) -&gt; _VT_co: ...</span>
+
+
+<span class="s0"># work around https://github.com/microsoft/pyright/issues/3025</span>
+<span class="s1">_LiteralStar = Literal[</span><span class="s4">&quot;*&quot;</span><span class="s1">]</span>
+
+
+<span class="s2">def </span><span class="s1">de_stringify_annotation(</span>
+    <span class="s1">cls: Type[Any]</span><span class="s3">,</span>
+    <span class="s1">annotation: _AnnotationScanType</span><span class="s3">,</span>
+    <span class="s1">originating_module: str</span><span class="s3">,</span>
+    <span class="s1">locals_: Mapping[str</span><span class="s3">, </span><span class="s1">Any]</span><span class="s3">,</span>
+    <span class="s1">*</span><span class="s3">,</span>
+    <span class="s1">str_cleanup_fn: Optional[Callable[[str</span><span class="s3">, </span><span class="s1">str]</span><span class="s3">, </span><span class="s1">str]] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">include_generic: bool = </span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">_already_seen: Optional[Set[Any]] = </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s1">) -&gt; Type[Any]:</span>
+    <span class="s5">&quot;&quot;&quot;Resolve annotations that may be string based into real objects. 
+ 
+    This is particularly important if a module defines &quot;from __future__ import 
+    annotations&quot;, as everything inside of __annotations__ is a string. We want 
+    to at least have generic containers like ``Mapped``, ``Union``, ``List``, 
+    etc. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s0"># looked at typing.get_type_hints(), looked at pydantic.  We need much</span>
+    <span class="s0"># less here, and we here try to not use any private typing internals</span>
+    <span class="s0"># or construct ForwardRef objects which is documented as something</span>
+    <span class="s0"># that should be avoided.</span>
+
+    <span class="s1">original_annotation = annotation</span>
+
+    <span class="s2">if </span><span class="s1">is_fwd_ref(annotation):</span>
+        <span class="s1">annotation = annotation.__forward_arg__</span>
+
+    <span class="s2">if </span><span class="s1">isinstance(annotation</span><span class="s3">, </span><span class="s1">str):</span>
+        <span class="s2">if </span><span class="s1">str_cleanup_fn:</span>
+            <span class="s1">annotation = str_cleanup_fn(annotation</span><span class="s3">, </span><span class="s1">originating_module)</span>
+
+        <span class="s1">annotation = eval_expression(</span>
+            <span class="s1">annotation</span><span class="s3">, </span><span class="s1">originating_module</span><span class="s3">, </span><span class="s1">locals_=locals_</span><span class="s3">, </span><span class="s1">in_class=cls</span>
+        <span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">(</span>
+        <span class="s1">include_generic</span>
+        <span class="s2">and </span><span class="s1">is_generic(annotation)</span>
+        <span class="s2">and not </span><span class="s1">is_literal(annotation)</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">_already_seen </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">_already_seen = set()</span>
+
+        <span class="s2">if </span><span class="s1">annotation </span><span class="s2">in </span><span class="s1">_already_seen:</span>
+            <span class="s0"># only occurs recursively.  outermost return type</span>
+            <span class="s0"># will always be Type.</span>
+            <span class="s0"># the element here will be either ForwardRef or</span>
+            <span class="s0"># Optional[ForwardRef]</span>
+            <span class="s2">return </span><span class="s1">original_annotation  </span><span class="s0"># type: ignore</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">_already_seen.add(annotation)</span>
+
+        <span class="s1">elements = tuple(</span>
+            <span class="s1">de_stringify_annotation(</span>
+                <span class="s1">cls</span><span class="s3">,</span>
+                <span class="s1">elem</span><span class="s3">,</span>
+                <span class="s1">originating_module</span><span class="s3">,</span>
+                <span class="s1">locals_</span><span class="s3">,</span>
+                <span class="s1">str_cleanup_fn=str_cleanup_fn</span><span class="s3">,</span>
+                <span class="s1">include_generic=include_generic</span><span class="s3">,</span>
+                <span class="s1">_already_seen=_already_seen</span><span class="s3">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">annotation.__args__</span>
+        <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">_copy_generic_annotation_with(annotation</span><span class="s3">, </span><span class="s1">elements)</span>
+
+    <span class="s2">return </span><span class="s1">annotation  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s2">def </span><span class="s1">fixup_container_fwd_refs(</span>
+    <span class="s1">type_: _AnnotationScanType</span><span class="s3">,</span>
+<span class="s1">) -&gt; _AnnotationScanType:</span>
+    <span class="s5">&quot;&quot;&quot;Correct dict['x', 'y'] into dict[ForwardRef('x'), ForwardRef('y')] 
+    and similar for list, set 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s1">(</span>
+        <span class="s1">is_generic(type_)</span>
+        <span class="s2">and </span><span class="s1">typing_get_origin(type_)</span>
+        <span class="s2">in </span><span class="s1">(</span>
+            <span class="s1">dict</span><span class="s3">,</span>
+            <span class="s1">set</span><span class="s3">,</span>
+            <span class="s1">list</span><span class="s3">,</span>
+            <span class="s1">collections_abc.MutableSet</span><span class="s3">,</span>
+            <span class="s1">collections_abc.MutableMapping</span><span class="s3">,</span>
+            <span class="s1">collections_abc.MutableSequence</span><span class="s3">,</span>
+            <span class="s1">collections_abc.Mapping</span><span class="s3">,</span>
+            <span class="s1">collections_abc.Sequence</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s0"># fight, kick and scream to struggle to tell the difference between</span>
+        <span class="s0"># dict[] and typing.Dict[] which DO NOT compare the same and DO NOT</span>
+        <span class="s0"># behave the same yet there is NO WAY to distinguish between which type</span>
+        <span class="s0"># it is using public attributes</span>
+        <span class="s2">and not </span><span class="s1">re.match(</span>
+            <span class="s4">&quot;typing.(?:Dict|List|Set|.*Mapping|.*Sequence|.*Set)&quot;</span><span class="s3">, </span><span class="s1">repr(type_)</span>
+        <span class="s1">)</span>
+    <span class="s1">):</span>
+        <span class="s0"># compat with py3.10 and earlier</span>
+        <span class="s2">return </span><span class="s1">typing_get_origin(type_).__class_getitem__(  </span><span class="s0"># type: ignore</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">[</span>
+                    <span class="s1">ForwardRef(elem) </span><span class="s2">if </span><span class="s1">isinstance(elem</span><span class="s3">, </span><span class="s1">str) </span><span class="s2">else </span><span class="s1">elem</span>
+                    <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">typing_get_args(type_)</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">type_</span>
+
+
+<span class="s2">def </span><span class="s1">_copy_generic_annotation_with(</span>
+    <span class="s1">annotation: GenericProtocol[_T]</span><span class="s3">, </span><span class="s1">elements: Tuple[_AnnotationScanType</span><span class="s3">, </span><span class="s1">...]</span>
+<span class="s1">) -&gt; Type[_T]:</span>
+    <span class="s2">if </span><span class="s1">hasattr(annotation</span><span class="s3">, </span><span class="s4">&quot;copy_with&quot;</span><span class="s1">):</span>
+        <span class="s0"># List, Dict, etc. real generics</span>
+        <span class="s2">return </span><span class="s1">annotation.copy_with(elements)  </span><span class="s0"># type: ignore</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s0"># Python builtins list, dict, etc.</span>
+        <span class="s2">return </span><span class="s1">annotation.__origin__[elements]  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s2">def </span><span class="s1">eval_expression(</span>
+    <span class="s1">expression: str</span><span class="s3">,</span>
+    <span class="s1">module_name: str</span><span class="s3">,</span>
+    <span class="s1">*</span><span class="s3">,</span>
+    <span class="s1">locals_: Optional[Mapping[str</span><span class="s3">, </span><span class="s1">Any]] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">in_class: Optional[Type[Any]] = </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s1">) -&gt; Any:</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">base_globals: Dict[str</span><span class="s3">, </span><span class="s1">Any] = sys.modules[module_name].__dict__</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">ke:</span>
+        <span class="s2">raise </span><span class="s1">NameError(</span>
+            <span class="s4">f&quot;Module </span><span class="s6">{</span><span class="s1">module_name</span><span class="s6">} </span><span class="s4">isn't present in sys.modules; can't &quot;</span>
+            <span class="s4">f&quot;evaluate expression </span><span class="s6">{</span><span class="s1">expression</span><span class="s6">}</span><span class="s4">&quot;</span>
+        <span class="s1">) </span><span class="s2">from </span><span class="s1">ke</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">in_class </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">cls_namespace = dict(in_class.__dict__)</span>
+            <span class="s1">cls_namespace.setdefault(in_class.__name__</span><span class="s3">, </span><span class="s1">in_class)</span>
+
+            <span class="s0"># see #10899.  We want the locals/globals to take precedence</span>
+            <span class="s0"># over the class namespace in this context, even though this</span>
+            <span class="s0"># is not the usual way variables would resolve.</span>
+            <span class="s1">cls_namespace.update(base_globals)</span>
+
+            <span class="s1">annotation = eval(expression</span><span class="s3">, </span><span class="s1">cls_namespace</span><span class="s3">, </span><span class="s1">locals_)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">annotation = eval(expression</span><span class="s3">, </span><span class="s1">base_globals</span><span class="s3">, </span><span class="s1">locals_)</span>
+    <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">err:</span>
+        <span class="s2">raise </span><span class="s1">NameError(</span>
+            <span class="s4">f&quot;Could not de-stringify annotation </span><span class="s6">{</span><span class="s1">expression</span><span class="s6">!r}</span><span class="s4">&quot;</span>
+        <span class="s1">) </span><span class="s2">from </span><span class="s1">err</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">annotation</span>
+
+
+<span class="s2">def </span><span class="s1">eval_name_only(</span>
+    <span class="s1">name: str</span><span class="s3">,</span>
+    <span class="s1">module_name: str</span><span class="s3">,</span>
+    <span class="s1">*</span><span class="s3">,</span>
+    <span class="s1">locals_: Optional[Mapping[str</span><span class="s3">, </span><span class="s1">Any]] = </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s1">) -&gt; Any:</span>
+    <span class="s2">if </span><span class="s4">&quot;.&quot; </span><span class="s2">in </span><span class="s1">name:</span>
+        <span class="s2">return </span><span class="s1">eval_expression(name</span><span class="s3">, </span><span class="s1">module_name</span><span class="s3">, </span><span class="s1">locals_=locals_)</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">base_globals: Dict[str</span><span class="s3">, </span><span class="s1">Any] = sys.modules[module_name].__dict__</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">ke:</span>
+        <span class="s2">raise </span><span class="s1">NameError(</span>
+            <span class="s4">f&quot;Module </span><span class="s6">{</span><span class="s1">module_name</span><span class="s6">} </span><span class="s4">isn't present in sys.modules; can't &quot;</span>
+            <span class="s4">f&quot;resolve name </span><span class="s6">{</span><span class="s1">name</span><span class="s6">}</span><span class="s4">&quot;</span>
+        <span class="s1">) </span><span class="s2">from </span><span class="s1">ke</span>
+
+    <span class="s0"># name only, just look in globals.  eval() works perfectly fine here,</span>
+    <span class="s0"># however we are seeking to have this be faster, as this occurs for</span>
+    <span class="s0"># every Mapper[] keyword, etc. depending on configuration</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">base_globals[name]</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">ke:</span>
+        <span class="s0"># check in builtins as well to handle `list`, `set` or `dict`, etc.</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">builtins.__dict__[name]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">pass</span>
+
+        <span class="s2">raise </span><span class="s1">NameError(</span>
+            <span class="s4">f&quot;Could not locate name </span><span class="s6">{</span><span class="s1">name</span><span class="s6">} </span><span class="s4">in module </span><span class="s6">{</span><span class="s1">module_name</span><span class="s6">}</span><span class="s4">&quot;</span>
+        <span class="s1">) </span><span class="s2">from </span><span class="s1">ke</span>
+
+
+<span class="s2">def </span><span class="s1">resolve_name_to_real_class_name(name: str</span><span class="s3">, </span><span class="s1">module_name: str) -&gt; str:</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">obj = eval_name_only(name</span><span class="s3">, </span><span class="s1">module_name)</span>
+    <span class="s2">except </span><span class="s1">NameError:</span>
+        <span class="s2">return </span><span class="s1">name</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">getattr(obj</span><span class="s3">, </span><span class="s4">&quot;__name__&quot;</span><span class="s3">, </span><span class="s1">name)</span>
+
+
+<span class="s2">def </span><span class="s1">de_stringify_union_elements(</span>
+    <span class="s1">cls: Type[Any]</span><span class="s3">,</span>
+    <span class="s1">annotation: ArgsTypeProcotol</span><span class="s3">,</span>
+    <span class="s1">originating_module: str</span><span class="s3">,</span>
+    <span class="s1">locals_: Mapping[str</span><span class="s3">, </span><span class="s1">Any]</span><span class="s3">,</span>
+    <span class="s1">*</span><span class="s3">,</span>
+    <span class="s1">str_cleanup_fn: Optional[Callable[[str</span><span class="s3">, </span><span class="s1">str]</span><span class="s3">, </span><span class="s1">str]] = </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s1">) -&gt; Type[Any]:</span>
+    <span class="s2">return </span><span class="s1">make_union_type(</span>
+        <span class="s1">*[</span>
+            <span class="s1">de_stringify_annotation(</span>
+                <span class="s1">cls</span><span class="s3">,</span>
+                <span class="s1">anno</span><span class="s3">,</span>
+                <span class="s1">originating_module</span><span class="s3">,</span>
+                <span class="s1">{}</span><span class="s3">,</span>
+                <span class="s1">str_cleanup_fn=str_cleanup_fn</span><span class="s3">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">anno </span><span class="s2">in </span><span class="s1">annotation.__args__</span>
+        <span class="s1">]</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_pep593(type_: Optional[_AnnotationScanType]) -&gt; bool:</span>
+    <span class="s2">return </span><span class="s1">type_ </span><span class="s2">is not None and </span><span class="s1">typing_get_origin(type_) </span><span class="s2">is </span><span class="s1">Annotated</span>
+
+
+<span class="s2">def </span><span class="s1">is_non_string_iterable(obj: Any) -&gt; TypeGuard[Iterable[Any]]:</span>
+    <span class="s2">return </span><span class="s1">isinstance(obj</span><span class="s3">, </span><span class="s1">collections_abc.Iterable) </span><span class="s2">and not </span><span class="s1">isinstance(</span>
+        <span class="s1">obj</span><span class="s3">, </span><span class="s1">(str</span><span class="s3">, </span><span class="s1">bytes)</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_literal(type_: _AnnotationScanType) -&gt; bool:</span>
+    <span class="s2">return </span><span class="s1">get_origin(type_) </span><span class="s2">in </span><span class="s1">_LITERAL_TYPES</span>
+
+
+<span class="s2">def </span><span class="s1">is_newtype(type_: Optional[_AnnotationScanType]) -&gt; TypeGuard[NewType]:</span>
+    <span class="s2">return </span><span class="s1">hasattr(type_</span><span class="s3">, </span><span class="s4">&quot;__supertype__&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># doesn't work in 3.8, 3.7 as it passes a closure, not an</span>
+    <span class="s0"># object instance</span>
+    <span class="s0"># return isinstance(type_, NewType)</span>
+
+
+<span class="s2">def </span><span class="s1">is_generic(type_: _AnnotationScanType) -&gt; TypeGuard[GenericProtocol[Any]]:</span>
+    <span class="s2">return </span><span class="s1">hasattr(type_</span><span class="s3">, </span><span class="s4">&quot;__args__&quot;</span><span class="s1">) </span><span class="s2">and </span><span class="s1">hasattr(type_</span><span class="s3">, </span><span class="s4">&quot;__origin__&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_pep695(type_: _AnnotationScanType) -&gt; TypeGuard[TypeAliasType]:</span>
+    <span class="s2">return </span><span class="s1">isinstance(type_</span><span class="s3">, </span><span class="s1">TypeAliasType)</span>
+
+
+<span class="s2">def </span><span class="s1">flatten_newtype(type_: NewType) -&gt; Type[Any]:</span>
+    <span class="s1">super_type = type_.__supertype__</span>
+    <span class="s2">while </span><span class="s1">is_newtype(super_type):</span>
+        <span class="s1">super_type = super_type.__supertype__</span>
+    <span class="s2">return </span><span class="s1">super_type  </span><span class="s0"># type: ignore[return-value]</span>
+
+
+<span class="s2">def </span><span class="s1">is_fwd_ref(</span>
+    <span class="s1">type_: _AnnotationScanType</span><span class="s3">, </span><span class="s1">check_generic: bool = </span><span class="s2">False</span>
+<span class="s1">) -&gt; TypeGuard[ForwardRef]:</span>
+    <span class="s2">if </span><span class="s1">isinstance(type_</span><span class="s3">, </span><span class="s1">ForwardRef):</span>
+        <span class="s2">return True</span>
+    <span class="s2">elif </span><span class="s1">check_generic </span><span class="s2">and </span><span class="s1">is_generic(type_):</span>
+        <span class="s2">return </span><span class="s1">any(is_fwd_ref(arg</span><span class="s3">, </span><span class="s2">True</span><span class="s1">) </span><span class="s2">for </span><span class="s1">arg </span><span class="s2">in </span><span class="s1">type_.__args__)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return False</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">de_optionalize_union_types(type_: str) -&gt; str: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">de_optionalize_union_types(type_: Type[Any]) -&gt; Type[Any]: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">de_optionalize_union_types(</span>
+    <span class="s1">type_: _AnnotationScanType</span><span class="s3">,</span>
+<span class="s1">) -&gt; _AnnotationScanType: ...</span>
+
+
+<span class="s2">def </span><span class="s1">de_optionalize_union_types(</span>
+    <span class="s1">type_: _AnnotationScanType</span><span class="s3">,</span>
+<span class="s1">) -&gt; _AnnotationScanType:</span>
+    <span class="s5">&quot;&quot;&quot;Given a type, filter out ``Union`` types that include ``NoneType`` 
+    to not include the ``NoneType``. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s1">is_fwd_ref(type_):</span>
+        <span class="s2">return </span><span class="s1">de_optionalize_fwd_ref_union_types(type_)</span>
+
+    <span class="s2">elif </span><span class="s1">is_optional(type_):</span>
+        <span class="s1">typ = set(type_.__args__)</span>
+
+        <span class="s1">typ.discard(NoneType)</span>
+        <span class="s1">typ.discard(NoneFwd)</span>
+
+        <span class="s2">return </span><span class="s1">make_union_type(*typ)</span>
+
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">type_</span>
+
+
+<span class="s2">def </span><span class="s1">de_optionalize_fwd_ref_union_types(</span>
+    <span class="s1">type_: ForwardRef</span><span class="s3">,</span>
+<span class="s1">) -&gt; _AnnotationScanType:</span>
+    <span class="s5">&quot;&quot;&quot;return the non-optional type for Optional[], Union[None, ...], x|None, 
+    etc. without de-stringifying forward refs. 
+ 
+    unfortunately this seems to require lots of hardcoded heuristics 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">annotation = type_.__forward_arg__</span>
+
+    <span class="s1">mm = re.match(</span><span class="s4">r&quot;^(.+?)\[(.+)\]$&quot;</span><span class="s3">, </span><span class="s1">annotation)</span>
+    <span class="s2">if </span><span class="s1">mm:</span>
+        <span class="s2">if </span><span class="s1">mm.group(</span><span class="s7">1</span><span class="s1">) == </span><span class="s4">&quot;Optional&quot;</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">ForwardRef(mm.group(</span><span class="s7">2</span><span class="s1">))</span>
+        <span class="s2">elif </span><span class="s1">mm.group(</span><span class="s7">1</span><span class="s1">) == </span><span class="s4">&quot;Union&quot;</span><span class="s1">:</span>
+            <span class="s1">elements = re.split(</span><span class="s4">r&quot;,\s*&quot;</span><span class="s3">, </span><span class="s1">mm.group(</span><span class="s7">2</span><span class="s1">))</span>
+            <span class="s2">return </span><span class="s1">make_union_type(</span>
+                <span class="s1">*[ForwardRef(elem) </span><span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">elements </span><span class="s2">if </span><span class="s1">elem != </span><span class="s4">&quot;None&quot;</span><span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">type_</span>
+
+    <span class="s1">pipe_tokens = re.split(</span><span class="s4">r&quot;\s*\|\s*&quot;</span><span class="s3">, </span><span class="s1">annotation)</span>
+    <span class="s2">if </span><span class="s4">&quot;None&quot; </span><span class="s2">in </span><span class="s1">pipe_tokens:</span>
+        <span class="s2">return </span><span class="s1">ForwardRef(</span><span class="s4">&quot;|&quot;</span><span class="s1">.join(p </span><span class="s2">for </span><span class="s1">p </span><span class="s2">in </span><span class="s1">pipe_tokens </span><span class="s2">if </span><span class="s1">p != </span><span class="s4">&quot;None&quot;</span><span class="s1">))</span>
+
+    <span class="s2">return </span><span class="s1">type_</span>
+
+
+<span class="s2">def </span><span class="s1">make_union_type(*types: _AnnotationScanType) -&gt; Type[Any]:</span>
+    <span class="s5">&quot;&quot;&quot;Make a Union type. 
+ 
+    This is needed by :func:`.de_optionalize_union_types` which removes 
+    ``NoneType`` from a ``Union``. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">cast(Any</span><span class="s3">, </span><span class="s1">Union).__getitem__(types)  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s2">def </span><span class="s1">expand_unions(</span>
+    <span class="s1">type_: Type[Any]</span><span class="s3">, </span><span class="s1">include_union: bool = </span><span class="s2">False</span><span class="s3">, </span><span class="s1">discard_none: bool = </span><span class="s2">False</span>
+<span class="s1">) -&gt; Tuple[Type[Any]</span><span class="s3">, </span><span class="s1">...]:</span>
+    <span class="s5">&quot;&quot;&quot;Return a type as a tuple of individual types, expanding for 
+    ``Union`` types.&quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s1">is_union(type_):</span>
+        <span class="s1">typ = set(type_.__args__)</span>
+
+        <span class="s2">if </span><span class="s1">discard_none:</span>
+            <span class="s1">typ.discard(NoneType)</span>
+
+        <span class="s2">if </span><span class="s1">include_union:</span>
+            <span class="s2">return </span><span class="s1">(type_</span><span class="s3">,</span><span class="s1">) + tuple(typ)  </span><span class="s0"># type: ignore</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">tuple(typ)  </span><span class="s0"># type: ignore</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">(type_</span><span class="s3">,</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_optional(type_: Any) -&gt; TypeGuard[ArgsTypeProcotol]:</span>
+    <span class="s2">return </span><span class="s1">is_origin_of(</span>
+        <span class="s1">type_</span><span class="s3">,</span>
+        <span class="s4">&quot;Optional&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;Union&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;UnionType&quot;</span><span class="s3">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_optional_union(type_: Any) -&gt; bool:</span>
+    <span class="s2">return </span><span class="s1">is_optional(type_) </span><span class="s2">and </span><span class="s1">NoneType </span><span class="s2">in </span><span class="s1">typing_get_args(type_)</span>
+
+
+<span class="s2">def </span><span class="s1">is_union(type_: Any) -&gt; TypeGuard[ArgsTypeProcotol]:</span>
+    <span class="s2">return </span><span class="s1">is_origin_of(type_</span><span class="s3">, </span><span class="s4">&quot;Union&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_origin_of_cls(</span>
+    <span class="s1">type_: Any</span><span class="s3">, </span><span class="s1">class_obj: Union[Tuple[Type[Any]</span><span class="s3">, </span><span class="s1">...]</span><span class="s3">, </span><span class="s1">Type[Any]]</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s5">&quot;&quot;&quot;return True if the given type has an __origin__ that shares a base 
+    with the given class&quot;&quot;&quot;</span>
+
+    <span class="s1">origin = typing_get_origin(type_)</span>
+    <span class="s2">if </span><span class="s1">origin </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">return </span><span class="s1">isinstance(origin</span><span class="s3">, </span><span class="s1">type) </span><span class="s2">and </span><span class="s1">issubclass(origin</span><span class="s3">, </span><span class="s1">class_obj)</span>
+
+
+<span class="s2">def </span><span class="s1">is_origin_of(</span>
+    <span class="s1">type_: Any</span><span class="s3">, </span><span class="s1">*names: str</span><span class="s3">, </span><span class="s1">module: Optional[str] = </span><span class="s2">None</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s5">&quot;&quot;&quot;return True if the given type has an __origin__ with the given name 
+    and optional module.&quot;&quot;&quot;</span>
+
+    <span class="s1">origin = typing_get_origin(type_)</span>
+    <span class="s2">if </span><span class="s1">origin </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">return </span><span class="s1">_get_type_name(origin) </span><span class="s2">in </span><span class="s1">names </span><span class="s2">and </span><span class="s1">(</span>
+        <span class="s1">module </span><span class="s2">is None or </span><span class="s1">origin.__module__.startswith(module)</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_get_type_name(type_: Type[Any]) -&gt; str:</span>
+    <span class="s2">if </span><span class="s1">compat.py310:</span>
+        <span class="s2">return </span><span class="s1">type_.__name__</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">typ_name = getattr(type_</span><span class="s3">, </span><span class="s4">&quot;__name__&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">typ_name </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">typ_name = getattr(type_</span><span class="s3">, </span><span class="s4">&quot;_name&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">typ_name  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s2">class </span><span class="s1">DescriptorProto(Protocol):</span>
+    <span class="s2">def </span><span class="s1">__get__(self</span><span class="s3">, </span><span class="s1">instance: object</span><span class="s3">, </span><span class="s1">owner: Any) -&gt; Any: ...</span>
+
+    <span class="s2">def </span><span class="s1">__set__(self</span><span class="s3">, </span><span class="s1">instance: Any</span><span class="s3">, </span><span class="s1">value: Any) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+    <span class="s2">def </span><span class="s1">__delete__(self</span><span class="s3">, </span><span class="s1">instance: Any) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+
+<span class="s1">_DESC = TypeVar(</span><span class="s4">&quot;_DESC&quot;</span><span class="s3">, </span><span class="s1">bound=DescriptorProto)</span>
+
+
+<span class="s2">class </span><span class="s1">DescriptorReference(Generic[_DESC]):</span>
+    <span class="s5">&quot;&quot;&quot;a descriptor that refers to a descriptor. 
+ 
+    used for cases where we need to have an instance variable referring to an 
+    object that is itself a descriptor, which typically confuses typing tools 
+    as they don't know when they should use ``__get__`` or not when referring 
+    to the descriptor assignment as an instance variable. See 
+    sqlalchemy.orm.interfaces.PropComparator.prop 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s2">def </span><span class="s1">__get__(self</span><span class="s3">, </span><span class="s1">instance: object</span><span class="s3">, </span><span class="s1">owner: Any) -&gt; _DESC: ...</span>
+
+        <span class="s2">def </span><span class="s1">__set__(self</span><span class="s3">, </span><span class="s1">instance: Any</span><span class="s3">, </span><span class="s1">value: _DESC) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+        <span class="s2">def </span><span class="s1">__delete__(self</span><span class="s3">, </span><span class="s1">instance: Any) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+
+<span class="s1">_DESC_co = TypeVar(</span><span class="s4">&quot;_DESC_co&quot;</span><span class="s3">, </span><span class="s1">bound=DescriptorProto</span><span class="s3">, </span><span class="s1">covariant=</span><span class="s2">True</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">RODescriptorReference(Generic[_DESC_co]):</span>
+    <span class="s5">&quot;&quot;&quot;a descriptor that refers to a descriptor. 
+ 
+    same as :class:`.DescriptorReference` but is read-only, so that subclasses 
+    can define a subtype as the generically contained element 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s2">def </span><span class="s1">__get__(self</span><span class="s3">, </span><span class="s1">instance: object</span><span class="s3">, </span><span class="s1">owner: Any) -&gt; _DESC_co: ...</span>
+
+        <span class="s2">def </span><span class="s1">__set__(self</span><span class="s3">, </span><span class="s1">instance: Any</span><span class="s3">, </span><span class="s1">value: Any) -&gt; NoReturn: ...</span>
+
+        <span class="s2">def </span><span class="s1">__delete__(self</span><span class="s3">, </span><span class="s1">instance: Any) -&gt; NoReturn: ...</span>
+
+
+<span class="s1">_FN = TypeVar(</span><span class="s4">&quot;_FN&quot;</span><span class="s3">, </span><span class="s1">bound=Optional[Callable[...</span><span class="s3">, </span><span class="s1">Any]])</span>
+
+
+<span class="s2">class </span><span class="s1">CallableReference(Generic[_FN]):</span>
+    <span class="s5">&quot;&quot;&quot;a descriptor that refers to a callable. 
+ 
+    works around mypy's limitation of not allowing callables assigned 
+    as instance variables 
+ 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s2">def </span><span class="s1">__get__(self</span><span class="s3">, </span><span class="s1">instance: object</span><span class="s3">, </span><span class="s1">owner: Any) -&gt; _FN: ...</span>
+
+        <span class="s2">def </span><span class="s1">__set__(self</span><span class="s3">, </span><span class="s1">instance: Any</span><span class="s3">, </span><span class="s1">value: _FN) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+        <span class="s2">def </span><span class="s1">__delete__(self</span><span class="s3">, </span><span class="s1">instance: Any) -&gt; </span><span class="s2">None</span><span class="s1">: ...</span>
+
+
+<span class="s0"># $def ro_descriptor_reference(fn: Callable[])</span>
+</pre>
+</body>
+</html>

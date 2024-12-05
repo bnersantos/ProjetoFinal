@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TESTE</title>
+    <link rel="stylesheet" href="/static/base2.css">
+</head>
+<body>
+<nav>
+    {% block conteudoNav %}
+
+    {% endblock %}
+</nav>
+    <header class="header-banner">
+      {% block conteudoHeader %}
+        <!-- Conteúdo do cabeçalho pode ser dinâmico -->
+      {% endblock %}
+    </header>
+
+    <main>
+        {% block conteudo %}
+        <!-- Conteúdo principal será inserido aqui -->
+        {% endblock %}
+    </main>
+</body>
+</html>

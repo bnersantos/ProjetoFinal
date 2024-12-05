@@ -1,0 +1,59 @@
+<html>
+<head>
+<title>table.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc7832;}
+.s3 { color: #5d69bb;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+table.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+
+<span class="s0">import </span><span class="s1">sqlalchemy </span><span class="s0">as </span><span class="s1">sa</span>
+<span class="s0">import </span><span class="s1">sqlalchemy.sql.schema </span><span class="s0">as </span><span class="s1">sa_sql_schema</span>
+
+
+<span class="s0">class </span><span class="s1">_Table(sa.Table):</span>
+    <span class="s1">@t.overload</span>
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">name: str</span><span class="s2">,</span>
+        <span class="s1">*args: sa_sql_schema.SchemaItem</span><span class="s2">,</span>
+        <span class="s1">bind_key: str | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">**kwargs: t.Any</span><span class="s2">,</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">...</span>
+
+    <span class="s1">@t.overload</span>
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">name: str</span><span class="s2">,</span>
+        <span class="s1">metadata: sa.MetaData</span><span class="s2">,</span>
+        <span class="s1">*args: sa_sql_schema.SchemaItem</span><span class="s2">,</span>
+        <span class="s1">**kwargs: t.Any</span><span class="s2">,</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">...</span>
+
+    <span class="s1">@t.overload</span>
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">name: str</span><span class="s2">, </span><span class="s1">*args: sa_sql_schema.SchemaItem</span><span class="s2">, </span><span class="s1">**kwargs: t.Any</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">...</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">name: str</span><span class="s2">, </span><span class="s1">*args: sa_sql_schema.SchemaItem</span><span class="s2">, </span><span class="s1">**kwargs: t.Any</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">super().__init__(name</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs)  </span><span class="s3"># type: ignore[arg-type]</span>
+</pre>
+</body>
+</html>

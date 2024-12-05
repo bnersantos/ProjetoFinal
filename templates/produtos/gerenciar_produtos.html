@@ -1,0 +1,22 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+<h1>Gerenciar Produtos</h1>
+
+<div class="card-container2">
+    <div class="card2">
+        <h3>Criar Produto</h3>
+        <p>Adicione um novo produto ao sistema.</p>
+        <a href="{{ url_for('criar_produto') }}" class="btn">Criar Produto</a>
+    </div>
+
+    <div class="card2">
+        <h3>Listar Produtos</h3>
+        <p>Visualize todos os produtos cadastrados.</p>
+        <a href="{{ url_for('listar_produtos') }}" class="btn">Listar Produtos</a>
+    </div>
+</div>
+
+<a href="{{ url_for('gerenciamento') }}" class="btn voltar2">Voltar</a>
+
+{% endblock %}

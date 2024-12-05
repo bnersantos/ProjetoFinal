@@ -1,0 +1,526 @@
+<html>
+<head>
+<title>sql.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+sql.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/fixtures/sql.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">itertools</span>
+<span class="s2">import </span><span class="s1">random</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">sys</span>
+
+<span class="s2">import </span><span class="s1">sqlalchemy </span><span class="s2">as </span><span class="s1">sa</span>
+<span class="s2">from </span><span class="s1">.base </span><span class="s2">import </span><span class="s1">TestBase</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">config</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">mock</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">eq_</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">ne_</span>
+<span class="s2">from </span><span class="s1">..util </span><span class="s2">import </span><span class="s1">adict</span>
+<span class="s2">from </span><span class="s1">..util </span><span class="s2">import </span><span class="s1">drop_all_tables_from_metadata</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">event</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">...schema </span><span class="s2">import </span><span class="s1">sort_tables_and_constraints</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">visitors</span>
+<span class="s2">from </span><span class="s1">...sql.elements </span><span class="s2">import </span><span class="s1">ClauseElement</span>
+
+
+<span class="s2">class </span><span class="s1">TablesTest(TestBase):</span>
+    <span class="s0"># 'once', None</span>
+    <span class="s1">run_setup_bind = </span><span class="s3">&quot;once&quot;</span>
+
+    <span class="s0"># 'once', 'each', None</span>
+    <span class="s1">run_define_tables = </span><span class="s3">&quot;once&quot;</span>
+
+    <span class="s0"># 'once', 'each', None</span>
+    <span class="s1">run_create_tables = </span><span class="s3">&quot;once&quot;</span>
+
+    <span class="s0"># 'once', 'each', None</span>
+    <span class="s1">run_inserts = </span><span class="s3">&quot;each&quot;</span>
+
+    <span class="s0"># 'each', None</span>
+    <span class="s1">run_deletes = </span><span class="s3">&quot;each&quot;</span>
+
+    <span class="s0"># 'once', None</span>
+    <span class="s1">run_dispose_bind = </span><span class="s2">None</span>
+
+    <span class="s1">bind = </span><span class="s2">None</span>
+    <span class="s1">_tables_metadata = </span><span class="s2">None</span>
+    <span class="s1">tables = </span><span class="s2">None</span>
+    <span class="s1">other = </span><span class="s2">None</span>
+    <span class="s1">sequences = </span><span class="s2">None</span>
+
+    <span class="s1">@config.fixture(autouse=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">scope=</span><span class="s3">&quot;class&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">_setup_tables_test_class(self):</span>
+        <span class="s1">cls = self.__class__</span>
+        <span class="s1">cls._init_class()</span>
+
+        <span class="s1">cls._setup_once_tables()</span>
+
+        <span class="s1">cls._setup_once_inserts()</span>
+
+        <span class="s2">yield</span>
+
+        <span class="s1">cls._teardown_once_metadata_bind()</span>
+
+    <span class="s1">@config.fixture(autouse=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">scope=</span><span class="s3">&quot;function&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">_setup_tables_test_instance(self):</span>
+        <span class="s1">self._setup_each_tables()</span>
+        <span class="s1">self._setup_each_inserts()</span>
+
+        <span class="s2">yield</span>
+
+        <span class="s1">self._teardown_each_tables()</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">tables_test_metadata(self):</span>
+        <span class="s2">return </span><span class="s1">self._tables_metadata</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_init_class(cls):</span>
+        <span class="s2">if </span><span class="s1">cls.run_define_tables == </span><span class="s3">&quot;each&quot;</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">cls.run_create_tables == </span><span class="s3">&quot;once&quot;</span><span class="s1">:</span>
+                <span class="s1">cls.run_create_tables = </span><span class="s3">&quot;each&quot;</span>
+            <span class="s2">assert </span><span class="s1">cls.run_inserts </span><span class="s2">in </span><span class="s1">(</span><span class="s3">&quot;each&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+
+        <span class="s1">cls.other = adict()</span>
+        <span class="s1">cls.tables = adict()</span>
+        <span class="s1">cls.sequences = adict()</span>
+
+        <span class="s1">cls.bind = cls.setup_bind()</span>
+        <span class="s1">cls._tables_metadata = sa.MetaData()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_setup_once_inserts(cls):</span>
+        <span class="s2">if </span><span class="s1">cls.run_inserts == </span><span class="s3">&quot;once&quot;</span><span class="s1">:</span>
+            <span class="s1">cls._load_fixtures()</span>
+            <span class="s2">with </span><span class="s1">cls.bind.begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+                <span class="s1">cls.insert_data(conn)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_setup_once_tables(cls):</span>
+        <span class="s2">if </span><span class="s1">cls.run_define_tables == </span><span class="s3">&quot;once&quot;</span><span class="s1">:</span>
+            <span class="s1">cls.define_tables(cls._tables_metadata)</span>
+            <span class="s2">if </span><span class="s1">cls.run_create_tables == </span><span class="s3">&quot;once&quot;</span><span class="s1">:</span>
+                <span class="s1">cls._tables_metadata.create_all(cls.bind)</span>
+            <span class="s1">cls.tables.update(cls._tables_metadata.tables)</span>
+            <span class="s1">cls.sequences.update(cls._tables_metadata._sequences)</span>
+
+    <span class="s2">def </span><span class="s1">_setup_each_tables(self):</span>
+        <span class="s2">if </span><span class="s1">self.run_define_tables == </span><span class="s3">&quot;each&quot;</span><span class="s1">:</span>
+            <span class="s1">self.define_tables(self._tables_metadata)</span>
+            <span class="s2">if </span><span class="s1">self.run_create_tables == </span><span class="s3">&quot;each&quot;</span><span class="s1">:</span>
+                <span class="s1">self._tables_metadata.create_all(self.bind)</span>
+            <span class="s1">self.tables.update(self._tables_metadata.tables)</span>
+            <span class="s1">self.sequences.update(self._tables_metadata._sequences)</span>
+        <span class="s2">elif </span><span class="s1">self.run_create_tables == </span><span class="s3">&quot;each&quot;</span><span class="s1">:</span>
+            <span class="s1">self._tables_metadata.create_all(self.bind)</span>
+
+    <span class="s2">def </span><span class="s1">_setup_each_inserts(self):</span>
+        <span class="s2">if </span><span class="s1">self.run_inserts == </span><span class="s3">&quot;each&quot;</span><span class="s1">:</span>
+            <span class="s1">self._load_fixtures()</span>
+            <span class="s2">with </span><span class="s1">self.bind.begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+                <span class="s1">self.insert_data(conn)</span>
+
+    <span class="s2">def </span><span class="s1">_teardown_each_tables(self):</span>
+        <span class="s2">if </span><span class="s1">self.run_define_tables == </span><span class="s3">&quot;each&quot;</span><span class="s1">:</span>
+            <span class="s1">self.tables.clear()</span>
+            <span class="s2">if </span><span class="s1">self.run_create_tables == </span><span class="s3">&quot;each&quot;</span><span class="s1">:</span>
+                <span class="s1">drop_all_tables_from_metadata(self._tables_metadata</span><span class="s4">, </span><span class="s1">self.bind)</span>
+            <span class="s1">self._tables_metadata.clear()</span>
+        <span class="s2">elif </span><span class="s1">self.run_create_tables == </span><span class="s3">&quot;each&quot;</span><span class="s1">:</span>
+            <span class="s1">drop_all_tables_from_metadata(self._tables_metadata</span><span class="s4">, </span><span class="s1">self.bind)</span>
+
+        <span class="s1">savepoints = getattr(config.requirements</span><span class="s4">, </span><span class="s3">&quot;savepoints&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">savepoints:</span>
+            <span class="s1">savepoints = savepoints.enabled</span>
+
+        <span class="s0"># no need to run deletes if tables are recreated on setup</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">self.run_define_tables != </span><span class="s3">&quot;each&quot;</span>
+            <span class="s2">and </span><span class="s1">self.run_create_tables != </span><span class="s3">&quot;each&quot;</span>
+            <span class="s2">and </span><span class="s1">self.run_deletes == </span><span class="s3">&quot;each&quot;</span>
+        <span class="s1">):</span>
+            <span class="s2">with </span><span class="s1">self.bind.begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+                <span class="s2">for </span><span class="s1">table </span><span class="s2">in </span><span class="s1">reversed(</span>
+                    <span class="s1">[</span>
+                        <span class="s1">t</span>
+                        <span class="s2">for </span><span class="s1">(t</span><span class="s4">, </span><span class="s1">fks) </span><span class="s2">in </span><span class="s1">sort_tables_and_constraints(</span>
+                            <span class="s1">self._tables_metadata.tables.values()</span>
+                        <span class="s1">)</span>
+                        <span class="s2">if </span><span class="s1">t </span><span class="s2">is not None</span>
+                    <span class="s1">]</span>
+                <span class="s1">):</span>
+                    <span class="s2">try</span><span class="s1">:</span>
+                        <span class="s2">if </span><span class="s1">savepoints:</span>
+                            <span class="s2">with </span><span class="s1">conn.begin_nested():</span>
+                                <span class="s1">conn.execute(table.delete())</span>
+                        <span class="s2">else</span><span class="s1">:</span>
+                            <span class="s1">conn.execute(table.delete())</span>
+                    <span class="s2">except </span><span class="s1">sa.exc.DBAPIError </span><span class="s2">as </span><span class="s1">ex:</span>
+                        <span class="s1">print(</span>
+                            <span class="s1">(</span><span class="s3">&quot;Error emptying table %s: %r&quot; </span><span class="s1">% (table</span><span class="s4">, </span><span class="s1">ex))</span><span class="s4">,</span>
+                            <span class="s1">file=sys.stderr</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_teardown_once_metadata_bind(cls):</span>
+        <span class="s2">if </span><span class="s1">cls.run_create_tables:</span>
+            <span class="s1">drop_all_tables_from_metadata(cls._tables_metadata</span><span class="s4">, </span><span class="s1">cls.bind)</span>
+
+        <span class="s2">if </span><span class="s1">cls.run_dispose_bind == </span><span class="s3">&quot;once&quot;</span><span class="s1">:</span>
+            <span class="s1">cls.dispose_bind(cls.bind)</span>
+
+        <span class="s1">cls._tables_metadata.bind = </span><span class="s2">None</span>
+
+        <span class="s2">if </span><span class="s1">cls.run_setup_bind </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">cls.bind = </span><span class="s2">None</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">setup_bind(cls):</span>
+        <span class="s2">return </span><span class="s1">config.db</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">dispose_bind(cls</span><span class="s4">, </span><span class="s1">bind):</span>
+        <span class="s2">if </span><span class="s1">hasattr(bind</span><span class="s4">, </span><span class="s3">&quot;dispose&quot;</span><span class="s1">):</span>
+            <span class="s1">bind.dispose()</span>
+        <span class="s2">elif </span><span class="s1">hasattr(bind</span><span class="s4">, </span><span class="s3">&quot;close&quot;</span><span class="s1">):</span>
+            <span class="s1">bind.close()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s4">, </span><span class="s1">metadata):</span>
+        <span class="s2">pass</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">fixtures(cls):</span>
+        <span class="s2">return </span><span class="s1">{}</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">insert_data(cls</span><span class="s4">, </span><span class="s1">connection):</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">sql_count_(self</span><span class="s4">, </span><span class="s1">count</span><span class="s4">, </span><span class="s1">fn):</span>
+        <span class="s1">self.assert_sql_count(self.bind</span><span class="s4">, </span><span class="s1">fn</span><span class="s4">, </span><span class="s1">count)</span>
+
+    <span class="s2">def </span><span class="s1">sql_eq_(self</span><span class="s4">, </span><span class="s1">callable_</span><span class="s4">, </span><span class="s1">statements):</span>
+        <span class="s1">self.assert_sql(self.bind</span><span class="s4">, </span><span class="s1">callable_</span><span class="s4">, </span><span class="s1">statements)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_load_fixtures(cls):</span>
+        <span class="s5">&quot;&quot;&quot;Insert rows as represented by the fixtures() method.&quot;&quot;&quot;</span>
+        <span class="s1">headers</span><span class="s4">, </span><span class="s1">rows = {}</span><span class="s4">, </span><span class="s1">{}</span>
+        <span class="s2">for </span><span class="s1">table</span><span class="s4">, </span><span class="s1">data </span><span class="s2">in </span><span class="s1">cls.fixtures().items():</span>
+            <span class="s2">if </span><span class="s1">len(data) &lt; </span><span class="s6">2</span><span class="s1">:</span>
+                <span class="s2">continue</span>
+            <span class="s2">if </span><span class="s1">isinstance(table</span><span class="s4">, </span><span class="s1">str):</span>
+                <span class="s1">table = cls.tables[table]</span>
+            <span class="s1">headers[table] = data[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s1">rows[table] = data[</span><span class="s6">1</span><span class="s1">:]</span>
+        <span class="s2">for </span><span class="s1">table</span><span class="s4">, </span><span class="s1">fks </span><span class="s2">in </span><span class="s1">sort_tables_and_constraints(</span>
+            <span class="s1">cls._tables_metadata.tables.values()</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">table </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">continue</span>
+            <span class="s2">if </span><span class="s1">table </span><span class="s2">not in </span><span class="s1">headers:</span>
+                <span class="s2">continue</span>
+            <span class="s2">with </span><span class="s1">cls.bind.begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+                <span class="s1">conn.execute(</span>
+                    <span class="s1">table.insert()</span><span class="s4">,</span>
+                    <span class="s1">[</span>
+                        <span class="s1">dict(zip(headers[table]</span><span class="s4">, </span><span class="s1">column_values))</span>
+                        <span class="s2">for </span><span class="s1">column_values </span><span class="s2">in </span><span class="s1">rows[table]</span>
+                    <span class="s1">]</span><span class="s4">,</span>
+                <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">NoCache:</span>
+    <span class="s1">@config.fixture(autouse=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">scope=</span><span class="s3">&quot;function&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">_disable_cache(self):</span>
+        <span class="s1">_cache = config.db._compiled_cache</span>
+        <span class="s1">config.db._compiled_cache = </span><span class="s2">None</span>
+        <span class="s2">yield</span>
+        <span class="s1">config.db._compiled_cache = _cache</span>
+
+
+<span class="s2">class </span><span class="s1">RemovesEvents:</span>
+    <span class="s1">@util.memoized_property</span>
+    <span class="s2">def </span><span class="s1">_event_fns(self):</span>
+        <span class="s2">return </span><span class="s1">set()</span>
+
+    <span class="s2">def </span><span class="s1">event_listen(self</span><span class="s4">, </span><span class="s1">target</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">fn</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">self._event_fns.add((target</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">fn))</span>
+        <span class="s1">event.listen(target</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">fn</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s1">@config.fixture(autouse=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">scope=</span><span class="s3">&quot;function&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">_remove_events(self):</span>
+        <span class="s2">yield</span>
+        <span class="s2">for </span><span class="s1">key </span><span class="s2">in </span><span class="s1">self._event_fns:</span>
+            <span class="s1">event.remove(*key)</span>
+
+
+<span class="s2">class </span><span class="s1">ComputedReflectionFixtureTest(TablesTest):</span>
+    <span class="s1">run_inserts = run_deletes = </span><span class="s2">None</span>
+
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+    <span class="s1">__requires__ = (</span><span class="s3">&quot;computed_columns&quot;</span><span class="s4">, </span><span class="s3">&quot;table_reflection&quot;</span><span class="s1">)</span>
+
+    <span class="s1">regexp = re.compile(</span><span class="s3">r&quot;[\[\]\(\)\s`'\&quot;]*&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">normalize(self</span><span class="s4">, </span><span class="s1">text):</span>
+        <span class="s2">return </span><span class="s1">self.regexp.sub(</span><span class="s3">&quot;&quot;</span><span class="s4">, </span><span class="s1">text).lower()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s4">, </span><span class="s1">metadata):</span>
+        <span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Integer</span>
+        <span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">testing</span>
+        <span class="s2">from </span><span class="s1">...schema </span><span class="s2">import </span><span class="s1">Column</span>
+        <span class="s2">from </span><span class="s1">...schema </span><span class="s2">import </span><span class="s1">Computed</span>
+        <span class="s2">from </span><span class="s1">...schema </span><span class="s2">import </span><span class="s1">Table</span>
+
+        <span class="s1">Table(</span>
+            <span class="s3">&quot;computed_default_table&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;normal&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;computed_col&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">Computed(</span><span class="s3">&quot;normal + 42&quot;</span><span class="s1">))</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;with_default&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">server_default=</span><span class="s3">&quot;42&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">t = Table(</span>
+            <span class="s3">&quot;computed_column_table&quot;</span><span class="s4">,</span>
+            <span class="s1">metadata</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;normal&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+            <span class="s1">Column(</span><span class="s3">&quot;computed_no_flag&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">Computed(</span><span class="s3">&quot;normal + 42&quot;</span><span class="s1">))</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">testing.requires.schemas.enabled:</span>
+            <span class="s1">t2 = Table(</span>
+                <span class="s3">&quot;computed_column_table&quot;</span><span class="s4">,</span>
+                <span class="s1">metadata</span><span class="s4">,</span>
+                <span class="s1">Column(</span><span class="s3">&quot;id&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">Column(</span><span class="s3">&quot;normal&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+                <span class="s1">Column(</span><span class="s3">&quot;computed_no_flag&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">Computed(</span><span class="s3">&quot;normal / 42&quot;</span><span class="s1">))</span><span class="s4">,</span>
+                <span class="s1">schema=config.test_schema</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">testing.requires.computed_columns_virtual.enabled:</span>
+            <span class="s1">t.append_column(</span>
+                <span class="s1">Column(</span>
+                    <span class="s3">&quot;computed_virtual&quot;</span><span class="s4">,</span>
+                    <span class="s1">Integer</span><span class="s4">,</span>
+                    <span class="s1">Computed(</span><span class="s3">&quot;normal + 2&quot;</span><span class="s4">, </span><span class="s1">persisted=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">testing.requires.schemas.enabled:</span>
+                <span class="s1">t2.append_column(</span>
+                    <span class="s1">Column(</span>
+                        <span class="s3">&quot;computed_virtual&quot;</span><span class="s4">,</span>
+                        <span class="s1">Integer</span><span class="s4">,</span>
+                        <span class="s1">Computed(</span><span class="s3">&quot;normal / 2&quot;</span><span class="s4">, </span><span class="s1">persisted=</span><span class="s2">False</span><span class="s1">)</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">testing.requires.computed_columns_stored.enabled:</span>
+            <span class="s1">t.append_column(</span>
+                <span class="s1">Column(</span>
+                    <span class="s3">&quot;computed_stored&quot;</span><span class="s4">,</span>
+                    <span class="s1">Integer</span><span class="s4">,</span>
+                    <span class="s1">Computed(</span><span class="s3">&quot;normal - 42&quot;</span><span class="s4">, </span><span class="s1">persisted=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">testing.requires.schemas.enabled:</span>
+                <span class="s1">t2.append_column(</span>
+                    <span class="s1">Column(</span>
+                        <span class="s3">&quot;computed_stored&quot;</span><span class="s4">,</span>
+                        <span class="s1">Integer</span><span class="s4">,</span>
+                        <span class="s1">Computed(</span><span class="s3">&quot;normal * 42&quot;</span><span class="s4">, </span><span class="s1">persisted=</span><span class="s2">True</span><span class="s1">)</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">CacheKeyFixture:</span>
+    <span class="s2">def </span><span class="s1">_compare_equal(self</span><span class="s4">, </span><span class="s1">a</span><span class="s4">, </span><span class="s1">b</span><span class="s4">, </span><span class="s1">compare_values):</span>
+        <span class="s1">a_key = a._generate_cache_key()</span>
+        <span class="s1">b_key = b._generate_cache_key()</span>
+
+        <span class="s2">if </span><span class="s1">a_key </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">assert </span><span class="s1">a._annotations.get(</span><span class="s3">&quot;nocache&quot;</span><span class="s1">)</span>
+
+            <span class="s2">assert </span><span class="s1">b_key </span><span class="s2">is None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">eq_(a_key.key</span><span class="s4">, </span><span class="s1">b_key.key)</span>
+            <span class="s1">eq_(hash(a_key.key)</span><span class="s4">, </span><span class="s1">hash(b_key.key))</span>
+
+            <span class="s2">for </span><span class="s1">a_param</span><span class="s4">, </span><span class="s1">b_param </span><span class="s2">in </span><span class="s1">zip(a_key.bindparams</span><span class="s4">, </span><span class="s1">b_key.bindparams):</span>
+                <span class="s2">assert </span><span class="s1">a_param.compare(b_param</span><span class="s4">, </span><span class="s1">compare_values=compare_values)</span>
+        <span class="s2">return </span><span class="s1">a_key</span><span class="s4">, </span><span class="s1">b_key</span>
+
+    <span class="s2">def </span><span class="s1">_run_cache_key_fixture(self</span><span class="s4">, </span><span class="s1">fixture</span><span class="s4">, </span><span class="s1">compare_values):</span>
+        <span class="s1">case_a = fixture()</span>
+        <span class="s1">case_b = fixture()</span>
+
+        <span class="s2">for </span><span class="s1">a</span><span class="s4">, </span><span class="s1">b </span><span class="s2">in </span><span class="s1">itertools.combinations_with_replacement(</span>
+            <span class="s1">range(len(case_a))</span><span class="s4">, </span><span class="s6">2</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">a == b:</span>
+                <span class="s1">a_key</span><span class="s4">, </span><span class="s1">b_key = self._compare_equal(</span>
+                    <span class="s1">case_a[a]</span><span class="s4">, </span><span class="s1">case_b[b]</span><span class="s4">, </span><span class="s1">compare_values</span>
+                <span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">a_key </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s2">continue</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">a_key = case_a[a]._generate_cache_key()</span>
+                <span class="s1">b_key = case_b[b]._generate_cache_key()</span>
+
+                <span class="s2">if </span><span class="s1">a_key </span><span class="s2">is None or </span><span class="s1">b_key </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">a_key </span><span class="s2">is None</span><span class="s1">:</span>
+                        <span class="s2">assert </span><span class="s1">case_a[a]._annotations.get(</span><span class="s3">&quot;nocache&quot;</span><span class="s1">)</span>
+                    <span class="s2">if </span><span class="s1">b_key </span><span class="s2">is None</span><span class="s1">:</span>
+                        <span class="s2">assert </span><span class="s1">case_b[b]._annotations.get(</span><span class="s3">&quot;nocache&quot;</span><span class="s1">)</span>
+                    <span class="s2">continue</span>
+
+                <span class="s2">if </span><span class="s1">a_key.key == b_key.key:</span>
+                    <span class="s2">for </span><span class="s1">a_param</span><span class="s4">, </span><span class="s1">b_param </span><span class="s2">in </span><span class="s1">zip(</span>
+                        <span class="s1">a_key.bindparams</span><span class="s4">, </span><span class="s1">b_key.bindparams</span>
+                    <span class="s1">):</span>
+                        <span class="s2">if not </span><span class="s1">a_param.compare(</span>
+                            <span class="s1">b_param</span><span class="s4">, </span><span class="s1">compare_values=compare_values</span>
+                        <span class="s1">):</span>
+                            <span class="s2">break</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s0"># this fails unconditionally since we could not</span>
+                        <span class="s0"># find bound parameter values that differed.</span>
+                        <span class="s0"># Usually we intended to get two distinct keys here</span>
+                        <span class="s0"># so the failure will be more descriptive using the</span>
+                        <span class="s0"># ne_() assertion.</span>
+                        <span class="s1">ne_(a_key.key</span><span class="s4">, </span><span class="s1">b_key.key)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">ne_(a_key.key</span><span class="s4">, </span><span class="s1">b_key.key)</span>
+
+            <span class="s0"># ClauseElement-specific test to ensure the cache key</span>
+            <span class="s0"># collected all the bound parameters that aren't marked</span>
+            <span class="s0"># as &quot;literal execute&quot;</span>
+            <span class="s2">if </span><span class="s1">isinstance(case_a[a]</span><span class="s4">, </span><span class="s1">ClauseElement) </span><span class="s2">and </span><span class="s1">isinstance(</span>
+                <span class="s1">case_b[b]</span><span class="s4">, </span><span class="s1">ClauseElement</span>
+            <span class="s1">):</span>
+                <span class="s1">assert_a_params = []</span>
+                <span class="s1">assert_b_params = []</span>
+
+                <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">visitors.iterate(case_a[a]):</span>
+                    <span class="s2">if </span><span class="s1">elem.__visit_name__ == </span><span class="s3">&quot;bindparam&quot;</span><span class="s1">:</span>
+                        <span class="s1">assert_a_params.append(elem)</span>
+
+                <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">visitors.iterate(case_b[b]):</span>
+                    <span class="s2">if </span><span class="s1">elem.__visit_name__ == </span><span class="s3">&quot;bindparam&quot;</span><span class="s1">:</span>
+                        <span class="s1">assert_b_params.append(elem)</span>
+
+                <span class="s0"># note we're asserting the order of the params as well as</span>
+                <span class="s0"># if there are dupes or not.  ordering has to be</span>
+                <span class="s0"># deterministic and matches what a traversal would provide.</span>
+                <span class="s1">eq_(</span>
+                    <span class="s1">sorted(a_key.bindparams</span><span class="s4">, </span><span class="s1">key=</span><span class="s2">lambda </span><span class="s1">b: b.key)</span><span class="s4">,</span>
+                    <span class="s1">sorted(</span>
+                        <span class="s1">util.unique_list(assert_a_params)</span><span class="s4">, </span><span class="s1">key=</span><span class="s2">lambda </span><span class="s1">b: b.key</span>
+                    <span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">)</span>
+                <span class="s1">eq_(</span>
+                    <span class="s1">sorted(b_key.bindparams</span><span class="s4">, </span><span class="s1">key=</span><span class="s2">lambda </span><span class="s1">b: b.key)</span><span class="s4">,</span>
+                    <span class="s1">sorted(</span>
+                        <span class="s1">util.unique_list(assert_b_params)</span><span class="s4">, </span><span class="s1">key=</span><span class="s2">lambda </span><span class="s1">b: b.key</span>
+                    <span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_run_cache_key_equal_fixture(self</span><span class="s4">, </span><span class="s1">fixture</span><span class="s4">, </span><span class="s1">compare_values):</span>
+        <span class="s1">case_a = fixture()</span>
+        <span class="s1">case_b = fixture()</span>
+
+        <span class="s2">for </span><span class="s1">a</span><span class="s4">, </span><span class="s1">b </span><span class="s2">in </span><span class="s1">itertools.combinations_with_replacement(</span>
+            <span class="s1">range(len(case_a))</span><span class="s4">, </span><span class="s6">2</span>
+        <span class="s1">):</span>
+            <span class="s1">self._compare_equal(case_a[a]</span><span class="s4">, </span><span class="s1">case_b[b]</span><span class="s4">, </span><span class="s1">compare_values)</span>
+
+
+<span class="s2">def </span><span class="s1">insertmanyvalues_fixture(</span>
+    <span class="s1">connection</span><span class="s4">, </span><span class="s1">randomize_rows=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">warn_on_downgraded=</span><span class="s2">False</span>
+<span class="s1">):</span>
+    <span class="s1">dialect = connection.dialect</span>
+    <span class="s1">orig_dialect = dialect._deliver_insertmanyvalues_batches</span>
+    <span class="s1">orig_conn = connection._exec_insertmany_context</span>
+
+    <span class="s2">class </span><span class="s1">RandomCursor:</span>
+        <span class="s1">__slots__ = (</span><span class="s3">&quot;cursor&quot;</span><span class="s4">,</span><span class="s1">)</span>
+
+        <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">cursor):</span>
+            <span class="s1">self.cursor = cursor</span>
+
+        <span class="s0"># only this method is called by the deliver method.</span>
+        <span class="s0"># by not having the other methods we assert that those aren't being</span>
+        <span class="s0"># used</span>
+
+        <span class="s1">@property</span>
+        <span class="s2">def </span><span class="s1">description(self):</span>
+            <span class="s2">return </span><span class="s1">self.cursor.description</span>
+
+        <span class="s2">def </span><span class="s1">fetchall(self):</span>
+            <span class="s1">rows = self.cursor.fetchall()</span>
+            <span class="s1">rows = list(rows)</span>
+            <span class="s1">random.shuffle(rows)</span>
+            <span class="s2">return </span><span class="s1">rows</span>
+
+    <span class="s2">def </span><span class="s1">_deliver_insertmanyvalues_batches(</span>
+        <span class="s1">connection</span><span class="s4">,</span>
+        <span class="s1">cursor</span><span class="s4">,</span>
+        <span class="s1">statement</span><span class="s4">,</span>
+        <span class="s1">parameters</span><span class="s4">,</span>
+        <span class="s1">generic_setinputsizes</span><span class="s4">,</span>
+        <span class="s1">context</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">randomize_rows:</span>
+            <span class="s1">cursor = RandomCursor(cursor)</span>
+        <span class="s2">for </span><span class="s1">batch </span><span class="s2">in </span><span class="s1">orig_dialect(</span>
+            <span class="s1">connection</span><span class="s4">,</span>
+            <span class="s1">cursor</span><span class="s4">,</span>
+            <span class="s1">statement</span><span class="s4">,</span>
+            <span class="s1">parameters</span><span class="s4">,</span>
+            <span class="s1">generic_setinputsizes</span><span class="s4">,</span>
+            <span class="s1">context</span><span class="s4">,</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">warn_on_downgraded </span><span class="s2">and </span><span class="s1">batch.is_downgraded:</span>
+                <span class="s1">util.warn(</span><span class="s3">&quot;Batches were downgraded for sorted INSERT&quot;</span><span class="s1">)</span>
+
+            <span class="s2">yield </span><span class="s1">batch</span>
+
+    <span class="s2">def </span><span class="s1">_exec_insertmany_context(dialect</span><span class="s4">, </span><span class="s1">context):</span>
+        <span class="s2">with </span><span class="s1">mock.patch.object(</span>
+            <span class="s1">dialect</span><span class="s4">,</span>
+            <span class="s3">&quot;_deliver_insertmanyvalues_batches&quot;</span><span class="s4">,</span>
+            <span class="s1">new=_deliver_insertmanyvalues_batches</span><span class="s4">,</span>
+        <span class="s1">):</span>
+            <span class="s2">return </span><span class="s1">orig_conn(dialect</span><span class="s4">, </span><span class="s1">context)</span>
+
+    <span class="s1">connection._exec_insertmany_context = _exec_insertmany_context</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,77 @@
+<html>
+<head>
+<title>config.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #5d69bb;}
+.s3 { color: #96bf7d;}
+.s4 { color: #bbb55b;}
+.s5 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+config.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">datetime </span><span class="s0">import </span><span class="s1">timedelta</span>
+
+<span class="s2">#: The default name of the &quot;remember me&quot; cookie (``remember_token``)</span>
+<span class="s1">COOKIE_NAME = </span><span class="s3">&quot;remember_token&quot;</span>
+
+<span class="s2">#: The default time before the &quot;remember me&quot; cookie expires (365 days).</span>
+<span class="s1">COOKIE_DURATION = timedelta(days=</span><span class="s4">365</span><span class="s1">)</span>
+
+<span class="s2">#: Whether the &quot;remember me&quot; cookie requires Secure; defaults to ``False``</span>
+<span class="s1">COOKIE_SECURE = </span><span class="s0">False</span>
+
+<span class="s2">#: Whether the &quot;remember me&quot; cookie uses HttpOnly or not; defaults to ``True``</span>
+<span class="s1">COOKIE_HTTPONLY = </span><span class="s0">True</span>
+
+<span class="s2">#: Whether the &quot;remember me&quot; cookie requires same origin; defaults to ``None``</span>
+<span class="s1">COOKIE_SAMESITE = </span><span class="s0">None</span>
+
+<span class="s2">#: The default flash message to display when users need to log in.</span>
+<span class="s1">LOGIN_MESSAGE = </span><span class="s3">&quot;Please log in to access this page.&quot;</span>
+
+<span class="s2">#: The default flash message category to display when users need to log in.</span>
+<span class="s1">LOGIN_MESSAGE_CATEGORY = </span><span class="s3">&quot;message&quot;</span>
+
+<span class="s2">#: The default flash message to display when users need to reauthenticate.</span>
+<span class="s1">REFRESH_MESSAGE = </span><span class="s3">&quot;Please reauthenticate to access this page.&quot;</span>
+
+<span class="s2">#: The default flash message category to display when users need to</span>
+<span class="s2">#: reauthenticate.</span>
+<span class="s1">REFRESH_MESSAGE_CATEGORY = </span><span class="s3">&quot;message&quot;</span>
+
+<span class="s2">#: The default attribute to retreive the str id of the user</span>
+<span class="s1">ID_ATTRIBUTE = </span><span class="s3">&quot;get_id&quot;</span>
+
+<span class="s2">#: Default name of the auth header (``Authorization``)</span>
+<span class="s1">AUTH_HEADER_NAME = </span><span class="s3">&quot;Authorization&quot;</span>
+
+<span class="s2">#: A set of session keys that are populated by Flask-Login. Use this set to</span>
+<span class="s2">#: purge keys safely and accurately.</span>
+<span class="s1">SESSION_KEYS = {</span>
+    <span class="s3">&quot;_user_id&quot;</span><span class="s5">,</span>
+    <span class="s3">&quot;_remember&quot;</span><span class="s5">,</span>
+    <span class="s3">&quot;_remember_seconds&quot;</span><span class="s5">,</span>
+    <span class="s3">&quot;_id&quot;</span><span class="s5">,</span>
+    <span class="s3">&quot;_fresh&quot;</span><span class="s5">,</span>
+    <span class="s3">&quot;next&quot;</span><span class="s5">,</span>
+<span class="s1">}</span>
+
+<span class="s2">#: A set of HTTP methods which are exempt from `login_required` and</span>
+<span class="s2">#: `fresh_login_required`. By default, this is just ``OPTIONS``.</span>
+<span class="s1">EXEMPT_METHODS = {</span><span class="s3">&quot;OPTIONS&quot;</span><span class="s1">}</span>
+
+<span class="s2">#: If true, the page the user is attempting to access is stored in the session</span>
+<span class="s2">#: rather than a url parameter when redirecting to the login view; defaults to</span>
+<span class="s2">#: ``False``.</span>
+<span class="s1">USE_SESSION_FOR_NEXT = </span><span class="s0">False</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<html>
+<head>
+<title>warnings.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #717ed3; font-style: italic;}
+.s5 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+warnings.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/warnings.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">warnings</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">assertions</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">exc</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">exc </span><span class="s2">as </span><span class="s1">sa_exc</span>
+<span class="s2">from </span><span class="s1">..exc </span><span class="s2">import </span><span class="s1">SATestSuiteWarning</span>
+<span class="s2">from </span><span class="s1">..util.langhelpers </span><span class="s2">import </span><span class="s1">_warnings_warn</span>
+
+
+<span class="s2">def </span><span class="s1">warn_test_suite(message):</span>
+    <span class="s1">_warnings_warn(message</span><span class="s3">, </span><span class="s1">category=SATestSuiteWarning)</span>
+
+
+<span class="s2">def </span><span class="s1">setup_filters():</span>
+    <span class="s4">&quot;&quot;&quot;hook for setting up warnings filters. 
+ 
+    SQLAlchemy-specific classes must only be here and not in pytest config, 
+    as we need to delay importing SQLAlchemy until conftest.py has been 
+    processed. 
+ 
+    NOTE: filters on subclasses of DeprecationWarning or 
+    PendingDeprecationWarning have no effect if added here, since pytest 
+    will add at each test the following filters 
+    ``always::PendingDeprecationWarning`` and ``always::DeprecationWarning`` 
+    that will take precedence over any added here. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">warnings.filterwarnings(</span><span class="s5">&quot;error&quot;</span><span class="s3">, </span><span class="s1">category=exc.SAWarning)</span>
+    <span class="s1">warnings.filterwarnings(</span><span class="s5">&quot;always&quot;</span><span class="s3">, </span><span class="s1">category=exc.SATestSuiteWarning)</span>
+
+
+<span class="s2">def </span><span class="s1">assert_warnings(fn</span><span class="s3">, </span><span class="s1">warning_msgs</span><span class="s3">, </span><span class="s1">regex=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot;Assert that each of the given warnings are emitted by fn. 
+ 
+    Deprecated.  Please use assertions.expect_warnings(). 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">with </span><span class="s1">assertions._expect_warnings(</span>
+        <span class="s1">sa_exc.SAWarning</span><span class="s3">, </span><span class="s1">warning_msgs</span><span class="s3">, </span><span class="s1">regex=regex</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">fn()</span>
+</pre>
+</body>
+</html>

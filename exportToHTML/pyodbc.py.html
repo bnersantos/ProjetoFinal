@@ -1,0 +1,271 @@
+<html>
+<head>
+<title>pyodbc.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pyodbc.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># connectors/pyodbc.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">from </span><span class="s1">types </span><span class="s2">import </span><span class="s1">ModuleType</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">List</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Tuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+<span class="s2">from </span><span class="s1">urllib.parse </span><span class="s2">import </span><span class="s1">unquote_plus</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Connector</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">ExecutionContext</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">pool</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">..engine </span><span class="s2">import </span><span class="s1">ConnectArgsType</span>
+<span class="s2">from </span><span class="s1">..engine </span><span class="s2">import </span><span class="s1">Connection</span>
+<span class="s2">from </span><span class="s1">..engine </span><span class="s2">import </span><span class="s1">interfaces</span>
+<span class="s2">from </span><span class="s1">..engine </span><span class="s2">import </span><span class="s1">URL</span>
+<span class="s2">from </span><span class="s1">..sql.type_api </span><span class="s2">import </span><span class="s1">TypeEngine</span>
+
+<span class="s2">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">..engine.interfaces </span><span class="s2">import </span><span class="s1">IsolationLevel</span>
+
+
+<span class="s2">class </span><span class="s1">PyODBCConnector(Connector):</span>
+    <span class="s1">driver = </span><span class="s3">&quot;pyodbc&quot;</span>
+
+    <span class="s0"># this is no longer False for pyodbc in general</span>
+    <span class="s1">supports_sane_rowcount_returning = </span><span class="s2">True</span>
+    <span class="s1">supports_sane_multi_rowcount = </span><span class="s2">False</span>
+
+    <span class="s1">supports_native_decimal = </span><span class="s2">True</span>
+    <span class="s1">default_paramstyle = </span><span class="s3">&quot;named&quot;</span>
+
+    <span class="s1">fast_executemany = </span><span class="s2">False</span>
+
+    <span class="s0"># for non-DSN connections, this *may* be used to</span>
+    <span class="s0"># hold the desired driver name</span>
+    <span class="s1">pyodbc_driver_name: Optional[str] = </span><span class="s2">None</span>
+
+    <span class="s1">dbapi: ModuleType</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">use_setinputsizes: bool = </span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kw: Any):</span>
+        <span class="s1">super().__init__(**kw)</span>
+        <span class="s2">if </span><span class="s1">use_setinputsizes:</span>
+            <span class="s1">self.bind_typing = interfaces.BindTyping.SETINPUTSIZES</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">import_dbapi(cls) -&gt; ModuleType:</span>
+        <span class="s2">return </span><span class="s1">__import__(</span><span class="s3">&quot;pyodbc&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">create_connect_args(self</span><span class="s4">, </span><span class="s1">url: URL) -&gt; ConnectArgsType:</span>
+        <span class="s1">opts = url.translate_connect_args(username=</span><span class="s3">&quot;user&quot;</span><span class="s1">)</span>
+        <span class="s1">opts.update(url.query)</span>
+
+        <span class="s1">keys = opts</span>
+
+        <span class="s1">query = url.query</span>
+
+        <span class="s1">connect_args: Dict[str</span><span class="s4">, </span><span class="s1">Any] = {}</span>
+        <span class="s1">connectors: List[str]</span>
+
+        <span class="s2">for </span><span class="s1">param </span><span class="s2">in </span><span class="s1">(</span><span class="s3">&quot;ansi&quot;</span><span class="s4">, </span><span class="s3">&quot;unicode_results&quot;</span><span class="s4">, </span><span class="s3">&quot;autocommit&quot;</span><span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">param </span><span class="s2">in </span><span class="s1">keys:</span>
+                <span class="s1">connect_args[param] = util.asbool(keys.pop(param))</span>
+
+        <span class="s2">if </span><span class="s3">&quot;odbc_connect&quot; </span><span class="s2">in </span><span class="s1">keys:</span>
+            <span class="s1">connectors = [unquote_plus(keys.pop(</span><span class="s3">&quot;odbc_connect&quot;</span><span class="s1">))]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+
+            <span class="s2">def </span><span class="s1">check_quote(token: str) -&gt; str:</span>
+                <span class="s2">if </span><span class="s3">&quot;;&quot; </span><span class="s2">in </span><span class="s1">str(token) </span><span class="s2">or </span><span class="s1">str(token).startswith(</span><span class="s3">&quot;{&quot;</span><span class="s1">):</span>
+                    <span class="s1">token = </span><span class="s3">&quot;{%s}&quot; </span><span class="s1">% token.replace(</span><span class="s3">&quot;}&quot;</span><span class="s4">, </span><span class="s3">&quot;}}&quot;</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">token</span>
+
+            <span class="s1">keys = {k: check_quote(v) </span><span class="s2">for </span><span class="s1">k</span><span class="s4">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">keys.items()}</span>
+
+            <span class="s1">dsn_connection = </span><span class="s3">&quot;dsn&quot; </span><span class="s2">in </span><span class="s1">keys </span><span class="s2">or </span><span class="s1">(</span>
+                <span class="s3">&quot;host&quot; </span><span class="s2">in </span><span class="s1">keys </span><span class="s2">and </span><span class="s3">&quot;database&quot; </span><span class="s2">not in </span><span class="s1">keys</span>
+            <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">dsn_connection:</span>
+                <span class="s1">connectors = [</span>
+                    <span class="s3">&quot;dsn=%s&quot; </span><span class="s1">% (keys.pop(</span><span class="s3">&quot;host&quot;</span><span class="s4">, </span><span class="s3">&quot;&quot;</span><span class="s1">) </span><span class="s2">or </span><span class="s1">keys.pop(</span><span class="s3">&quot;dsn&quot;</span><span class="s4">, </span><span class="s3">&quot;&quot;</span><span class="s1">))</span>
+                <span class="s1">]</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">port = </span><span class="s3">&quot;&quot;</span>
+                <span class="s2">if </span><span class="s3">&quot;port&quot; </span><span class="s2">in </span><span class="s1">keys </span><span class="s2">and </span><span class="s3">&quot;port&quot; </span><span class="s2">not in </span><span class="s1">query:</span>
+                    <span class="s1">port = </span><span class="s3">&quot;,%d&quot; </span><span class="s1">% int(keys.pop(</span><span class="s3">&quot;port&quot;</span><span class="s1">))</span>
+
+                <span class="s1">connectors = []</span>
+                <span class="s1">driver = keys.pop(</span><span class="s3">&quot;driver&quot;</span><span class="s4">, </span><span class="s1">self.pyodbc_driver_name)</span>
+                <span class="s2">if </span><span class="s1">driver </span><span class="s2">is None and </span><span class="s1">keys:</span>
+                    <span class="s0"># note if keys is empty, this is a totally blank URL</span>
+                    <span class="s1">util.warn(</span>
+                        <span class="s3">&quot;No driver name specified; &quot;</span>
+                        <span class="s3">&quot;this is expected by PyODBC when using &quot;</span>
+                        <span class="s3">&quot;DSN-less connections&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">connectors.append(</span><span class="s3">&quot;DRIVER={%s}&quot; </span><span class="s1">% driver)</span>
+
+                <span class="s1">connectors.extend(</span>
+                    <span class="s1">[</span>
+                        <span class="s3">&quot;Server=%s%s&quot; </span><span class="s1">% (keys.pop(</span><span class="s3">&quot;host&quot;</span><span class="s4">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s1">port)</span><span class="s4">,</span>
+                        <span class="s3">&quot;Database=%s&quot; </span><span class="s1">% keys.pop(</span><span class="s3">&quot;database&quot;</span><span class="s4">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span><span class="s4">,</span>
+                    <span class="s1">]</span>
+                <span class="s1">)</span>
+
+            <span class="s1">user = keys.pop(</span><span class="s3">&quot;user&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">user:</span>
+                <span class="s1">connectors.append(</span><span class="s3">&quot;UID=%s&quot; </span><span class="s1">% user)</span>
+                <span class="s1">pwd = keys.pop(</span><span class="s3">&quot;password&quot;</span><span class="s4">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">pwd:</span>
+                    <span class="s1">connectors.append(</span><span class="s3">&quot;PWD=%s&quot; </span><span class="s1">% pwd)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">authentication = keys.pop(</span><span class="s3">&quot;authentication&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">authentication:</span>
+                    <span class="s1">connectors.append(</span><span class="s3">&quot;Authentication=%s&quot; </span><span class="s1">% authentication)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">connectors.append(</span><span class="s3">&quot;Trusted_Connection=Yes&quot;</span><span class="s1">)</span>
+
+            <span class="s0"># if set to 'Yes', the ODBC layer will try to automagically</span>
+            <span class="s0"># convert textual data from your database encoding to your</span>
+            <span class="s0"># client encoding.  This should obviously be set to 'No' if</span>
+            <span class="s0"># you query a cp1253 encoded database from a latin1 client...</span>
+            <span class="s2">if </span><span class="s3">&quot;odbc_autotranslate&quot; </span><span class="s2">in </span><span class="s1">keys:</span>
+                <span class="s1">connectors.append(</span>
+                    <span class="s3">&quot;AutoTranslate=%s&quot; </span><span class="s1">% keys.pop(</span><span class="s3">&quot;odbc_autotranslate&quot;</span><span class="s1">)</span>
+                <span class="s1">)</span>
+
+            <span class="s1">connectors.extend([</span><span class="s3">&quot;%s=%s&quot; </span><span class="s1">% (k</span><span class="s4">, </span><span class="s1">v) </span><span class="s2">for </span><span class="s1">k</span><span class="s4">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">keys.items()])</span>
+
+        <span class="s2">return </span><span class="s1">((</span><span class="s3">&quot;;&quot;</span><span class="s1">.join(connectors)</span><span class="s4">,</span><span class="s1">)</span><span class="s4">, </span><span class="s1">connect_args)</span>
+
+    <span class="s2">def </span><span class="s1">is_disconnect(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">e: Exception</span><span class="s4">,</span>
+        <span class="s1">connection: Optional[</span>
+            <span class="s1">Union[pool.PoolProxiedConnection</span><span class="s4">, </span><span class="s1">interfaces.DBAPIConnection]</span>
+        <span class="s1">]</span><span class="s4">,</span>
+        <span class="s1">cursor: Optional[interfaces.DBAPICursor]</span><span class="s4">,</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s2">if </span><span class="s1">isinstance(e</span><span class="s4">, </span><span class="s1">self.dbapi.ProgrammingError):</span>
+            <span class="s2">return </span><span class="s3">&quot;The cursor's connection has been closed.&quot; </span><span class="s2">in </span><span class="s1">str(</span>
+                <span class="s1">e</span>
+            <span class="s1">) </span><span class="s2">or </span><span class="s3">&quot;Attempt to use a closed connection.&quot; </span><span class="s2">in </span><span class="s1">str(e)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return False</span>
+
+    <span class="s2">def </span><span class="s1">_dbapi_version(self) -&gt; interfaces.VersionInfoType:</span>
+        <span class="s2">if not </span><span class="s1">self.dbapi:</span>
+            <span class="s2">return </span><span class="s1">()</span>
+        <span class="s2">return </span><span class="s1">self._parse_dbapi_version(self.dbapi.version)</span>
+
+    <span class="s2">def </span><span class="s1">_parse_dbapi_version(self</span><span class="s4">, </span><span class="s1">vers: str) -&gt; interfaces.VersionInfoType:</span>
+        <span class="s1">m = re.match(</span><span class="s3">r&quot;(?:py.*-)?([\d\.]+)(?:-(\w+))?&quot;</span><span class="s4">, </span><span class="s1">vers)</span>
+        <span class="s2">if not </span><span class="s1">m:</span>
+            <span class="s2">return </span><span class="s1">()</span>
+        <span class="s1">vers_tuple: interfaces.VersionInfoType = tuple(</span>
+            <span class="s1">[int(x) </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">m.group(</span><span class="s5">1</span><span class="s1">).split(</span><span class="s3">&quot;.&quot;</span><span class="s1">)]</span>
+        <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">m.group(</span><span class="s5">2</span><span class="s1">):</span>
+            <span class="s1">vers_tuple += (m.group(</span><span class="s5">2</span><span class="s1">)</span><span class="s4">,</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">vers_tuple</span>
+
+    <span class="s2">def </span><span class="s1">_get_server_version_info(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">connection: Connection</span>
+    <span class="s1">) -&gt; interfaces.VersionInfoType:</span>
+        <span class="s0"># NOTE: this function is not reliable, particularly when</span>
+        <span class="s0"># freetds is in use.   Implement database-specific server version</span>
+        <span class="s0"># queries.</span>
+        <span class="s1">dbapi_con = connection.connection.dbapi_connection</span>
+        <span class="s1">version: Tuple[Union[int</span><span class="s4">, </span><span class="s1">str]</span><span class="s4">, </span><span class="s1">...] = ()</span>
+        <span class="s1">r = re.compile(</span><span class="s3">r&quot;[.\-]&quot;</span><span class="s1">)</span>
+        <span class="s2">for </span><span class="s1">n </span><span class="s2">in </span><span class="s1">r.split(dbapi_con.getinfo(self.dbapi.SQL_DBMS_VER)):  </span><span class="s0"># type: ignore[union-attr]  # noqa: E501</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">version += (int(n)</span><span class="s4">,</span><span class="s1">)</span>
+            <span class="s2">except </span><span class="s1">ValueError:</span>
+                <span class="s2">pass</span>
+        <span class="s2">return </span><span class="s1">tuple(version)</span>
+
+    <span class="s2">def </span><span class="s1">do_set_input_sizes(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">cursor: interfaces.DBAPICursor</span><span class="s4">,</span>
+        <span class="s1">list_of_tuples: List[Tuple[str</span><span class="s4">, </span><span class="s1">Any</span><span class="s4">, </span><span class="s1">TypeEngine[Any]]]</span><span class="s4">,</span>
+        <span class="s1">context: ExecutionContext</span><span class="s4">,</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0"># the rules for these types seems a little strange, as you can pass</span>
+        <span class="s0"># non-tuples as well as tuples, however it seems to assume &quot;0&quot;</span>
+        <span class="s0"># for the subsequent values if you don't pass a tuple which fails</span>
+        <span class="s0"># for types such as pyodbc.SQL_WLONGVARCHAR, which is the datatype</span>
+        <span class="s0"># that ticket #5649 is targeting.</span>
+
+        <span class="s0"># NOTE: as of #6058, this won't be called if the use_setinputsizes</span>
+        <span class="s0"># parameter were not passed to the dialect, or if no types were</span>
+        <span class="s0"># specified in list_of_tuples</span>
+
+        <span class="s0"># as of #8177 for 2.0 we assume use_setinputsizes=True and only</span>
+        <span class="s0"># omit the setinputsizes calls for .executemany() with</span>
+        <span class="s0"># fast_executemany=True</span>
+
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">context.execute_style </span><span class="s2">is </span><span class="s1">interfaces.ExecuteStyle.EXECUTEMANY</span>
+            <span class="s2">and </span><span class="s1">self.fast_executemany</span>
+        <span class="s1">):</span>
+            <span class="s2">return</span>
+
+        <span class="s1">cursor.setinputsizes(</span>
+            <span class="s1">[</span>
+                <span class="s1">(</span>
+                    <span class="s1">(dbtype</span><span class="s4">, </span><span class="s2">None</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+                    <span class="s2">if not </span><span class="s1">isinstance(dbtype</span><span class="s4">, </span><span class="s1">tuple)</span>
+                    <span class="s2">else </span><span class="s1">dbtype</span>
+                <span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">key</span><span class="s4">, </span><span class="s1">dbtype</span><span class="s4">, </span><span class="s1">sqltype </span><span class="s2">in </span><span class="s1">list_of_tuples</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">get_isolation_level_values(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">dbapi_connection: interfaces.DBAPIConnection</span>
+    <span class="s1">) -&gt; List[IsolationLevel]:</span>
+        <span class="s2">return </span><span class="s1">super().get_isolation_level_values(dbapi_connection) + [</span>
+            <span class="s3">&quot;AUTOCOMMIT&quot;</span>
+        <span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">set_isolation_level(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">dbapi_connection: interfaces.DBAPIConnection</span><span class="s4">,</span>
+        <span class="s1">level: IsolationLevel</span><span class="s4">,</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0"># adjust for ConnectionFairy being present</span>
+        <span class="s0"># allows attribute set e.g. &quot;connection.autocommit = True&quot;</span>
+        <span class="s0"># to work properly</span>
+
+        <span class="s2">if </span><span class="s1">level == </span><span class="s3">&quot;AUTOCOMMIT&quot;</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.autocommit = </span><span class="s2">True</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.autocommit = </span><span class="s2">False</span>
+            <span class="s1">super().set_isolation_level(dbapi_connection</span><span class="s4">, </span><span class="s1">level)</span>
+</pre>
+</body>
+</html>

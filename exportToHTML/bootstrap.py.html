@@ -1,0 +1,73 @@
+<html>
+<head>
+<title>bootstrap.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+bootstrap.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/plugin/bootstrap.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">&quot;&quot;&quot; 
+Bootstrapper for test framework plugins. 
+ 
+The entire rationale for this system is to get the modules in plugin/ 
+imported without importing all of the supporting library, so that we can 
+set up things for testing before coverage starts. 
+ 
+The rationale for all of plugin/ being *in* the supporting library in the 
+first place is so that the testing and plugin suite is available to other 
+libraries, mainly external SQLAlchemy and Alembic dialects, to make use 
+of the same test environment and standard suites available to 
+SQLAlchemy/Alembic themselves without the need to ship/install a separate 
+package outside of SQLAlchemy. 
+ 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">import </span><span class="s1">importlib.util</span>
+<span class="s3">import </span><span class="s1">os</span>
+<span class="s3">import </span><span class="s1">sys</span>
+
+
+<span class="s1">bootstrap_file = locals()[</span><span class="s4">&quot;bootstrap_file&quot;</span><span class="s1">]</span>
+<span class="s1">to_bootstrap = locals()[</span><span class="s4">&quot;to_bootstrap&quot;</span><span class="s1">]</span>
+
+
+<span class="s3">def </span><span class="s1">load_file_as_module(name):</span>
+    <span class="s1">path = os.path.join(os.path.dirname(bootstrap_file)</span><span class="s5">, </span><span class="s4">&quot;%s.py&quot; </span><span class="s1">% name)</span>
+
+    <span class="s1">spec = importlib.util.spec_from_file_location(name</span><span class="s5">, </span><span class="s1">path)</span>
+    <span class="s3">assert </span><span class="s1">spec </span><span class="s3">is not None</span>
+    <span class="s3">assert </span><span class="s1">spec.loader </span><span class="s3">is not None</span>
+    <span class="s1">mod = importlib.util.module_from_spec(spec)</span>
+    <span class="s1">spec.loader.exec_module(mod)</span>
+    <span class="s3">return </span><span class="s1">mod</span>
+
+
+<span class="s3">if </span><span class="s1">to_bootstrap == </span><span class="s4">&quot;pytest&quot;</span><span class="s1">:</span>
+    <span class="s1">sys.modules[</span><span class="s4">&quot;sqla_plugin_base&quot;</span><span class="s1">] = load_file_as_module(</span><span class="s4">&quot;plugin_base&quot;</span><span class="s1">)</span>
+    <span class="s1">sys.modules[</span><span class="s4">&quot;sqla_plugin_base&quot;</span><span class="s1">].bootstrapped_as_sqlalchemy = </span><span class="s3">True</span>
+    <span class="s1">sys.modules[</span><span class="s4">&quot;sqla_pytestplugin&quot;</span><span class="s1">] = load_file_as_module(</span><span class="s4">&quot;pytestplugin&quot;</span><span class="s1">)</span>
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s3">raise </span><span class="s1">Exception(</span><span class="s4">&quot;unknown bootstrap: %s&quot; </span><span class="s1">% to_bootstrap)  </span><span class="s0"># noqa</span>
+</pre>
+</body>
+</html>

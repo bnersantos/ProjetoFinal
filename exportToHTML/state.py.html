@@ -1,0 +1,1166 @@
+<html>
+<head>
+<title>state.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+state.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/state.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Defines instrumentation of instances. 
+ 
+This module is usually not directly visible to user applications, but 
+defines a large part of the ORM's interactivity. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generic</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">weakref</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">base</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">orm_exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">interfaces</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_O</span>
+<span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">is_collection_impl</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">ATTR_WAS_SET</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">INIT_OK</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">LoaderCallableStatus</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">NEVER_SET</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">NO_VALUE</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PASSIVE_NO_INITIALIZE</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PASSIVE_NO_RESULT</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PASSIVE_OFF</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">SQL_OK</span>
+<span class="s3">from </span><span class="s1">.path_registry </span><span class="s3">import </span><span class="s1">PathRegistry</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">sa_exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">inspection</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Protocol</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_IdentityKeyType</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_InstanceDict</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_LoaderCallable</span>
+    <span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">AttributeImpl</span>
+    <span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">History</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PassiveFlag</span>
+    <span class="s3">from </span><span class="s1">.collections </span><span class="s3">import </span><span class="s1">_AdaptedCollectionProtocol</span>
+    <span class="s3">from </span><span class="s1">.identity </span><span class="s3">import </span><span class="s1">IdentityMap</span>
+    <span class="s3">from </span><span class="s1">.instrumentation </span><span class="s3">import </span><span class="s1">ClassManager</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">ORMOption</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">Session</span>
+    <span class="s3">from </span><span class="s1">..engine </span><span class="s3">import </span><span class="s1">Row</span>
+    <span class="s3">from </span><span class="s1">..ext.asyncio.session </span><span class="s3">import </span><span class="s1">async_session </span><span class="s3">as </span><span class="s1">_async_provider</span>
+    <span class="s3">from </span><span class="s1">..ext.asyncio.session </span><span class="s3">import </span><span class="s1">AsyncSession</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s1">_sessions: weakref.WeakValueDictionary[int</span><span class="s4">, </span><span class="s1">Session]</span>
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s0"># late-populated by session.py</span>
+    <span class="s1">_sessions = </span><span class="s3">None</span>
+
+
+<span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0"># optionally late-provided by sqlalchemy.ext.asyncio.session</span>
+
+    <span class="s1">_async_provider = </span><span class="s3">None  </span><span class="s0"># noqa</span>
+
+
+<span class="s3">class </span><span class="s1">_InstanceDictProto(Protocol):</span>
+    <span class="s3">def </span><span class="s1">__call__(self) -&gt; Optional[IdentityMap]: ...</span>
+
+
+<span class="s3">class </span><span class="s1">_InstallLoaderCallableProto(Protocol[_O]):</span>
+    <span class="s2">&quot;&quot;&quot;used at result loading time to install a _LoaderCallable callable 
+    upon a specific InstanceState, which will be used to populate an 
+    attribute when that attribute is accessed. 
+ 
+    Concrete examples are per-instance deferred column loaders and 
+    relationship lazy loaders. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__call__(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">state: InstanceState[_O]</span><span class="s4">, </span><span class="s1">dict_: _InstanceDict</span><span class="s4">, </span><span class="s1">row: Row[Any]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s1">@inspection._self_inspects</span>
+<span class="s3">class </span><span class="s1">InstanceState(interfaces.InspectionAttrInfo</span><span class="s4">, </span><span class="s1">Generic[_O]):</span>
+    <span class="s2">&quot;&quot;&quot;Tracks state information at the instance level. 
+ 
+    The :class:`.InstanceState` is a key object used by the 
+    SQLAlchemy ORM in order to track the state of an object; 
+    it is created the moment an object is instantiated, typically 
+    as a result of :term:`instrumentation` which SQLAlchemy applies 
+    to the ``__init__()`` method of the class. 
+ 
+    :class:`.InstanceState` is also a semi-public object, 
+    available for runtime inspection as to the state of a 
+    mapped instance, including information such as its current 
+    status within a particular :class:`.Session` and details 
+    about data on individual attributes.  The public API 
+    in order to acquire a :class:`.InstanceState` object 
+    is to use the :func:`_sa.inspect` system:: 
+ 
+        &gt;&gt;&gt; from sqlalchemy import inspect 
+        &gt;&gt;&gt; insp = inspect(some_mapped_object) 
+        &gt;&gt;&gt; insp.attrs.nickname.history 
+        History(added=['new nickname'], unchanged=(), deleted=['nickname']) 
+ 
+    .. seealso:: 
+ 
+        :ref:`orm_mapper_inspection_instancestate` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s5">&quot;__dict__&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;__weakref__&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;class_&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;manager&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;obj&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;committed_state&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;expired_attributes&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">manager: ClassManager[_O]</span>
+    <span class="s1">session_id: Optional[int] = </span><span class="s3">None</span>
+    <span class="s1">key: Optional[_IdentityKeyType[_O]] = </span><span class="s3">None</span>
+    <span class="s1">runid: Optional[int] = </span><span class="s3">None</span>
+    <span class="s1">load_options: Tuple[ORMOption</span><span class="s4">, </span><span class="s1">...] = ()</span>
+    <span class="s1">load_path: PathRegistry = PathRegistry.root</span>
+    <span class="s1">insert_order: Optional[int] = </span><span class="s3">None</span>
+    <span class="s1">_strong_obj: Optional[object] = </span><span class="s3">None</span>
+    <span class="s1">obj: weakref.ref[_O]</span>
+
+    <span class="s1">committed_state: Dict[str</span><span class="s4">, </span><span class="s1">Any]</span>
+
+    <span class="s1">modified: bool = </span><span class="s3">False</span>
+    <span class="s5">&quot;&quot;&quot;When ``True`` the object was modified.&quot;&quot;&quot;</span>
+    <span class="s1">expired: bool = </span><span class="s3">False</span>
+    <span class="s5">&quot;&quot;&quot;When ``True`` the object is :term:`expired`. 
+ 
+    .. seealso:: 
+ 
+        :ref:`session_expire` 
+    &quot;&quot;&quot;</span>
+    <span class="s1">_deleted: bool = </span><span class="s3">False</span>
+    <span class="s1">_load_pending: bool = </span><span class="s3">False</span>
+    <span class="s1">_orphaned_outside_of_session: bool = </span><span class="s3">False</span>
+    <span class="s1">is_instance: bool = </span><span class="s3">True</span>
+    <span class="s1">identity_token: object = </span><span class="s3">None</span>
+    <span class="s1">_last_known_values: Optional[Dict[str</span><span class="s4">, </span><span class="s1">Any]] = </span><span class="s3">None</span>
+
+    <span class="s1">_instance_dict: _InstanceDictProto</span>
+    <span class="s5">&quot;&quot;&quot;A weak reference, or in the default case a plain callable, that 
+    returns a reference to the current :class:`.IdentityMap`, if any. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">_instance_dict(self):</span>
+            <span class="s2">&quot;&quot;&quot;default 'weak reference' for _instance_dict&quot;&quot;&quot;</span>
+            <span class="s3">return None</span>
+
+    <span class="s1">expired_attributes: Set[str]</span>
+    <span class="s5">&quot;&quot;&quot;The set of keys which are 'expired' to be loaded by 
+    the manager's deferred scalar loader, assuming no pending 
+    changes. 
+ 
+    See also the ``unmodified`` collection which is intersected 
+    against this set when a refresh operation occurs. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">callables: Dict[str</span><span class="s4">, </span><span class="s1">Callable[[InstanceState[_O]</span><span class="s4">, </span><span class="s1">PassiveFlag]</span><span class="s4">, </span><span class="s1">Any]]</span>
+    <span class="s5">&quot;&quot;&quot;A namespace where a per-state loader callable can be associated. 
+ 
+    In SQLAlchemy 1.0, this is only used for lazy loaders / deferred 
+    loaders that were set up via query option. 
+ 
+    Previously, callables was used also to indicate expired attributes 
+    by storing a link to the InstanceState itself in this dictionary. 
+    This role is now handled by the expired_attributes set. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s1">callables = util.EMPTY_DICT</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">obj: _O</span><span class="s4">, </span><span class="s1">manager: ClassManager[_O]):</span>
+        <span class="s1">self.class_ = obj.__class__</span>
+        <span class="s1">self.manager = manager</span>
+        <span class="s1">self.obj = weakref.ref(obj</span><span class="s4">, </span><span class="s1">self._cleanup)</span>
+        <span class="s1">self.committed_state = {}</span>
+        <span class="s1">self.expired_attributes = set()</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">attrs(self) -&gt; util.ReadOnlyProperties[AttributeState]:</span>
+        <span class="s2">&quot;&quot;&quot;Return a namespace representing each attribute on 
+        the mapped object, including its current value 
+        and history. 
+ 
+        The returned object is an instance of :class:`.AttributeState`. 
+        This object allows inspection of the current data 
+        within an attribute as well as attribute history 
+        since the last flush. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">util.ReadOnlyProperties(</span>
+            <span class="s1">{key: AttributeState(self</span><span class="s4">, </span><span class="s1">key) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.manager}</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">transient(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return ``True`` if the object is :term:`transient`. 
+ 
+        .. seealso:: 
+ 
+            :ref:`session_object_states` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.key </span><span class="s3">is None and not </span><span class="s1">self._attached</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">pending(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return ``True`` if the object is :term:`pending`. 
+ 
+        .. seealso:: 
+ 
+            :ref:`session_object_states` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.key </span><span class="s3">is None and </span><span class="s1">self._attached</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">deleted(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return ``True`` if the object is :term:`deleted`. 
+ 
+        An object that is in the deleted state is guaranteed to 
+        not be within the :attr:`.Session.identity_map` of its parent 
+        :class:`.Session`; however if the session's transaction is rolled 
+        back, the object will be restored to the persistent state and 
+        the identity map. 
+ 
+        .. note:: 
+ 
+            The :attr:`.InstanceState.deleted` attribute refers to a specific 
+            state of the object that occurs between the &quot;persistent&quot; and 
+            &quot;detached&quot; states; once the object is :term:`detached`, the 
+            :attr:`.InstanceState.deleted` attribute **no longer returns 
+            True**; in order to detect that a state was deleted, regardless 
+            of whether or not the object is associated with a 
+            :class:`.Session`, use the :attr:`.InstanceState.was_deleted` 
+            accessor. 
+ 
+        .. versionadded: 1.1 
+ 
+        .. seealso:: 
+ 
+            :ref:`session_object_states` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.key </span><span class="s3">is not None and </span><span class="s1">self._attached </span><span class="s3">and </span><span class="s1">self._deleted</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">was_deleted(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return True if this object is or was previously in the 
+        &quot;deleted&quot; state and has not been reverted to persistent. 
+ 
+        This flag returns True once the object was deleted in flush. 
+        When the object is expunged from the session either explicitly 
+        or via transaction commit and enters the &quot;detached&quot; state, 
+        this flag will continue to report True. 
+ 
+        .. seealso:: 
+ 
+            :attr:`.InstanceState.deleted` - refers to the &quot;deleted&quot; state 
+ 
+            :func:`.orm.util.was_deleted` - standalone function 
+ 
+            :ref:`session_object_states` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._deleted</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">persistent(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return ``True`` if the object is :term:`persistent`. 
+ 
+        An object that is in the persistent state is guaranteed to 
+        be within the :attr:`.Session.identity_map` of its parent 
+        :class:`.Session`. 
+ 
+        .. seealso:: 
+ 
+            :ref:`session_object_states` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.key </span><span class="s3">is not None and </span><span class="s1">self._attached </span><span class="s3">and not </span><span class="s1">self._deleted</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">detached(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return ``True`` if the object is :term:`detached`. 
+ 
+        .. seealso:: 
+ 
+            :ref:`session_object_states` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.key </span><span class="s3">is not None and not </span><span class="s1">self._attached</span>
+
+    <span class="s1">@util.non_memoized_property</span>
+    <span class="s1">@util.preload_module(</span><span class="s5">&quot;sqlalchemy.orm.session&quot;</span><span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">_attached(self) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">self.session_id </span><span class="s3">is not None</span>
+            <span class="s3">and </span><span class="s1">self.session_id </span><span class="s3">in </span><span class="s1">util.preloaded.orm_session._sessions</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_track_last_known_value(self</span><span class="s4">, </span><span class="s1">key: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Track the last known value of a particular key after expiration 
+        operations. 
+ 
+        .. versionadded:: 1.3 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">lkv = self._last_known_values</span>
+        <span class="s3">if </span><span class="s1">lkv </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">self._last_known_values = lkv = {}</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">lkv:</span>
+            <span class="s1">lkv[key] = NO_VALUE</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">session(self) -&gt; Optional[Session]:</span>
+        <span class="s2">&quot;&quot;&quot;Return the owning :class:`.Session` for this instance, 
+        or ``None`` if none available. 
+ 
+        Note that the result here can in some cases be *different* 
+        from that of ``obj in session``; an object that's been deleted 
+        will report as not ``in session``, however if the transaction is 
+        still in progress, this attribute will still refer to that session. 
+        Only when the transaction is completed does the object become 
+        fully detached under normal circumstances. 
+ 
+        .. seealso:: 
+ 
+            :attr:`_orm.InstanceState.async_session` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">self.session_id:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">_sessions[self.session_id]</span>
+            <span class="s3">except </span><span class="s1">KeyError:</span>
+                <span class="s3">pass</span>
+        <span class="s3">return None</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">async_session(self) -&gt; Optional[AsyncSession]:</span>
+        <span class="s2">&quot;&quot;&quot;Return the owning :class:`_asyncio.AsyncSession` for this instance, 
+        or ``None`` if none available. 
+ 
+        This attribute is only non-None when the :mod:`sqlalchemy.ext.asyncio` 
+        API is in use for this ORM object. The returned 
+        :class:`_asyncio.AsyncSession` object will be a proxy for the 
+        :class:`_orm.Session` object that would be returned from the 
+        :attr:`_orm.InstanceState.session` attribute for this 
+        :class:`_orm.InstanceState`. 
+ 
+        .. versionadded:: 1.4.18 
+ 
+        .. seealso:: 
+ 
+            :ref:`asyncio_toplevel` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">_async_provider </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">sess = self.session</span>
+        <span class="s3">if </span><span class="s1">sess </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">_async_provider(sess)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">object(self) -&gt; Optional[_O]:</span>
+        <span class="s2">&quot;&quot;&quot;Return the mapped object represented by this 
+        :class:`.InstanceState`. 
+ 
+        Returns None if the object has been garbage collected 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.obj()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">identity(self) -&gt; Optional[Tuple[Any</span><span class="s4">, </span><span class="s1">...]]:</span>
+        <span class="s2">&quot;&quot;&quot;Return the mapped identity of the mapped object. 
+        This is the primary key identity as persisted by the ORM 
+        which can always be passed directly to 
+        :meth:`_query.Query.get`. 
+ 
+        Returns ``None`` if the object has no primary key identity. 
+ 
+        .. note:: 
+            An object which is :term:`transient` or :term:`pending` 
+            does **not** have a mapped identity until it is flushed, 
+            even if its attributes include primary key values. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">self.key </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.key[</span><span class="s6">1</span><span class="s1">]</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">identity_key(self) -&gt; Optional[_IdentityKeyType[_O]]:</span>
+        <span class="s2">&quot;&quot;&quot;Return the identity key for the mapped object. 
+ 
+        This is the key used to locate the object within 
+        the :attr:`.Session.identity_map` mapping.   It contains 
+        the identity as returned by :attr:`.identity` within it. 
+ 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.key</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">parents(self) -&gt; Dict[int</span><span class="s4">, </span><span class="s1">Union[Literal[</span><span class="s3">False</span><span class="s1">]</span><span class="s4">, </span><span class="s1">InstanceState[Any]]]:</span>
+        <span class="s3">return </span><span class="s1">{}</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_pending_mutations(self) -&gt; Dict[str</span><span class="s4">, </span><span class="s1">PendingCollection]:</span>
+        <span class="s3">return </span><span class="s1">{}</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_empty_collections(self) -&gt; Dict[str</span><span class="s4">, </span><span class="s1">_AdaptedCollectionProtocol]:</span>
+        <span class="s3">return </span><span class="s1">{}</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">mapper(self) -&gt; Mapper[_O]:</span>
+        <span class="s2">&quot;&quot;&quot;Return the :class:`_orm.Mapper` used for this mapped object.&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.manager.mapper</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">has_identity(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;Return ``True`` if this object has an identity key. 
+ 
+        This should always have the same value as the 
+        expression ``state.persistent`` or ``state.detached``. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">bool(self.key)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_detach_states(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">states: Iterable[InstanceState[_O]]</span><span class="s4">,</span>
+        <span class="s1">session: Session</span><span class="s4">,</span>
+        <span class="s1">to_transient: bool = </span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">persistent_to_detached = (</span>
+            <span class="s1">session.dispatch.persistent_to_detached </span><span class="s3">or None</span>
+        <span class="s1">)</span>
+        <span class="s1">deleted_to_detached = session.dispatch.deleted_to_detached </span><span class="s3">or None</span>
+        <span class="s1">pending_to_transient = session.dispatch.pending_to_transient </span><span class="s3">or None</span>
+        <span class="s1">persistent_to_transient = (</span>
+            <span class="s1">session.dispatch.persistent_to_transient </span><span class="s3">or None</span>
+        <span class="s1">)</span>
+
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s1">deleted = state._deleted</span>
+            <span class="s1">pending = state.key </span><span class="s3">is None</span>
+            <span class="s1">persistent = </span><span class="s3">not </span><span class="s1">pending </span><span class="s3">and not </span><span class="s1">deleted</span>
+
+            <span class="s1">state.session_id = </span><span class="s3">None</span>
+
+            <span class="s3">if </span><span class="s1">to_transient </span><span class="s3">and </span><span class="s1">state.key:</span>
+                <span class="s3">del </span><span class="s1">state.key</span>
+            <span class="s3">if </span><span class="s1">persistent:</span>
+                <span class="s3">if </span><span class="s1">to_transient:</span>
+                    <span class="s3">if </span><span class="s1">persistent_to_transient </span><span class="s3">is not None</span><span class="s1">:</span>
+                        <span class="s1">persistent_to_transient(session</span><span class="s4">, </span><span class="s1">state)</span>
+                <span class="s3">elif </span><span class="s1">persistent_to_detached </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s1">persistent_to_detached(session</span><span class="s4">, </span><span class="s1">state)</span>
+            <span class="s3">elif </span><span class="s1">deleted </span><span class="s3">and </span><span class="s1">deleted_to_detached </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">deleted_to_detached(session</span><span class="s4">, </span><span class="s1">state)</span>
+            <span class="s3">elif </span><span class="s1">pending </span><span class="s3">and </span><span class="s1">pending_to_transient </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">pending_to_transient(session</span><span class="s4">, </span><span class="s1">state)</span>
+
+            <span class="s1">state._strong_obj = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">_detach(self</span><span class="s4">, </span><span class="s1">session: Optional[Session] = </span><span class="s3">None</span><span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">session:</span>
+            <span class="s1">InstanceState._detach_states([self]</span><span class="s4">, </span><span class="s1">session)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.session_id = self._strong_obj = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">_dispose(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s0"># used by the test suite, apparently</span>
+        <span class="s1">self._detach()</span>
+
+    <span class="s3">def </span><span class="s1">_cleanup(self</span><span class="s4">, </span><span class="s1">ref: weakref.ref[_O]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Weakref callback cleanup. 
+ 
+        This callable cleans out the state when it is being garbage 
+        collected. 
+ 
+        this _cleanup **assumes** that there are no strong refs to us! 
+        Will not work otherwise! 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0"># Python builtins become undefined during interpreter shutdown.</span>
+        <span class="s0"># Guard against exceptions during this phase, as the method cannot</span>
+        <span class="s0"># proceed in any case if builtins have been undefined.</span>
+        <span class="s3">if </span><span class="s1">dict </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">instance_dict = self._instance_dict()</span>
+        <span class="s3">if </span><span class="s1">instance_dict </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">instance_dict._fast_discard(self)</span>
+            <span class="s3">del </span><span class="s1">self._instance_dict</span>
+
+            <span class="s0"># we can't possibly be in instance_dict._modified</span>
+            <span class="s0"># b.c. this is weakref cleanup only, that set</span>
+            <span class="s0"># is strong referencing!</span>
+            <span class="s0"># assert self not in instance_dict._modified</span>
+
+        <span class="s1">self.session_id = self._strong_obj = </span><span class="s3">None</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">dict(self) -&gt; _InstanceDict:</span>
+        <span class="s2">&quot;&quot;&quot;Return the instance dict used by the object. 
+ 
+        Under normal circumstances, this is always synonymous 
+        with the ``__dict__`` attribute of the mapped object, 
+        unless an alternative instrumentation system has been 
+        configured. 
+ 
+        In the case that the actual object has been garbage 
+        collected, this accessor returns a blank dictionary. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">o = self.obj()</span>
+        <span class="s3">if </span><span class="s1">o </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">base.instance_dict(o)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">{}</span>
+
+    <span class="s3">def </span><span class="s1">_initialize_instance(*mixed: Any</span><span class="s4">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">instance</span><span class="s4">, </span><span class="s1">args = mixed[</span><span class="s6">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">mixed[</span><span class="s6">1</span><span class="s1">]</span><span class="s4">, </span><span class="s1">mixed[</span><span class="s6">2</span><span class="s1">:]  </span><span class="s0"># noqa</span>
+        <span class="s1">manager = self.manager</span>
+
+        <span class="s1">manager.dispatch.init(self</span><span class="s4">, </span><span class="s1">args</span><span class="s4">, </span><span class="s1">kwargs)</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">manager.original_init(*mixed[</span><span class="s6">1</span><span class="s1">:]</span><span class="s4">, </span><span class="s1">**kwargs)</span>
+        <span class="s3">except</span><span class="s1">:</span>
+            <span class="s3">with </span><span class="s1">util.safe_reraise():</span>
+                <span class="s1">manager.dispatch.init_failure(self</span><span class="s4">, </span><span class="s1">args</span><span class="s4">, </span><span class="s1">kwargs)</span>
+
+    <span class="s3">def </span><span class="s1">get_history(self</span><span class="s4">, </span><span class="s1">key: str</span><span class="s4">, </span><span class="s1">passive: PassiveFlag) -&gt; History:</span>
+        <span class="s3">return </span><span class="s1">self.manager[key].impl.get_history(self</span><span class="s4">, </span><span class="s1">self.dict</span><span class="s4">, </span><span class="s1">passive)</span>
+
+    <span class="s3">def </span><span class="s1">get_impl(self</span><span class="s4">, </span><span class="s1">key: str) -&gt; AttributeImpl:</span>
+        <span class="s3">return </span><span class="s1">self.manager[key].impl</span>
+
+    <span class="s3">def </span><span class="s1">_get_pending_mutation(self</span><span class="s4">, </span><span class="s1">key: str) -&gt; PendingCollection:</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">self._pending_mutations:</span>
+            <span class="s1">self._pending_mutations[key] = PendingCollection()</span>
+        <span class="s3">return </span><span class="s1">self._pending_mutations[key]</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self) -&gt; Dict[str</span><span class="s4">, </span><span class="s1">Any]:</span>
+        <span class="s1">state_dict: Dict[str</span><span class="s4">, </span><span class="s1">Any] = {</span>
+            <span class="s5">&quot;instance&quot;</span><span class="s1">: self.obj()</span><span class="s4">,</span>
+            <span class="s5">&quot;class_&quot;</span><span class="s1">: self.class_</span><span class="s4">,</span>
+            <span class="s5">&quot;committed_state&quot;</span><span class="s1">: self.committed_state</span><span class="s4">,</span>
+            <span class="s5">&quot;expired_attributes&quot;</span><span class="s1">: self.expired_attributes</span><span class="s4">,</span>
+        <span class="s1">}</span>
+        <span class="s1">state_dict.update(</span>
+            <span class="s1">(k</span><span class="s4">, </span><span class="s1">self.__dict__[k])</span>
+            <span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s5">&quot;_pending_mutations&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;modified&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;expired&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;callables&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;key&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;parents&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;load_options&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;class_&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;expired_attributes&quot;</span><span class="s4">,</span>
+                <span class="s5">&quot;info&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">self.__dict__</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">self.load_path:</span>
+            <span class="s1">state_dict[</span><span class="s5">&quot;load_path&quot;</span><span class="s1">] = self.load_path.serialize()</span>
+
+        <span class="s1">state_dict[</span><span class="s5">&quot;manager&quot;</span><span class="s1">] = self.manager._serialize(self</span><span class="s4">, </span><span class="s1">state_dict)</span>
+
+        <span class="s3">return </span><span class="s1">state_dict</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s4">, </span><span class="s1">state_dict: Dict[str</span><span class="s4">, </span><span class="s1">Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">inst = state_dict[</span><span class="s5">&quot;instance&quot;</span><span class="s1">]</span>
+        <span class="s3">if </span><span class="s1">inst </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.obj = weakref.ref(inst</span><span class="s4">, </span><span class="s1">self._cleanup)</span>
+            <span class="s1">self.class_ = inst.__class__</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.obj = </span><span class="s3">lambda</span><span class="s1">: </span><span class="s3">None  </span><span class="s0"># type: ignore</span>
+            <span class="s1">self.class_ = state_dict[</span><span class="s5">&quot;class_&quot;</span><span class="s1">]</span>
+
+        <span class="s1">self.committed_state = state_dict.get(</span><span class="s5">&quot;committed_state&quot;</span><span class="s4">, </span><span class="s1">{})</span>
+        <span class="s1">self._pending_mutations = state_dict.get(</span><span class="s5">&quot;_pending_mutations&quot;</span><span class="s4">, </span><span class="s1">{})</span>
+        <span class="s1">self.parents = state_dict.get(</span><span class="s5">&quot;parents&quot;</span><span class="s4">, </span><span class="s1">{})</span>
+        <span class="s1">self.modified = state_dict.get(</span><span class="s5">&quot;modified&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">self.expired = state_dict.get(</span><span class="s5">&quot;expired&quot;</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s5">&quot;info&quot; </span><span class="s3">in </span><span class="s1">state_dict:</span>
+            <span class="s1">self.info.update(state_dict[</span><span class="s5">&quot;info&quot;</span><span class="s1">])</span>
+        <span class="s3">if </span><span class="s5">&quot;callables&quot; </span><span class="s3">in </span><span class="s1">state_dict:</span>
+            <span class="s1">self.callables = state_dict[</span><span class="s5">&quot;callables&quot;</span><span class="s1">]</span>
+
+            <span class="s1">self.expired_attributes = state_dict[</span><span class="s5">&quot;expired_attributes&quot;</span><span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s5">&quot;expired_attributes&quot; </span><span class="s3">in </span><span class="s1">state_dict:</span>
+                <span class="s1">self.expired_attributes = state_dict[</span><span class="s5">&quot;expired_attributes&quot;</span><span class="s1">]</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self.expired_attributes = set()</span>
+
+        <span class="s1">self.__dict__.update(</span>
+            <span class="s1">[</span>
+                <span class="s1">(k</span><span class="s4">, </span><span class="s1">state_dict[k])</span>
+                <span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">(</span><span class="s5">&quot;key&quot;</span><span class="s4">, </span><span class="s5">&quot;load_options&quot;</span><span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">state_dict</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">self.key:</span>
+            <span class="s1">self.identity_token = self.key[</span><span class="s6">2</span><span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s5">&quot;load_path&quot; </span><span class="s3">in </span><span class="s1">state_dict:</span>
+            <span class="s1">self.load_path = PathRegistry.deserialize(state_dict[</span><span class="s5">&quot;load_path&quot;</span><span class="s1">])</span>
+
+        <span class="s1">state_dict[</span><span class="s5">&quot;manager&quot;</span><span class="s1">](self</span><span class="s4">, </span><span class="s1">inst</span><span class="s4">, </span><span class="s1">state_dict)</span>
+
+    <span class="s3">def </span><span class="s1">_reset(self</span><span class="s4">, </span><span class="s1">dict_: _InstanceDict</span><span class="s4">, </span><span class="s1">key: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Remove the given attribute and any 
+        callables associated with it.&quot;&quot;&quot;</span>
+
+        <span class="s1">old = dict_.pop(key</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s1">manager_impl = self.manager[key].impl</span>
+        <span class="s3">if </span><span class="s1">old </span><span class="s3">is not None and </span><span class="s1">is_collection_impl(manager_impl):</span>
+            <span class="s1">manager_impl._invalidate_collection(old)</span>
+        <span class="s1">self.expired_attributes.discard(key)</span>
+        <span class="s3">if </span><span class="s1">self.callables:</span>
+            <span class="s1">self.callables.pop(key</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_copy_callables(self</span><span class="s4">, </span><span class="s1">from_: InstanceState[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s5">&quot;callables&quot; </span><span class="s3">in </span><span class="s1">from_.__dict__:</span>
+            <span class="s1">self.callables = dict(from_.callables)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_instance_level_callable_processor(</span>
+        <span class="s1">cls</span><span class="s4">, </span><span class="s1">manager: ClassManager[_O]</span><span class="s4">, </span><span class="s1">fn: _LoaderCallable</span><span class="s4">, </span><span class="s1">key: Any</span>
+    <span class="s1">) -&gt; _InstallLoaderCallableProto[_O]:</span>
+        <span class="s1">impl = manager[key].impl</span>
+        <span class="s3">if </span><span class="s1">is_collection_impl(impl):</span>
+            <span class="s1">fixed_impl = impl</span>
+
+            <span class="s3">def </span><span class="s1">_set_callable(</span>
+                <span class="s1">state: InstanceState[_O]</span><span class="s4">, </span><span class="s1">dict_: _InstanceDict</span><span class="s4">, </span><span class="s1">row: Row[Any]</span>
+            <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s5">&quot;callables&quot; </span><span class="s3">not in </span><span class="s1">state.__dict__:</span>
+                    <span class="s1">state.callables = {}</span>
+                <span class="s1">old = dict_.pop(key</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">old </span><span class="s3">is not None</span><span class="s1">:</span>
+                    <span class="s1">fixed_impl._invalidate_collection(old)</span>
+                <span class="s1">state.callables[key] = fn</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">_set_callable(</span>
+                <span class="s1">state: InstanceState[_O]</span><span class="s4">, </span><span class="s1">dict_: _InstanceDict</span><span class="s4">, </span><span class="s1">row: Row[Any]</span>
+            <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s5">&quot;callables&quot; </span><span class="s3">not in </span><span class="s1">state.__dict__:</span>
+                    <span class="s1">state.callables = {}</span>
+                <span class="s1">state.callables[key] = fn</span>
+
+        <span class="s3">return </span><span class="s1">_set_callable</span>
+
+    <span class="s3">def </span><span class="s1">_expire(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">dict_: _InstanceDict</span><span class="s4">, </span><span class="s1">modified_set: Set[InstanceState[Any]]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.expired = </span><span class="s3">True</span>
+        <span class="s3">if </span><span class="s1">self.modified:</span>
+            <span class="s1">modified_set.discard(self)</span>
+            <span class="s1">self.committed_state.clear()</span>
+            <span class="s1">self.modified = </span><span class="s3">False</span>
+
+        <span class="s1">self._strong_obj = </span><span class="s3">None</span>
+
+        <span class="s3">if </span><span class="s5">&quot;_pending_mutations&quot; </span><span class="s3">in </span><span class="s1">self.__dict__:</span>
+            <span class="s3">del </span><span class="s1">self.__dict__[</span><span class="s5">&quot;_pending_mutations&quot;</span><span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s5">&quot;parents&quot; </span><span class="s3">in </span><span class="s1">self.__dict__:</span>
+            <span class="s3">del </span><span class="s1">self.__dict__[</span><span class="s5">&quot;parents&quot;</span><span class="s1">]</span>
+
+        <span class="s1">self.expired_attributes.update(</span>
+            <span class="s1">[impl.key </span><span class="s3">for </span><span class="s1">impl </span><span class="s3">in </span><span class="s1">self.manager._loader_impls]</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self.callables:</span>
+            <span class="s0"># the per state loader callables we can remove here are</span>
+            <span class="s0"># LoadDeferredColumns, which undefers a column at the instance</span>
+            <span class="s0"># level that is mapped with deferred, and LoadLazyAttribute,</span>
+            <span class="s0"># which lazy loads a relationship at the instance level that</span>
+            <span class="s0"># is mapped with &quot;noload&quot; or perhaps &quot;immediateload&quot;.</span>
+            <span class="s0"># Before 1.4, only column-based</span>
+            <span class="s0"># attributes could be considered to be &quot;expired&quot;, so here they</span>
+            <span class="s0"># were the only ones &quot;unexpired&quot;, which means to make them deferred</span>
+            <span class="s0"># again.   For the moment, as of 1.4 we also apply the same</span>
+            <span class="s0"># treatment relationships now, that is, an instance level lazy</span>
+            <span class="s0"># loader is reset in the same way as a column loader.</span>
+            <span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">self.expired_attributes.intersection(self.callables):</span>
+                <span class="s3">del </span><span class="s1">self.callables[k]</span>
+
+        <span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">self.manager._collection_impl_keys.intersection(dict_):</span>
+            <span class="s1">collection = dict_.pop(k)</span>
+            <span class="s1">collection._sa_adapter.invalidated = </span><span class="s3">True</span>
+
+        <span class="s3">if </span><span class="s1">self._last_known_values:</span>
+            <span class="s1">self._last_known_values.update(</span>
+                <span class="s1">{k: dict_[k] </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">self._last_known_values </span><span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">dict_}</span>
+            <span class="s1">)</span>
+
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self.manager._all_key_set.intersection(dict_):</span>
+            <span class="s3">del </span><span class="s1">dict_[key]</span>
+
+        <span class="s1">self.manager.dispatch.expire(self</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_expire_attributes(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s4">,</span>
+        <span class="s1">attribute_names: Iterable[str]</span><span class="s4">,</span>
+        <span class="s1">no_loader: bool = </span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">pending = self.__dict__.get(</span><span class="s5">&quot;_pending_mutations&quot;</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s1">callables = self.callables</span>
+
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">attribute_names:</span>
+            <span class="s1">impl = self.manager[key].impl</span>
+            <span class="s3">if </span><span class="s1">impl.accepts_scalar_loader:</span>
+                <span class="s3">if </span><span class="s1">no_loader </span><span class="s3">and </span><span class="s1">(impl.callable_ </span><span class="s3">or </span><span class="s1">key </span><span class="s3">in </span><span class="s1">callables):</span>
+                    <span class="s3">continue</span>
+
+                <span class="s1">self.expired_attributes.add(key)</span>
+                <span class="s3">if </span><span class="s1">callables </span><span class="s3">and </span><span class="s1">key </span><span class="s3">in </span><span class="s1">callables:</span>
+                    <span class="s3">del </span><span class="s1">callables[key]</span>
+            <span class="s1">old = dict_.pop(key</span><span class="s4">, </span><span class="s1">NO_VALUE)</span>
+            <span class="s3">if </span><span class="s1">is_collection_impl(impl) </span><span class="s3">and </span><span class="s1">old </span><span class="s3">is not </span><span class="s1">NO_VALUE:</span>
+                <span class="s1">impl._invalidate_collection(old)</span>
+
+            <span class="s1">lkv = self._last_known_values</span>
+            <span class="s3">if </span><span class="s1">lkv </span><span class="s3">is not None and </span><span class="s1">key </span><span class="s3">in </span><span class="s1">lkv </span><span class="s3">and </span><span class="s1">old </span><span class="s3">is not </span><span class="s1">NO_VALUE:</span>
+                <span class="s1">lkv[key] = old</span>
+
+            <span class="s1">self.committed_state.pop(key</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">pending:</span>
+                <span class="s1">pending.pop(key</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s1">self.manager.dispatch.expire(self</span><span class="s4">, </span><span class="s1">attribute_names)</span>
+
+    <span class="s3">def </span><span class="s1">_load_expired(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">state: InstanceState[_O]</span><span class="s4">, </span><span class="s1">passive: PassiveFlag</span>
+    <span class="s1">) -&gt; LoaderCallableStatus:</span>
+        <span class="s2">&quot;&quot;&quot;__call__ allows the InstanceState to act as a deferred 
+        callable for loading expired attributes, which is also 
+        serializable (picklable). 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if not </span><span class="s1">passive &amp; SQL_OK:</span>
+            <span class="s3">return </span><span class="s1">PASSIVE_NO_RESULT</span>
+
+        <span class="s1">toload = self.expired_attributes.intersection(self.unmodified)</span>
+        <span class="s1">toload = toload.difference(</span>
+            <span class="s1">attr</span>
+            <span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">toload</span>
+            <span class="s3">if not </span><span class="s1">self.manager[attr].impl.load_on_unexpire</span>
+        <span class="s1">)</span>
+
+        <span class="s1">self.manager.expired_attribute_loader(self</span><span class="s4">, </span><span class="s1">toload</span><span class="s4">, </span><span class="s1">passive)</span>
+
+        <span class="s0"># if the loader failed, or this</span>
+        <span class="s0"># instance state didn't have an identity,</span>
+        <span class="s0"># the attributes still might be in the callables</span>
+        <span class="s0"># dict.  ensure they are removed.</span>
+        <span class="s1">self.expired_attributes.clear()</span>
+
+        <span class="s3">return </span><span class="s1">ATTR_WAS_SET</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unmodified(self) -&gt; Set[str]:</span>
+        <span class="s2">&quot;&quot;&quot;Return the set of keys which have no uncommitted changes&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">set(self.manager).difference(self.committed_state)</span>
+
+    <span class="s3">def </span><span class="s1">unmodified_intersection(self</span><span class="s4">, </span><span class="s1">keys: Iterable[str]) -&gt; Set[str]:</span>
+        <span class="s2">&quot;&quot;&quot;Return self.unmodified.intersection(keys).&quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">set(keys)</span>
+            <span class="s1">.intersection(self.manager)</span>
+            <span class="s1">.difference(self.committed_state)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">unloaded(self) -&gt; Set[str]:</span>
+        <span class="s2">&quot;&quot;&quot;Return the set of keys which do not have a loaded value. 
+ 
+        This includes expired attributes and any other attribute that was never 
+        populated or modified. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">set(self.manager)</span>
+            <span class="s1">.difference(self.committed_state)</span>
+            <span class="s1">.difference(self.dict)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s1">@util.deprecated(</span>
+        <span class="s5">&quot;2.0&quot;</span><span class="s4">,</span>
+        <span class="s5">&quot;The :attr:`.InstanceState.unloaded_expirable` attribute is &quot;</span>
+        <span class="s5">&quot;deprecated.  Please use :attr:`.InstanceState.unloaded`.&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">unloaded_expirable(self) -&gt; Set[str]:</span>
+        <span class="s2">&quot;&quot;&quot;Synonymous with :attr:`.InstanceState.unloaded`. 
+ 
+        This attribute was added as an implementation-specific detail at some 
+        point and should be considered to be private. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.unloaded</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_unloaded_non_object(self) -&gt; Set[str]:</span>
+        <span class="s3">return </span><span class="s1">self.unloaded.intersection(</span>
+            <span class="s1">attr</span>
+            <span class="s3">for </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">self.manager</span>
+            <span class="s3">if </span><span class="s1">self.manager[attr].impl.accepts_scalar_loader</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_modified_event(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s4">,</span>
+        <span class="s1">attr: Optional[AttributeImpl]</span><span class="s4">,</span>
+        <span class="s1">previous: Any</span><span class="s4">,</span>
+        <span class="s1">collection: bool = </span><span class="s3">False</span><span class="s4">,</span>
+        <span class="s1">is_userland: bool = </span><span class="s3">False</span><span class="s4">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">attr:</span>
+            <span class="s3">if not </span><span class="s1">attr.send_modified_events:</span>
+                <span class="s3">return</span>
+            <span class="s3">if </span><span class="s1">is_userland </span><span class="s3">and </span><span class="s1">attr.key </span><span class="s3">not in </span><span class="s1">dict_:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s5">&quot;Can't flag attribute '%s' modified; it's not present in &quot;</span>
+                    <span class="s5">&quot;the object state&quot; </span><span class="s1">% attr.key</span>
+                <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">attr.key </span><span class="s3">not in </span><span class="s1">self.committed_state </span><span class="s3">or </span><span class="s1">is_userland:</span>
+                <span class="s3">if </span><span class="s1">collection:</span>
+                    <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+                        <span class="s3">assert </span><span class="s1">is_collection_impl(attr)</span>
+                    <span class="s3">if </span><span class="s1">previous </span><span class="s3">is </span><span class="s1">NEVER_SET:</span>
+                        <span class="s3">if </span><span class="s1">attr.key </span><span class="s3">in </span><span class="s1">dict_:</span>
+                            <span class="s1">previous = dict_[attr.key]</span>
+
+                    <span class="s3">if </span><span class="s1">previous </span><span class="s3">not in </span><span class="s1">(</span><span class="s3">None</span><span class="s4">, </span><span class="s1">NO_VALUE</span><span class="s4">, </span><span class="s1">NEVER_SET):</span>
+                        <span class="s1">previous = attr.copy(previous)</span>
+                <span class="s1">self.committed_state[attr.key] = previous</span>
+
+            <span class="s1">lkv = self._last_known_values</span>
+            <span class="s3">if </span><span class="s1">lkv </span><span class="s3">is not None and </span><span class="s1">attr.key </span><span class="s3">in </span><span class="s1">lkv:</span>
+                <span class="s1">lkv[attr.key] = NO_VALUE</span>
+
+        <span class="s0"># assert self._strong_obj is None or self.modified</span>
+
+        <span class="s3">if </span><span class="s1">(self.session_id </span><span class="s3">and </span><span class="s1">self._strong_obj </span><span class="s3">is None</span><span class="s1">) </span><span class="s3">or not </span><span class="s1">self.modified:</span>
+            <span class="s1">self.modified = </span><span class="s3">True</span>
+            <span class="s1">instance_dict = self._instance_dict()</span>
+            <span class="s3">if </span><span class="s1">instance_dict:</span>
+                <span class="s1">has_modified = bool(instance_dict._modified)</span>
+                <span class="s1">instance_dict._modified.add(self)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">has_modified = </span><span class="s3">False</span>
+
+            <span class="s0"># only create _strong_obj link if attached</span>
+            <span class="s0"># to a session</span>
+
+            <span class="s1">inst = self.obj()</span>
+            <span class="s3">if </span><span class="s1">self.session_id:</span>
+                <span class="s1">self._strong_obj = inst</span>
+
+                <span class="s0"># if identity map already had modified objects,</span>
+                <span class="s0"># assume autobegin already occurred, else check</span>
+                <span class="s0"># for autobegin</span>
+                <span class="s3">if not </span><span class="s1">has_modified:</span>
+                    <span class="s0"># inline of autobegin, to ensure session transaction</span>
+                    <span class="s0"># snapshot is established</span>
+                    <span class="s3">try</span><span class="s1">:</span>
+                        <span class="s1">session = _sessions[self.session_id]</span>
+                    <span class="s3">except </span><span class="s1">KeyError:</span>
+                        <span class="s3">pass</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s3">if </span><span class="s1">session._transaction </span><span class="s3">is None</span><span class="s1">:</span>
+                            <span class="s1">session._autobegin_t()</span>
+
+            <span class="s3">if </span><span class="s1">inst </span><span class="s3">is None and </span><span class="s1">attr:</span>
+                <span class="s3">raise </span><span class="s1">orm_exc.ObjectDereferencedError(</span>
+                    <span class="s5">&quot;Can't emit change event for attribute '%s' - &quot;</span>
+                    <span class="s5">&quot;parent object of type %s has been garbage &quot;</span>
+                    <span class="s5">&quot;collected.&quot;</span>
+                    <span class="s1">% (self.manager[attr.key]</span><span class="s4">, </span><span class="s1">base.state_class_str(self))</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_commit(self</span><span class="s4">, </span><span class="s1">dict_: _InstanceDict</span><span class="s4">, </span><span class="s1">keys: Iterable[str]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Commit attributes. 
+ 
+        This is used by a partial-attribute load operation to mark committed 
+        those attributes which were refreshed from the database. 
+ 
+        Attributes marked as &quot;expired&quot; can potentially remain &quot;expired&quot; after 
+        this step if a value was not populated in state.dict. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">keys:</span>
+            <span class="s1">self.committed_state.pop(key</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s1">self.expired = </span><span class="s3">False</span>
+
+        <span class="s1">self.expired_attributes.difference_update(</span>
+            <span class="s1">set(keys).intersection(dict_)</span>
+        <span class="s1">)</span>
+
+        <span class="s0"># the per-keys commit removes object-level callables,</span>
+        <span class="s0"># while that of commit_all does not.  it's not clear</span>
+        <span class="s0"># if this behavior has a clear rationale, however tests do</span>
+        <span class="s0"># ensure this is what it does.</span>
+        <span class="s3">if </span><span class="s1">self.callables:</span>
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s1">set(self.callables).intersection(keys).intersection(dict_)</span>
+            <span class="s1">):</span>
+                <span class="s3">del </span><span class="s1">self.callables[key]</span>
+
+    <span class="s3">def </span><span class="s1">_commit_all(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">dict_: _InstanceDict</span><span class="s4">, </span><span class="s1">instance_dict: Optional[IdentityMap] = </span><span class="s3">None</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;commit all attributes unconditionally. 
+ 
+        This is used after a flush() or a full load/refresh 
+        to remove all pending state from the instance. 
+ 
+         - all attributes are marked as &quot;committed&quot; 
+         - the &quot;strong dirty reference&quot; is removed 
+         - the &quot;modified&quot; flag is set to False 
+         - any &quot;expired&quot; markers for scalar attributes loaded are removed. 
+         - lazy load callables for objects / collections *stay* 
+ 
+        Attributes marked as &quot;expired&quot; can potentially remain 
+        &quot;expired&quot; after this step if a value was not populated in state.dict. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._commit_all_states([(self</span><span class="s4">, </span><span class="s1">dict_)]</span><span class="s4">, </span><span class="s1">instance_dict)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_commit_all_states(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">iter_: Iterable[Tuple[InstanceState[Any]</span><span class="s4">, </span><span class="s1">_InstanceDict]]</span><span class="s4">,</span>
+        <span class="s1">instance_dict: Optional[IdentityMap] = </span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Mass / highly inlined version of commit_all().&quot;&quot;&quot;</span>
+
+        <span class="s3">for </span><span class="s1">state</span><span class="s4">, </span><span class="s1">dict_ </span><span class="s3">in </span><span class="s1">iter_:</span>
+            <span class="s1">state_dict = state.__dict__</span>
+
+            <span class="s1">state.committed_state.clear()</span>
+
+            <span class="s3">if </span><span class="s5">&quot;_pending_mutations&quot; </span><span class="s3">in </span><span class="s1">state_dict:</span>
+                <span class="s3">del </span><span class="s1">state_dict[</span><span class="s5">&quot;_pending_mutations&quot;</span><span class="s1">]</span>
+
+            <span class="s1">state.expired_attributes.difference_update(dict_)</span>
+
+            <span class="s3">if </span><span class="s1">instance_dict </span><span class="s3">and </span><span class="s1">state.modified:</span>
+                <span class="s1">instance_dict._modified.discard(state)</span>
+
+            <span class="s1">state.modified = state.expired = </span><span class="s3">False</span>
+            <span class="s1">state._strong_obj = </span><span class="s3">None</span>
+
+
+<span class="s3">class </span><span class="s1">AttributeState:</span>
+    <span class="s2">&quot;&quot;&quot;Provide an inspection interface corresponding 
+    to a particular attribute on a particular mapped object. 
+ 
+    The :class:`.AttributeState` object is accessed 
+    via the :attr:`.InstanceState.attrs` collection 
+    of a particular :class:`.InstanceState`:: 
+ 
+        from sqlalchemy import inspect 
+ 
+        insp = inspect(some_mapped_object) 
+        attr_state = insp.attrs.some_attribute 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s5">&quot;state&quot;</span><span class="s4">, </span><span class="s5">&quot;key&quot;</span><span class="s1">)</span>
+
+    <span class="s1">state: InstanceState[Any]</span>
+    <span class="s1">key: str</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">state: InstanceState[Any]</span><span class="s4">, </span><span class="s1">key: str):</span>
+        <span class="s1">self.state = state</span>
+        <span class="s1">self.key = key</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">loaded_value(self) -&gt; Any:</span>
+        <span class="s2">&quot;&quot;&quot;The current value of this attribute as loaded from the database. 
+ 
+        If the value has not been loaded, or is otherwise not present 
+        in the object's dictionary, returns NO_VALUE. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.state.dict.get(self.key</span><span class="s4">, </span><span class="s1">NO_VALUE)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">value(self) -&gt; Any:</span>
+        <span class="s2">&quot;&quot;&quot;Return the value of this attribute. 
+ 
+        This operation is equivalent to accessing the object's 
+        attribute directly or via ``getattr()``, and will fire 
+        off any pending loader callables if needed. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.state.manager[self.key].__get__(</span>
+            <span class="s1">self.state.obj()</span><span class="s4">, </span><span class="s1">self.state.class_</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">history(self) -&gt; History:</span>
+        <span class="s2">&quot;&quot;&quot;Return the current **pre-flush** change history for 
+        this attribute, via the :class:`.History` interface. 
+ 
+        This method will **not** emit loader callables if the value of the 
+        attribute is unloaded. 
+ 
+        .. note:: 
+ 
+            The attribute history system tracks changes on a **per flush 
+            basis**. Each time the :class:`.Session` is flushed, the history 
+            of each attribute is reset to empty.   The :class:`.Session` by 
+            default autoflushes each time a :class:`_query.Query` is invoked. 
+            For 
+            options on how to control this, see :ref:`session_flushing`. 
+ 
+ 
+        .. seealso:: 
+ 
+            :meth:`.AttributeState.load_history` - retrieve history 
+            using loader callables if the value is not locally present. 
+ 
+            :func:`.attributes.get_history` - underlying function 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.state.get_history(self.key</span><span class="s4">, </span><span class="s1">PASSIVE_NO_INITIALIZE)</span>
+
+    <span class="s3">def </span><span class="s1">load_history(self) -&gt; History:</span>
+        <span class="s2">&quot;&quot;&quot;Return the current **pre-flush** change history for 
+        this attribute, via the :class:`.History` interface. 
+ 
+        This method **will** emit loader callables if the value of the 
+        attribute is unloaded. 
+ 
+        .. note:: 
+ 
+            The attribute history system tracks changes on a **per flush 
+            basis**. Each time the :class:`.Session` is flushed, the history 
+            of each attribute is reset to empty.   The :class:`.Session` by 
+            default autoflushes each time a :class:`_query.Query` is invoked. 
+            For 
+            options on how to control this, see :ref:`session_flushing`. 
+ 
+        .. seealso:: 
+ 
+            :attr:`.AttributeState.history` 
+ 
+            :func:`.attributes.get_history` - underlying function 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.state.get_history(self.key</span><span class="s4">, </span><span class="s1">PASSIVE_OFF ^ INIT_OK)</span>
+
+
+<span class="s3">class </span><span class="s1">PendingCollection:</span>
+    <span class="s2">&quot;&quot;&quot;A writable placeholder for an unloaded collection. 
+ 
+    Stores items appended to and removed from a collection that has not yet 
+    been loaded. When the collection is loaded, the changes stored in 
+    PendingCollection are applied to it to produce the final result. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s5">&quot;deleted_items&quot;</span><span class="s4">, </span><span class="s5">&quot;added_items&quot;</span><span class="s1">)</span>
+
+    <span class="s1">deleted_items: util.IdentitySet</span>
+    <span class="s1">added_items: util.OrderedIdentitySet</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.deleted_items = util.IdentitySet()</span>
+        <span class="s1">self.added_items = util.OrderedIdentitySet()</span>
+
+    <span class="s3">def </span><span class="s1">merge_with_history(self</span><span class="s4">, </span><span class="s1">history: History) -&gt; History:</span>
+        <span class="s3">return </span><span class="s1">history._merge(self.added_items</span><span class="s4">, </span><span class="s1">self.deleted_items)</span>
+
+    <span class="s3">def </span><span class="s1">append(self</span><span class="s4">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">value </span><span class="s3">in </span><span class="s1">self.deleted_items:</span>
+            <span class="s1">self.deleted_items.remove(value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.added_items.add(value)</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s4">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">value </span><span class="s3">in </span><span class="s1">self.added_items:</span>
+            <span class="s1">self.added_items.remove(value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.deleted_items.add(value)</span>
+</pre>
+</body>
+</html>

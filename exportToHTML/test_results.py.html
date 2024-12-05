@@ -1,0 +1,525 @@
+<html>
+<head>
+<title>test_results.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+.s5 { color: #bbb55b;}
+.s6 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+test_results.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/suite/test_results.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">import </span><span class="s1">datetime</span>
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">engines</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">fixtures</span>
+<span class="s2">from </span><span class="s1">..assertions </span><span class="s2">import </span><span class="s1">eq_</span>
+<span class="s2">from </span><span class="s1">..config </span><span class="s2">import </span><span class="s1">requirements</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">Column</span>
+<span class="s2">from </span><span class="s1">..schema </span><span class="s2">import </span><span class="s1">Table</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">DateTime</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">func</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Integer</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">select</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">sql</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">String</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">testing</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">text</span>
+
+
+<span class="s2">class </span><span class="s1">RowFetchTest(fixtures.TablesTest):</span>
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s3">, </span><span class="s1">metadata):</span>
+        <span class="s1">Table(</span>
+            <span class="s4">&quot;plain_pk&quot;</span><span class="s3">,</span>
+            <span class="s1">metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;data&quot;</span><span class="s3">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">Table(</span>
+            <span class="s4">&quot;has_dates&quot;</span><span class="s3">,</span>
+            <span class="s1">metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;id&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;today&quot;</span><span class="s3">, </span><span class="s1">DateTime)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">insert_data(cls</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">cls.tables.plain_pk.insert()</span><span class="s3">,</span>
+            <span class="s1">[</span>
+                <span class="s1">{</span><span class="s4">&quot;id&quot;</span><span class="s1">: </span><span class="s5">1</span><span class="s3">, </span><span class="s4">&quot;data&quot;</span><span class="s1">: </span><span class="s4">&quot;d1&quot;</span><span class="s1">}</span><span class="s3">,</span>
+                <span class="s1">{</span><span class="s4">&quot;id&quot;</span><span class="s1">: </span><span class="s5">2</span><span class="s3">, </span><span class="s4">&quot;data&quot;</span><span class="s1">: </span><span class="s4">&quot;d2&quot;</span><span class="s1">}</span><span class="s3">,</span>
+                <span class="s1">{</span><span class="s4">&quot;id&quot;</span><span class="s1">: </span><span class="s5">3</span><span class="s3">, </span><span class="s4">&quot;data&quot;</span><span class="s1">: </span><span class="s4">&quot;d3&quot;</span><span class="s1">}</span><span class="s3">,</span>
+            <span class="s1">]</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">connection.execute(</span>
+            <span class="s1">cls.tables.has_dates.insert()</span><span class="s3">,</span>
+            <span class="s1">[{</span><span class="s4">&quot;id&quot;</span><span class="s1">: </span><span class="s5">1</span><span class="s3">, </span><span class="s4">&quot;today&quot;</span><span class="s1">: datetime.datetime(</span><span class="s5">2006</span><span class="s3">, </span><span class="s5">5</span><span class="s3">, </span><span class="s5">12</span><span class="s3">, </span><span class="s5">12</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s1">)}]</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_via_attr(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">row = connection.execute(</span>
+            <span class="s1">self.tables.plain_pk.select().order_by(self.tables.plain_pk.c.id)</span>
+        <span class="s1">).first()</span>
+
+        <span class="s1">eq_(row.id</span><span class="s3">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s1">eq_(row.data</span><span class="s3">, </span><span class="s4">&quot;d1&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_via_string(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">row = connection.execute(</span>
+            <span class="s1">self.tables.plain_pk.select().order_by(self.tables.plain_pk.c.id)</span>
+        <span class="s1">).first()</span>
+
+        <span class="s1">eq_(row._mapping[</span><span class="s4">&quot;id&quot;</span><span class="s1">]</span><span class="s3">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s1">eq_(row._mapping[</span><span class="s4">&quot;data&quot;</span><span class="s1">]</span><span class="s3">, </span><span class="s4">&quot;d1&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_via_int(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">row = connection.execute(</span>
+            <span class="s1">self.tables.plain_pk.select().order_by(self.tables.plain_pk.c.id)</span>
+        <span class="s1">).first()</span>
+
+        <span class="s1">eq_(row[</span><span class="s5">0</span><span class="s1">]</span><span class="s3">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s1">eq_(row[</span><span class="s5">1</span><span class="s1">]</span><span class="s3">, </span><span class="s4">&quot;d1&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_via_col_object(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">row = connection.execute(</span>
+            <span class="s1">self.tables.plain_pk.select().order_by(self.tables.plain_pk.c.id)</span>
+        <span class="s1">).first()</span>
+
+        <span class="s1">eq_(row._mapping[self.tables.plain_pk.c.id]</span><span class="s3">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s1">eq_(row._mapping[self.tables.plain_pk.c.data]</span><span class="s3">, </span><span class="s4">&quot;d1&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@requirements.duplicate_names_in_cursor_description</span>
+    <span class="s2">def </span><span class="s1">test_row_with_dupe_names(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">select(</span>
+                <span class="s1">self.tables.plain_pk.c.data</span><span class="s3">,</span>
+                <span class="s1">self.tables.plain_pk.c.data.label(</span><span class="s4">&quot;data&quot;</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">).order_by(self.tables.plain_pk.c.id)</span>
+        <span class="s1">)</span>
+        <span class="s1">row = result.first()</span>
+        <span class="s1">eq_(result.keys()</span><span class="s3">, </span><span class="s1">[</span><span class="s4">&quot;data&quot;</span><span class="s3">, </span><span class="s4">&quot;data&quot;</span><span class="s1">])</span>
+        <span class="s1">eq_(row</span><span class="s3">, </span><span class="s1">(</span><span class="s4">&quot;d1&quot;</span><span class="s3">, </span><span class="s4">&quot;d1&quot;</span><span class="s1">))</span>
+
+    <span class="s2">def </span><span class="s1">test_row_w_scalar_select(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s6">&quot;&quot;&quot;test that a scalar select as a column is returned as such 
+        and that type conversion works OK. 
+ 
+        (this is half a SQLAlchemy Core test and half to catch database 
+        backends that may have unusual behavior with scalar selects.) 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">datetable = self.tables.has_dates</span>
+        <span class="s1">s = select(datetable.alias(</span><span class="s4">&quot;x&quot;</span><span class="s1">).c.today).scalar_subquery()</span>
+        <span class="s1">s2 = select(datetable.c.id</span><span class="s3">, </span><span class="s1">s.label(</span><span class="s4">&quot;somelabel&quot;</span><span class="s1">))</span>
+        <span class="s1">row = connection.execute(s2).first()</span>
+
+        <span class="s1">eq_(row.somelabel</span><span class="s3">, </span><span class="s1">datetime.datetime(</span><span class="s5">2006</span><span class="s3">, </span><span class="s5">5</span><span class="s3">, </span><span class="s5">12</span><span class="s3">, </span><span class="s5">12</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s1">))</span>
+
+
+<span class="s2">class </span><span class="s1">PercentSchemaNamesTest(fixtures.TablesTest):</span>
+    <span class="s6">&quot;&quot;&quot;tests using percent signs, spaces in table and column names. 
+ 
+    This didn't work for PostgreSQL / MySQL drivers for a long time 
+    but is now supported. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__requires__ = (</span><span class="s4">&quot;percent_schema_names&quot;</span><span class="s3">,</span><span class="s1">)</span>
+
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">define_tables(cls</span><span class="s3">, </span><span class="s1">metadata):</span>
+        <span class="s1">cls.tables.percent_table = Table(</span>
+            <span class="s4">&quot;percent%table&quot;</span><span class="s3">,</span>
+            <span class="s1">metadata</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;percent%&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s3">, </span><span class="s1">Integer)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">cls.tables.lightweight_percent_table = sql.table(</span>
+            <span class="s4">&quot;percent%table&quot;</span><span class="s3">,</span>
+            <span class="s1">sql.column(</span><span class="s4">&quot;percent%&quot;</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">sql.column(</span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_single_roundtrip(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">percent_table = self.tables.percent_table</span>
+        <span class="s2">for </span><span class="s1">params </span><span class="s2">in </span><span class="s1">[</span>
+            <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">5</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">12</span><span class="s1">}</span><span class="s3">,</span>
+            <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">7</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">11</span><span class="s1">}</span><span class="s3">,</span>
+            <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">9</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">10</span><span class="s1">}</span><span class="s3">,</span>
+            <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">11</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">9</span><span class="s1">}</span><span class="s3">,</span>
+        <span class="s1">]:</span>
+            <span class="s1">connection.execute(percent_table.insert()</span><span class="s3">, </span><span class="s1">params)</span>
+        <span class="s1">self._assert_table(connection)</span>
+
+    <span class="s2">def </span><span class="s1">test_executemany_roundtrip(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">percent_table = self.tables.percent_table</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">percent_table.insert()</span><span class="s3">, </span><span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">5</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">12</span><span class="s1">}</span>
+        <span class="s1">)</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">percent_table.insert()</span><span class="s3">,</span>
+            <span class="s1">[</span>
+                <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">7</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">11</span><span class="s1">}</span><span class="s3">,</span>
+                <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">9</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">10</span><span class="s1">}</span><span class="s3">,</span>
+                <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">11</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">9</span><span class="s1">}</span><span class="s3">,</span>
+            <span class="s1">]</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self._assert_table(connection)</span>
+
+    <span class="s1">@requirements.insert_executemany_returning</span>
+    <span class="s2">def </span><span class="s1">test_executemany_returning_roundtrip(self</span><span class="s3">, </span><span class="s1">connection):</span>
+        <span class="s1">percent_table = self.tables.percent_table</span>
+        <span class="s1">connection.execute(</span>
+            <span class="s1">percent_table.insert()</span><span class="s3">, </span><span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">5</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">12</span><span class="s1">}</span>
+        <span class="s1">)</span>
+        <span class="s1">result = connection.execute(</span>
+            <span class="s1">percent_table.insert().returning(</span>
+                <span class="s1">percent_table.c[</span><span class="s4">&quot;percent%&quot;</span><span class="s1">]</span><span class="s3">,</span>
+                <span class="s1">percent_table.c[</span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">]</span><span class="s3">,</span>
+            <span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">[</span>
+                <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">7</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">11</span><span class="s1">}</span><span class="s3">,</span>
+                <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">9</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">10</span><span class="s1">}</span><span class="s3">,</span>
+                <span class="s1">{</span><span class="s4">&quot;percent%&quot;</span><span class="s1">: </span><span class="s5">11</span><span class="s3">, </span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">: </span><span class="s5">9</span><span class="s1">}</span><span class="s3">,</span>
+            <span class="s1">]</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">eq_(result.all()</span><span class="s3">, </span><span class="s1">[(</span><span class="s5">7</span><span class="s3">, </span><span class="s5">11</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">9</span><span class="s3">, </span><span class="s5">10</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">11</span><span class="s3">, </span><span class="s5">9</span><span class="s1">)])</span>
+        <span class="s1">self._assert_table(connection)</span>
+
+    <span class="s2">def </span><span class="s1">_assert_table(self</span><span class="s3">, </span><span class="s1">conn):</span>
+        <span class="s1">percent_table = self.tables.percent_table</span>
+        <span class="s1">lightweight_percent_table = self.tables.lightweight_percent_table</span>
+
+        <span class="s2">for </span><span class="s1">table </span><span class="s2">in </span><span class="s1">(</span>
+            <span class="s1">percent_table</span><span class="s3">,</span>
+            <span class="s1">percent_table.alias()</span><span class="s3">,</span>
+            <span class="s1">lightweight_percent_table</span><span class="s3">,</span>
+            <span class="s1">lightweight_percent_table.alias()</span><span class="s3">,</span>
+        <span class="s1">):</span>
+            <span class="s1">eq_(</span>
+                <span class="s1">list(</span>
+                    <span class="s1">conn.execute(table.select().order_by(table.c[</span><span class="s4">&quot;percent%&quot;</span><span class="s1">]))</span>
+                <span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">[(</span><span class="s5">5</span><span class="s3">, </span><span class="s5">12</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">7</span><span class="s3">, </span><span class="s5">11</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">9</span><span class="s3">, </span><span class="s5">10</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">11</span><span class="s3">, </span><span class="s5">9</span><span class="s1">)]</span><span class="s3">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">eq_(</span>
+                <span class="s1">list(</span>
+                    <span class="s1">conn.execute(</span>
+                        <span class="s1">table.select()</span>
+                        <span class="s1">.where(table.c[</span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">].in_([</span><span class="s5">9</span><span class="s3">, </span><span class="s5">10</span><span class="s1">]))</span>
+                        <span class="s1">.order_by(table.c[</span><span class="s4">&quot;percent%&quot;</span><span class="s1">])</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">[(</span><span class="s5">9</span><span class="s3">, </span><span class="s5">10</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">11</span><span class="s3">, </span><span class="s5">9</span><span class="s1">)]</span><span class="s3">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">row = conn.execute(</span>
+                <span class="s1">table.select().order_by(table.c[</span><span class="s4">&quot;percent%&quot;</span><span class="s1">])</span>
+            <span class="s1">).first()</span>
+            <span class="s1">eq_(row._mapping[</span><span class="s4">&quot;percent%&quot;</span><span class="s1">]</span><span class="s3">, </span><span class="s5">5</span><span class="s1">)</span>
+            <span class="s1">eq_(row._mapping[</span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">]</span><span class="s3">, </span><span class="s5">12</span><span class="s1">)</span>
+
+            <span class="s1">eq_(row._mapping[table.c[</span><span class="s4">&quot;percent%&quot;</span><span class="s1">]]</span><span class="s3">, </span><span class="s5">5</span><span class="s1">)</span>
+            <span class="s1">eq_(row._mapping[table.c[</span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">]]</span><span class="s3">, </span><span class="s5">12</span><span class="s1">)</span>
+
+        <span class="s1">conn.execute(</span>
+            <span class="s1">percent_table.update().values(</span>
+                <span class="s1">{percent_table.c[</span><span class="s4">&quot;spaces % more spaces&quot;</span><span class="s1">]: </span><span class="s5">15</span><span class="s1">}</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">eq_(</span>
+            <span class="s1">list(</span>
+                <span class="s1">conn.execute(</span>
+                    <span class="s1">percent_table.select().order_by(</span>
+                        <span class="s1">percent_table.c[</span><span class="s4">&quot;percent%&quot;</span><span class="s1">]</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">[(</span><span class="s5">5</span><span class="s3">, </span><span class="s5">15</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">7</span><span class="s3">, </span><span class="s5">15</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">9</span><span class="s3">, </span><span class="s5">15</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">11</span><span class="s3">, </span><span class="s5">15</span><span class="s1">)]</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">ServerSideCursorsTest(</span>
+    <span class="s1">fixtures.TestBase</span><span class="s3">, </span><span class="s1">testing.AssertsExecutionResults</span>
+<span class="s1">):</span>
+    <span class="s1">__requires__ = (</span><span class="s4">&quot;server_side_cursors&quot;</span><span class="s3">,</span><span class="s1">)</span>
+
+    <span class="s1">__backend__ = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_is_server_side(self</span><span class="s3">, </span><span class="s1">cursor):</span>
+        <span class="s0"># TODO: this is a huge issue as it prevents these tests from being</span>
+        <span class="s0"># usable by third party dialects.</span>
+        <span class="s2">if </span><span class="s1">self.engine.dialect.driver == </span><span class="s4">&quot;psycopg2&quot;</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">bool(cursor.name)</span>
+        <span class="s2">elif </span><span class="s1">self.engine.dialect.driver == </span><span class="s4">&quot;pymysql&quot;</span><span class="s1">:</span>
+            <span class="s1">sscursor = __import__(</span><span class="s4">&quot;pymysql.cursors&quot;</span><span class="s1">).cursors.SSCursor</span>
+            <span class="s2">return </span><span class="s1">isinstance(cursor</span><span class="s3">, </span><span class="s1">sscursor)</span>
+        <span class="s2">elif </span><span class="s1">self.engine.dialect.driver </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;aiomysql&quot;</span><span class="s3">, </span><span class="s4">&quot;asyncmy&quot;</span><span class="s3">, </span><span class="s4">&quot;aioodbc&quot;</span><span class="s1">):</span>
+            <span class="s2">return </span><span class="s1">cursor.server_side</span>
+        <span class="s2">elif </span><span class="s1">self.engine.dialect.driver == </span><span class="s4">&quot;mysqldb&quot;</span><span class="s1">:</span>
+            <span class="s1">sscursor = __import__(</span><span class="s4">&quot;MySQLdb.cursors&quot;</span><span class="s1">).cursors.SSCursor</span>
+            <span class="s2">return </span><span class="s1">isinstance(cursor</span><span class="s3">, </span><span class="s1">sscursor)</span>
+        <span class="s2">elif </span><span class="s1">self.engine.dialect.driver == </span><span class="s4">&quot;mariadbconnector&quot;</span><span class="s1">:</span>
+            <span class="s2">return not </span><span class="s1">cursor.buffered</span>
+        <span class="s2">elif </span><span class="s1">self.engine.dialect.driver </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;asyncpg&quot;</span><span class="s3">, </span><span class="s4">&quot;aiosqlite&quot;</span><span class="s1">):</span>
+            <span class="s2">return </span><span class="s1">cursor.server_side</span>
+        <span class="s2">elif </span><span class="s1">self.engine.dialect.driver == </span><span class="s4">&quot;pg8000&quot;</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">getattr(cursor</span><span class="s3">, </span><span class="s4">&quot;server_side&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s2">elif </span><span class="s1">self.engine.dialect.driver == </span><span class="s4">&quot;psycopg&quot;</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">bool(getattr(cursor</span><span class="s3">, </span><span class="s4">&quot;name&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">))</span>
+        <span class="s2">elif </span><span class="s1">self.engine.dialect.driver == </span><span class="s4">&quot;oracledb&quot;</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">getattr(cursor</span><span class="s3">, </span><span class="s4">&quot;server_side&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return False</span>
+
+    <span class="s2">def </span><span class="s1">_fixture(self</span><span class="s3">, </span><span class="s1">server_side_cursors):</span>
+        <span class="s2">if </span><span class="s1">server_side_cursors:</span>
+            <span class="s2">with </span><span class="s1">testing.expect_deprecated(</span>
+                <span class="s4">&quot;The create_engine.server_side_cursors parameter is &quot;</span>
+                <span class="s4">&quot;deprecated and will be removed in a future release.  &quot;</span>
+                <span class="s4">&quot;Please use the Connection.execution_options.stream_results &quot;</span>
+                <span class="s4">&quot;parameter.&quot;</span>
+            <span class="s1">):</span>
+                <span class="s1">self.engine = engines.testing_engine(</span>
+                    <span class="s1">options={</span><span class="s4">&quot;server_side_cursors&quot;</span><span class="s1">: server_side_cursors}</span>
+                <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.engine = engines.testing_engine(</span>
+                <span class="s1">options={</span><span class="s4">&quot;server_side_cursors&quot;</span><span class="s1">: server_side_cursors}</span>
+            <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">self.engine</span>
+
+    <span class="s2">def </span><span class="s1">stringify(self</span><span class="s3">, </span><span class="s1">str_):</span>
+        <span class="s2">return </span><span class="s1">re.compile(</span><span class="s4">r&quot;SELECT (\d+)&quot;</span><span class="s3">, </span><span class="s1">re.I).sub(</span>
+            <span class="s2">lambda </span><span class="s1">m: str(select(int(m.group(</span><span class="s5">1</span><span class="s1">))).compile(testing.db))</span><span class="s3">, </span><span class="s1">str_</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@testing.combinations(</span>
+        <span class="s1">(</span><span class="s4">&quot;global_string&quot;</span><span class="s3">, </span><span class="s2">True</span><span class="s3">, </span><span class="s2">lambda </span><span class="s1">stringify: stringify(</span><span class="s4">&quot;select 1&quot;</span><span class="s1">)</span><span class="s3">, </span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;global_text&quot;</span><span class="s3">,</span>
+            <span class="s2">True</span><span class="s3">,</span>
+            <span class="s2">lambda </span><span class="s1">stringify: text(stringify(</span><span class="s4">&quot;select 1&quot;</span><span class="s1">))</span><span class="s3">,</span>
+            <span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span><span class="s4">&quot;global_expr&quot;</span><span class="s3">, </span><span class="s2">True</span><span class="s3">, </span><span class="s1">select(</span><span class="s5">1</span><span class="s1">)</span><span class="s3">, </span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;global_off_explicit&quot;</span><span class="s3">,</span>
+            <span class="s2">False</span><span class="s3">,</span>
+            <span class="s2">lambda </span><span class="s1">stringify: text(stringify(</span><span class="s4">&quot;select 1&quot;</span><span class="s1">))</span><span class="s3">,</span>
+            <span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;stmt_option&quot;</span><span class="s3">,</span>
+            <span class="s2">False</span><span class="s3">,</span>
+            <span class="s1">select(</span><span class="s5">1</span><span class="s1">).execution_options(stream_results=</span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;stmt_option_disabled&quot;</span><span class="s3">,</span>
+            <span class="s2">True</span><span class="s3">,</span>
+            <span class="s1">select(</span><span class="s5">1</span><span class="s1">).execution_options(stream_results=</span><span class="s2">False</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span><span class="s4">&quot;for_update_expr&quot;</span><span class="s3">, </span><span class="s2">True</span><span class="s3">, </span><span class="s1">select(</span><span class="s5">1</span><span class="s1">).with_for_update()</span><span class="s3">, </span><span class="s2">True</span><span class="s1">)</span><span class="s3">,</span>
+        <span class="s0"># TODO: need a real requirement for this, or dont use this test</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;for_update_string&quot;</span><span class="s3">,</span>
+            <span class="s2">True</span><span class="s3">,</span>
+            <span class="s2">lambda </span><span class="s1">stringify: stringify(</span><span class="s4">&quot;SELECT 1 FOR UPDATE&quot;</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s2">True</span><span class="s3">,</span>
+            <span class="s1">testing.skip_if([</span><span class="s4">&quot;sqlite&quot;</span><span class="s3">, </span><span class="s4">&quot;mssql&quot;</span><span class="s1">])</span><span class="s3">,</span>
+        <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;text_no_ss&quot;</span><span class="s3">,</span>
+            <span class="s2">False</span><span class="s3">,</span>
+            <span class="s2">lambda </span><span class="s1">stringify: text(stringify(</span><span class="s4">&quot;select 42&quot;</span><span class="s1">))</span><span class="s3">,</span>
+            <span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">(</span>
+            <span class="s4">&quot;text_ss_option&quot;</span><span class="s3">,</span>
+            <span class="s2">False</span><span class="s3">,</span>
+            <span class="s2">lambda </span><span class="s1">stringify: text(stringify(</span><span class="s4">&quot;select 42&quot;</span><span class="s1">)).execution_options(</span>
+                <span class="s1">stream_results=</span><span class="s2">True</span>
+            <span class="s1">)</span><span class="s3">,</span>
+            <span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">id_=</span><span class="s4">&quot;iaaa&quot;</span><span class="s3">,</span>
+        <span class="s1">argnames=</span><span class="s4">&quot;engine_ss_arg, statement, cursor_ss_status&quot;</span><span class="s3">,</span>
+    <span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">test_ss_cursor_status(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">engine_ss_arg</span><span class="s3">, </span><span class="s1">statement</span><span class="s3">, </span><span class="s1">cursor_ss_status</span>
+    <span class="s1">):</span>
+        <span class="s1">engine = self._fixture(engine_ss_arg)</span>
+        <span class="s2">with </span><span class="s1">engine.begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+            <span class="s2">if </span><span class="s1">callable(statement):</span>
+                <span class="s1">statement = testing.resolve_lambda(</span>
+                    <span class="s1">statement</span><span class="s3">, </span><span class="s1">stringify=self.stringify</span>
+                <span class="s1">)</span>
+
+            <span class="s2">if </span><span class="s1">isinstance(statement</span><span class="s3">, </span><span class="s1">str):</span>
+                <span class="s1">result = conn.exec_driver_sql(statement)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">result = conn.execute(statement)</span>
+            <span class="s1">eq_(self._is_server_side(result.cursor)</span><span class="s3">, </span><span class="s1">cursor_ss_status)</span>
+            <span class="s1">result.close()</span>
+
+    <span class="s2">def </span><span class="s1">test_conn_option(self):</span>
+        <span class="s1">engine = self._fixture(</span><span class="s2">False</span><span class="s1">)</span>
+
+        <span class="s2">with </span><span class="s1">engine.connect() </span><span class="s2">as </span><span class="s1">conn:</span>
+            <span class="s0"># should be enabled for this one</span>
+            <span class="s1">result = conn.execution_options(</span>
+                <span class="s1">stream_results=</span><span class="s2">True</span>
+            <span class="s1">).exec_driver_sql(self.stringify(</span><span class="s4">&quot;select 1&quot;</span><span class="s1">))</span>
+            <span class="s2">assert </span><span class="s1">self._is_server_side(result.cursor)</span>
+
+            <span class="s0"># the connection has autobegun, which means at the end of the</span>
+            <span class="s0"># block, we will roll back, which on MySQL at least will fail</span>
+            <span class="s0"># with &quot;Commands out of sync&quot; if the result set</span>
+            <span class="s0"># is not closed, so we close it first.</span>
+            <span class="s0">#</span>
+            <span class="s0"># fun fact!  why did we not have this result.close() in this test</span>
+            <span class="s0"># before 2.0? don't we roll back in the connection pool</span>
+            <span class="s0"># unconditionally? yes!  and in fact if you run this test in 1.4</span>
+            <span class="s0"># with stdout shown, there is in fact &quot;Exception during reset or</span>
+            <span class="s0"># similar&quot; with &quot;Commands out sync&quot; emitted a warning!  2.0's</span>
+            <span class="s0"># architecture finds and fixes what was previously an expensive</span>
+            <span class="s0"># silent error condition.</span>
+            <span class="s1">result.close()</span>
+
+    <span class="s2">def </span><span class="s1">test_stmt_enabled_conn_option_disabled(self):</span>
+        <span class="s1">engine = self._fixture(</span><span class="s2">False</span><span class="s1">)</span>
+
+        <span class="s1">s = select(</span><span class="s5">1</span><span class="s1">).execution_options(stream_results=</span><span class="s2">True</span><span class="s1">)</span>
+
+        <span class="s2">with </span><span class="s1">engine.connect() </span><span class="s2">as </span><span class="s1">conn:</span>
+            <span class="s0"># not this one</span>
+            <span class="s1">result = conn.execution_options(stream_results=</span><span class="s2">False</span><span class="s1">).execute(s)</span>
+            <span class="s2">assert not </span><span class="s1">self._is_server_side(result.cursor)</span>
+
+    <span class="s2">def </span><span class="s1">test_aliases_and_ss(self):</span>
+        <span class="s1">engine = self._fixture(</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">s1 = (</span>
+            <span class="s1">select(sql.literal_column(</span><span class="s4">&quot;1&quot;</span><span class="s1">).label(</span><span class="s4">&quot;x&quot;</span><span class="s1">))</span>
+            <span class="s1">.execution_options(stream_results=</span><span class="s2">True</span><span class="s1">)</span>
+            <span class="s1">.subquery()</span>
+        <span class="s1">)</span>
+
+        <span class="s0"># options don't propagate out when subquery is used as a FROM clause</span>
+        <span class="s2">with </span><span class="s1">engine.begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+            <span class="s1">result = conn.execute(s1.select())</span>
+            <span class="s2">assert not </span><span class="s1">self._is_server_side(result.cursor)</span>
+            <span class="s1">result.close()</span>
+
+        <span class="s1">s2 = select(</span><span class="s5">1</span><span class="s1">).select_from(s1)</span>
+        <span class="s2">with </span><span class="s1">engine.begin() </span><span class="s2">as </span><span class="s1">conn:</span>
+            <span class="s1">result = conn.execute(s2)</span>
+            <span class="s2">assert not </span><span class="s1">self._is_server_side(result.cursor)</span>
+            <span class="s1">result.close()</span>
+
+    <span class="s2">def </span><span class="s1">test_roundtrip_fetchall(self</span><span class="s3">, </span><span class="s1">metadata):</span>
+        <span class="s1">md = self.metadata</span>
+
+        <span class="s1">engine = self._fixture(</span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s1">test_table = Table(</span>
+            <span class="s4">&quot;test_table&quot;</span><span class="s3">,</span>
+            <span class="s1">md</span><span class="s3">,</span>
+            <span class="s1">Column(</span>
+                <span class="s4">&quot;id&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s3">, </span><span class="s1">test_needs_autoincrement=</span><span class="s2">True</span>
+            <span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;data&quot;</span><span class="s3">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+        <span class="s2">with </span><span class="s1">engine.begin() </span><span class="s2">as </span><span class="s1">connection:</span>
+            <span class="s1">test_table.create(connection</span><span class="s3">, </span><span class="s1">checkfirst=</span><span class="s2">True</span><span class="s1">)</span>
+            <span class="s1">connection.execute(test_table.insert()</span><span class="s3">, </span><span class="s1">dict(data=</span><span class="s4">&quot;data1&quot;</span><span class="s1">))</span>
+            <span class="s1">connection.execute(test_table.insert()</span><span class="s3">, </span><span class="s1">dict(data=</span><span class="s4">&quot;data2&quot;</span><span class="s1">))</span>
+            <span class="s1">eq_(</span>
+                <span class="s1">connection.execute(</span>
+                    <span class="s1">test_table.select().order_by(test_table.c.id)</span>
+                <span class="s1">).fetchall()</span><span class="s3">,</span>
+                <span class="s1">[(</span><span class="s5">1</span><span class="s3">, </span><span class="s4">&quot;data1&quot;</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">2</span><span class="s3">, </span><span class="s4">&quot;data2&quot;</span><span class="s1">)]</span><span class="s3">,</span>
+            <span class="s1">)</span>
+            <span class="s1">connection.execute(</span>
+                <span class="s1">test_table.update()</span>
+                <span class="s1">.where(test_table.c.id == </span><span class="s5">2</span><span class="s1">)</span>
+                <span class="s1">.values(data=test_table.c.data + </span><span class="s4">&quot; updated&quot;</span><span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">eq_(</span>
+                <span class="s1">connection.execute(</span>
+                    <span class="s1">test_table.select().order_by(test_table.c.id)</span>
+                <span class="s1">).fetchall()</span><span class="s3">,</span>
+                <span class="s1">[(</span><span class="s5">1</span><span class="s3">, </span><span class="s4">&quot;data1&quot;</span><span class="s1">)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">2</span><span class="s3">, </span><span class="s4">&quot;data2 updated&quot;</span><span class="s1">)]</span><span class="s3">,</span>
+            <span class="s1">)</span>
+            <span class="s1">connection.execute(test_table.delete())</span>
+            <span class="s1">eq_(</span>
+                <span class="s1">connection.scalar(</span>
+                    <span class="s1">select(func.count(</span><span class="s4">&quot;*&quot;</span><span class="s1">)).select_from(test_table)</span>
+                <span class="s1">)</span><span class="s3">,</span>
+                <span class="s5">0</span><span class="s3">,</span>
+            <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">test_roundtrip_fetchmany(self</span><span class="s3">, </span><span class="s1">metadata):</span>
+        <span class="s1">md = self.metadata</span>
+
+        <span class="s1">engine = self._fixture(</span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s1">test_table = Table(</span>
+            <span class="s4">&quot;test_table&quot;</span><span class="s3">,</span>
+            <span class="s1">md</span><span class="s3">,</span>
+            <span class="s1">Column(</span>
+                <span class="s4">&quot;id&quot;</span><span class="s3">, </span><span class="s1">Integer</span><span class="s3">, </span><span class="s1">primary_key=</span><span class="s2">True</span><span class="s3">, </span><span class="s1">test_needs_autoincrement=</span><span class="s2">True</span>
+            <span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">Column(</span><span class="s4">&quot;data&quot;</span><span class="s3">, </span><span class="s1">String(</span><span class="s5">50</span><span class="s1">))</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+        <span class="s2">with </span><span class="s1">engine.begin() </span><span class="s2">as </span><span class="s1">connection:</span>
+            <span class="s1">test_table.create(connection</span><span class="s3">, </span><span class="s1">checkfirst=</span><span class="s2">True</span><span class="s1">)</span>
+            <span class="s1">connection.execute(</span>
+                <span class="s1">test_table.insert()</span><span class="s3">,</span>
+                <span class="s1">[dict(data=</span><span class="s4">&quot;data%d&quot; </span><span class="s1">% i) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">1</span><span class="s3">, </span><span class="s5">20</span><span class="s1">)]</span><span class="s3">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">result = connection.execute(</span>
+                <span class="s1">test_table.select().order_by(test_table.c.id)</span>
+            <span class="s1">)</span>
+
+            <span class="s1">eq_(</span>
+                <span class="s1">result.fetchmany(</span><span class="s5">5</span><span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">[(i</span><span class="s3">, </span><span class="s4">&quot;data%d&quot; </span><span class="s1">% i) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">1</span><span class="s3">, </span><span class="s5">6</span><span class="s1">)]</span><span class="s3">,</span>
+            <span class="s1">)</span>
+            <span class="s1">eq_(</span>
+                <span class="s1">result.fetchmany(</span><span class="s5">10</span><span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">[(i</span><span class="s3">, </span><span class="s4">&quot;data%d&quot; </span><span class="s1">% i) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">6</span><span class="s3">, </span><span class="s5">16</span><span class="s1">)]</span><span class="s3">,</span>
+            <span class="s1">)</span>
+            <span class="s1">eq_(result.fetchall()</span><span class="s3">, </span><span class="s1">[(i</span><span class="s3">, </span><span class="s4">&quot;data%d&quot; </span><span class="s1">% i) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">16</span><span class="s3">, </span><span class="s5">20</span><span class="s1">)])</span>
+</pre>
+</body>
+</html>

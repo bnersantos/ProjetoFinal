@@ -1,0 +1,574 @@
+<html>
+<head>
+<title>default_comparator.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+default_comparator.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/default_comparator.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Default implementation of SQL comparison operations. 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">coercions</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">operators</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">roles</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">type_api</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">and_</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">BinaryExpression</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">ClauseElement</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">CollationClause</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">CollectionAggregate</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">ExpressionClauseList</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">False_</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">Null</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">OperatorExpression</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">or_</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">True_</span>
+<span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">UnaryExpression</span>
+<span class="s3">from </span><span class="s1">.operators </span><span class="s3">import </span><span class="s1">OperatorType</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+
+<span class="s1">_T = typing.TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.elements </span><span class="s3">import </span><span class="s1">ColumnElement</span>
+    <span class="s3">from </span><span class="s1">.operators </span><span class="s3">import </span><span class="s1">custom_op</span>
+    <span class="s3">from </span><span class="s1">.type_api </span><span class="s3">import </span><span class="s1">TypeEngine</span>
+
+
+<span class="s3">def </span><span class="s1">_boolean_compare(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">op: OperatorType</span><span class="s5">,</span>
+    <span class="s1">obj: Any</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">negate_op: Optional[OperatorType] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">reverse: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">_python_is_types: Tuple[Type[Any]</span><span class="s5">, </span><span class="s1">...] = (type(</span><span class="s3">None</span><span class="s1">)</span><span class="s5">, </span><span class="s1">bool)</span><span class="s5">,</span>
+    <span class="s1">result_type: Optional[TypeEngine[bool]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; OperatorExpression[bool]:</span>
+    <span class="s3">if </span><span class="s1">result_type </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">result_type = type_api.BOOLEANTYPE</span>
+
+    <span class="s3">if </span><span class="s1">isinstance(obj</span><span class="s5">, </span><span class="s1">_python_is_types + (Null</span><span class="s5">, </span><span class="s1">True_</span><span class="s5">, </span><span class="s1">False_)):</span>
+        <span class="s0"># allow x ==/!= True/False to be treated as a literal.</span>
+        <span class="s0"># this comes out to &quot;== / != true/false&quot; or &quot;1/0&quot; if those</span>
+        <span class="s0"># constants aren't supported and works on all platforms</span>
+        <span class="s3">if </span><span class="s1">op </span><span class="s3">in </span><span class="s1">(operators.eq</span><span class="s5">, </span><span class="s1">operators.ne) </span><span class="s3">and </span><span class="s1">isinstance(</span>
+            <span class="s1">obj</span><span class="s5">, </span><span class="s1">(bool</span><span class="s5">, </span><span class="s1">True_</span><span class="s5">, </span><span class="s1">False_)</span>
+        <span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">OperatorExpression._construct_for_op(</span>
+                <span class="s1">expr</span><span class="s5">,</span>
+                <span class="s1">coercions.expect(roles.ConstExprRole</span><span class="s5">, </span><span class="s1">obj)</span><span class="s5">,</span>
+                <span class="s1">op</span><span class="s5">,</span>
+                <span class="s1">type_=result_type</span><span class="s5">,</span>
+                <span class="s1">negate=negate_op</span><span class="s5">,</span>
+                <span class="s1">modifiers=kwargs</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">op </span><span class="s3">in </span><span class="s1">(</span>
+            <span class="s1">operators.is_distinct_from</span><span class="s5">,</span>
+            <span class="s1">operators.is_not_distinct_from</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">OperatorExpression._construct_for_op(</span>
+                <span class="s1">expr</span><span class="s5">,</span>
+                <span class="s1">coercions.expect(roles.ConstExprRole</span><span class="s5">, </span><span class="s1">obj)</span><span class="s5">,</span>
+                <span class="s1">op</span><span class="s5">,</span>
+                <span class="s1">type_=result_type</span><span class="s5">,</span>
+                <span class="s1">negate=negate_op</span><span class="s5">,</span>
+                <span class="s1">modifiers=kwargs</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">expr._is_collection_aggregate:</span>
+            <span class="s1">obj = coercions.expect(</span>
+                <span class="s1">roles.ConstExprRole</span><span class="s5">, </span><span class="s1">element=obj</span><span class="s5">, </span><span class="s1">operator=op</span><span class="s5">, </span><span class="s1">expr=expr</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># all other None uses IS, IS NOT</span>
+            <span class="s3">if </span><span class="s1">op </span><span class="s3">in </span><span class="s1">(operators.eq</span><span class="s5">, </span><span class="s1">operators.is_):</span>
+                <span class="s3">return </span><span class="s1">OperatorExpression._construct_for_op(</span>
+                    <span class="s1">expr</span><span class="s5">,</span>
+                    <span class="s1">coercions.expect(roles.ConstExprRole</span><span class="s5">, </span><span class="s1">obj)</span><span class="s5">,</span>
+                    <span class="s1">operators.is_</span><span class="s5">,</span>
+                    <span class="s1">negate=operators.is_not</span><span class="s5">,</span>
+                    <span class="s1">type_=result_type</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">op </span><span class="s3">in </span><span class="s1">(operators.ne</span><span class="s5">, </span><span class="s1">operators.is_not):</span>
+                <span class="s3">return </span><span class="s1">OperatorExpression._construct_for_op(</span>
+                    <span class="s1">expr</span><span class="s5">,</span>
+                    <span class="s1">coercions.expect(roles.ConstExprRole</span><span class="s5">, </span><span class="s1">obj)</span><span class="s5">,</span>
+                    <span class="s1">operators.is_not</span><span class="s5">,</span>
+                    <span class="s1">negate=operators.is_</span><span class="s5">,</span>
+                    <span class="s1">type_=result_type</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                    <span class="s4">&quot;Only '=', '!=', 'is_()', 'is_not()', &quot;</span>
+                    <span class="s4">&quot;'is_distinct_from()', 'is_not_distinct_from()' &quot;</span>
+                    <span class="s4">&quot;operators can be used with None/True/False&quot;</span>
+                <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">obj = coercions.expect(</span>
+            <span class="s1">roles.BinaryElementRole</span><span class="s5">, </span><span class="s1">element=obj</span><span class="s5">, </span><span class="s1">operator=op</span><span class="s5">, </span><span class="s1">expr=expr</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">reverse:</span>
+        <span class="s3">return </span><span class="s1">OperatorExpression._construct_for_op(</span>
+            <span class="s1">obj</span><span class="s5">,</span>
+            <span class="s1">expr</span><span class="s5">,</span>
+            <span class="s1">op</span><span class="s5">,</span>
+            <span class="s1">type_=result_type</span><span class="s5">,</span>
+            <span class="s1">negate=negate_op</span><span class="s5">,</span>
+            <span class="s1">modifiers=kwargs</span><span class="s5">,</span>
+        <span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">OperatorExpression._construct_for_op(</span>
+            <span class="s1">expr</span><span class="s5">,</span>
+            <span class="s1">obj</span><span class="s5">,</span>
+            <span class="s1">op</span><span class="s5">,</span>
+            <span class="s1">type_=result_type</span><span class="s5">,</span>
+            <span class="s1">negate=negate_op</span><span class="s5">,</span>
+            <span class="s1">modifiers=kwargs</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_custom_op_operate(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">op: custom_op[Any]</span><span class="s5">,</span>
+    <span class="s1">obj: Any</span><span class="s5">,</span>
+    <span class="s1">reverse: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">result_type: Optional[TypeEngine[Any]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s3">if </span><span class="s1">result_type </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">op.return_type:</span>
+            <span class="s1">result_type = op.return_type</span>
+        <span class="s3">elif </span><span class="s1">op.is_comparison:</span>
+            <span class="s1">result_type = type_api.BOOLEANTYPE</span>
+
+    <span class="s3">return </span><span class="s1">_binary_operate(</span>
+        <span class="s1">expr</span><span class="s5">, </span><span class="s1">op</span><span class="s5">, </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">reverse=reverse</span><span class="s5">, </span><span class="s1">result_type=result_type</span><span class="s5">, </span><span class="s1">**kw</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_binary_operate(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">op: OperatorType</span><span class="s5">,</span>
+    <span class="s1">obj: roles.BinaryElementRole[Any]</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">reverse: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">result_type: Optional[TypeEngine[_T]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; OperatorExpression[_T]:</span>
+    <span class="s1">coerced_obj = coercions.expect(</span>
+        <span class="s1">roles.BinaryElementRole</span><span class="s5">, </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">expr=expr</span><span class="s5">, </span><span class="s1">operator=op</span>
+    <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">reverse:</span>
+        <span class="s1">left</span><span class="s5">, </span><span class="s1">right = coerced_obj</span><span class="s5">, </span><span class="s1">expr</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">left</span><span class="s5">, </span><span class="s1">right = expr</span><span class="s5">, </span><span class="s1">coerced_obj</span>
+
+    <span class="s3">if </span><span class="s1">result_type </span><span class="s3">is None</span><span class="s1">:</span>
+        <span class="s1">op</span><span class="s5">, </span><span class="s1">result_type = left.comparator._adapt_expression(</span>
+            <span class="s1">op</span><span class="s5">, </span><span class="s1">right.comparator</span>
+        <span class="s1">)</span>
+
+    <span class="s3">return </span><span class="s1">OperatorExpression._construct_for_op(</span>
+        <span class="s1">left</span><span class="s5">, </span><span class="s1">right</span><span class="s5">, </span><span class="s1">op</span><span class="s5">, </span><span class="s1">type_=result_type</span><span class="s5">, </span><span class="s1">modifiers=kw</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_conjunction_operate(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">, </span><span class="s1">op: OperatorType</span><span class="s5">, </span><span class="s1">other: Any</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s3">if </span><span class="s1">op </span><span class="s3">is </span><span class="s1">operators.and_:</span>
+        <span class="s3">return </span><span class="s1">and_(expr</span><span class="s5">, </span><span class="s1">other)</span>
+    <span class="s3">elif </span><span class="s1">op </span><span class="s3">is </span><span class="s1">operators.or_:</span>
+        <span class="s3">return </span><span class="s1">or_(expr</span><span class="s5">, </span><span class="s1">other)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s3">def </span><span class="s1">_scalar(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">op: OperatorType</span><span class="s5">,</span>
+    <span class="s1">fn: Callable[[ColumnElement[Any]]</span><span class="s5">, </span><span class="s1">ColumnElement[Any]]</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s3">return </span><span class="s1">fn(expr)</span>
+
+
+<span class="s3">def </span><span class="s1">_in_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">op: OperatorType</span><span class="s5">,</span>
+    <span class="s1">seq_or_selectable: ClauseElement</span><span class="s5">,</span>
+    <span class="s1">negate_op: OperatorType</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s1">seq_or_selectable = coercions.expect(</span>
+        <span class="s1">roles.InElementRole</span><span class="s5">, </span><span class="s1">seq_or_selectable</span><span class="s5">, </span><span class="s1">expr=expr</span><span class="s5">, </span><span class="s1">operator=op</span>
+    <span class="s1">)</span>
+    <span class="s3">if </span><span class="s4">&quot;in_ops&quot; </span><span class="s3">in </span><span class="s1">seq_or_selectable._annotations:</span>
+        <span class="s1">op</span><span class="s5">, </span><span class="s1">negate_op = seq_or_selectable._annotations[</span><span class="s4">&quot;in_ops&quot;</span><span class="s1">]</span>
+
+    <span class="s3">return </span><span class="s1">_boolean_compare(</span>
+        <span class="s1">expr</span><span class="s5">, </span><span class="s1">op</span><span class="s5">, </span><span class="s1">seq_or_selectable</span><span class="s5">, </span><span class="s1">negate_op=negate_op</span><span class="s5">, </span><span class="s1">**kw</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_getitem_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">, </span><span class="s1">op: OperatorType</span><span class="s5">, </span><span class="s1">other: Any</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s3">if </span><span class="s1">(</span>
+        <span class="s1">isinstance(expr.type</span><span class="s5">, </span><span class="s1">type_api.INDEXABLE)</span>
+        <span class="s3">or </span><span class="s1">isinstance(expr.type</span><span class="s5">, </span><span class="s1">type_api.TypeDecorator)</span>
+        <span class="s3">and </span><span class="s1">isinstance(expr.type.impl_instance</span><span class="s5">, </span><span class="s1">type_api.INDEXABLE)</span>
+    <span class="s1">):</span>
+        <span class="s1">other = coercions.expect(</span>
+            <span class="s1">roles.BinaryElementRole</span><span class="s5">, </span><span class="s1">other</span><span class="s5">, </span><span class="s1">expr=expr</span><span class="s5">, </span><span class="s1">operator=op</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">_binary_operate(expr</span><span class="s5">, </span><span class="s1">op</span><span class="s5">, </span><span class="s1">other</span><span class="s5">, </span><span class="s1">**kw)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">_unsupported_impl(expr</span><span class="s5">, </span><span class="s1">op</span><span class="s5">, </span><span class="s1">other</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+
+<span class="s3">def </span><span class="s1">_unsupported_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">, </span><span class="s1">op: OperatorType</span><span class="s5">, </span><span class="s1">*arg: Any</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; NoReturn:</span>
+    <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+        <span class="s4">&quot;Operator '%s' is not supported on this expression&quot; </span><span class="s1">% op.__name__</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_inv_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">, </span><span class="s1">op: OperatorType</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s2">&quot;&quot;&quot;See :meth:`.ColumnOperators.__inv__`.&quot;&quot;&quot;</span>
+
+    <span class="s0"># undocumented element currently used by the ORM for</span>
+    <span class="s0"># relationship.contains()</span>
+    <span class="s3">if </span><span class="s1">hasattr(expr</span><span class="s5">, </span><span class="s4">&quot;negation_clause&quot;</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">expr.negation_clause</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">expr._negate()</span>
+
+
+<span class="s3">def </span><span class="s1">_neg_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">, </span><span class="s1">op: OperatorType</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s2">&quot;&quot;&quot;See :meth:`.ColumnOperators.__neg__`.&quot;&quot;&quot;</span>
+    <span class="s3">return </span><span class="s1">UnaryExpression(expr</span><span class="s5">, </span><span class="s1">operator=operators.neg</span><span class="s5">, </span><span class="s1">type_=expr.type)</span>
+
+
+<span class="s3">def </span><span class="s1">_bitwise_not_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">, </span><span class="s1">op: OperatorType</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s2">&quot;&quot;&quot;See :meth:`.ColumnOperators.bitwise_not`.&quot;&quot;&quot;</span>
+
+    <span class="s3">return </span><span class="s1">UnaryExpression(</span>
+        <span class="s1">expr</span><span class="s5">, </span><span class="s1">operator=operators.bitwise_not_op</span><span class="s5">, </span><span class="s1">type_=expr.type</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_match_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">, </span><span class="s1">op: OperatorType</span><span class="s5">, </span><span class="s1">other: Any</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s2">&quot;&quot;&quot;See :meth:`.ColumnOperators.match`.&quot;&quot;&quot;</span>
+
+    <span class="s3">return </span><span class="s1">_boolean_compare(</span>
+        <span class="s1">expr</span><span class="s5">,</span>
+        <span class="s1">operators.match_op</span><span class="s5">,</span>
+        <span class="s1">coercions.expect(</span>
+            <span class="s1">roles.BinaryElementRole</span><span class="s5">,</span>
+            <span class="s1">other</span><span class="s5">,</span>
+            <span class="s1">expr=expr</span><span class="s5">,</span>
+            <span class="s1">operator=operators.match_op</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">result_type=type_api.MATCHTYPE</span><span class="s5">,</span>
+        <span class="s1">negate_op=(</span>
+            <span class="s1">operators.not_match_op</span>
+            <span class="s3">if </span><span class="s1">op </span><span class="s3">is </span><span class="s1">operators.match_op</span>
+            <span class="s3">else </span><span class="s1">operators.match_op</span>
+        <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">**kw</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_distinct_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">, </span><span class="s1">op: OperatorType</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s2">&quot;&quot;&quot;See :meth:`.ColumnOperators.distinct`.&quot;&quot;&quot;</span>
+    <span class="s3">return </span><span class="s1">UnaryExpression(</span>
+        <span class="s1">expr</span><span class="s5">, </span><span class="s1">operator=operators.distinct_op</span><span class="s5">, </span><span class="s1">type_=expr.type</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_between_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">op: OperatorType</span><span class="s5">,</span>
+    <span class="s1">cleft: Any</span><span class="s5">,</span>
+    <span class="s1">cright: Any</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s2">&quot;&quot;&quot;See :meth:`.ColumnOperators.between`.&quot;&quot;&quot;</span>
+    <span class="s3">return </span><span class="s1">BinaryExpression(</span>
+        <span class="s1">expr</span><span class="s5">,</span>
+        <span class="s1">ExpressionClauseList._construct_for_list(</span>
+            <span class="s1">operators.and_</span><span class="s5">,</span>
+            <span class="s1">type_api.NULLTYPE</span><span class="s5">,</span>
+            <span class="s1">coercions.expect(</span>
+                <span class="s1">roles.BinaryElementRole</span><span class="s5">,</span>
+                <span class="s1">cleft</span><span class="s5">,</span>
+                <span class="s1">expr=expr</span><span class="s5">,</span>
+                <span class="s1">operator=operators.and_</span><span class="s5">,</span>
+            <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">coercions.expect(</span>
+                <span class="s1">roles.BinaryElementRole</span><span class="s5">,</span>
+                <span class="s1">cright</span><span class="s5">,</span>
+                <span class="s1">expr=expr</span><span class="s5">,</span>
+                <span class="s1">operator=operators.and_</span><span class="s5">,</span>
+            <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">group=</span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">op</span><span class="s5">,</span>
+        <span class="s1">negate=(</span>
+            <span class="s1">operators.not_between_op</span>
+            <span class="s3">if </span><span class="s1">op </span><span class="s3">is </span><span class="s1">operators.between_op</span>
+            <span class="s3">else </span><span class="s1">operators.between_op</span>
+        <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">modifiers=kw</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_collate_impl(</span>
+    <span class="s1">expr: ColumnElement[str]</span><span class="s5">, </span><span class="s1">op: OperatorType</span><span class="s5">, </span><span class="s1">collation: str</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; ColumnElement[str]:</span>
+    <span class="s3">return </span><span class="s1">CollationClause._create_collation_expression(expr</span><span class="s5">, </span><span class="s1">collation)</span>
+
+
+<span class="s3">def </span><span class="s1">_regexp_match_impl(</span>
+    <span class="s1">expr: ColumnElement[str]</span><span class="s5">,</span>
+    <span class="s1">op: OperatorType</span><span class="s5">,</span>
+    <span class="s1">pattern: Any</span><span class="s5">,</span>
+    <span class="s1">flags: Optional[str]</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s3">return </span><span class="s1">BinaryExpression(</span>
+        <span class="s1">expr</span><span class="s5">,</span>
+        <span class="s1">coercions.expect(</span>
+            <span class="s1">roles.BinaryElementRole</span><span class="s5">,</span>
+            <span class="s1">pattern</span><span class="s5">,</span>
+            <span class="s1">expr=expr</span><span class="s5">,</span>
+            <span class="s1">operator=operators.comma_op</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">op</span><span class="s5">,</span>
+        <span class="s1">negate=operators.not_regexp_match_op</span><span class="s5">,</span>
+        <span class="s1">modifiers={</span><span class="s4">&quot;flags&quot;</span><span class="s1">: flags}</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s3">def </span><span class="s1">_regexp_replace_impl(</span>
+    <span class="s1">expr: ColumnElement[Any]</span><span class="s5">,</span>
+    <span class="s1">op: OperatorType</span><span class="s5">,</span>
+    <span class="s1">pattern: Any</span><span class="s5">,</span>
+    <span class="s1">replacement: Any</span><span class="s5">,</span>
+    <span class="s1">flags: Optional[str]</span><span class="s5">,</span>
+    <span class="s1">**kw: Any</span><span class="s5">,</span>
+<span class="s1">) -&gt; ColumnElement[Any]:</span>
+    <span class="s3">return </span><span class="s1">BinaryExpression(</span>
+        <span class="s1">expr</span><span class="s5">,</span>
+        <span class="s1">ExpressionClauseList._construct_for_list(</span>
+            <span class="s1">operators.comma_op</span><span class="s5">,</span>
+            <span class="s1">type_api.NULLTYPE</span><span class="s5">,</span>
+            <span class="s1">coercions.expect(</span>
+                <span class="s1">roles.BinaryElementRole</span><span class="s5">,</span>
+                <span class="s1">pattern</span><span class="s5">,</span>
+                <span class="s1">expr=expr</span><span class="s5">,</span>
+                <span class="s1">operator=operators.comma_op</span><span class="s5">,</span>
+            <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">coercions.expect(</span>
+                <span class="s1">roles.BinaryElementRole</span><span class="s5">,</span>
+                <span class="s1">replacement</span><span class="s5">,</span>
+                <span class="s1">expr=expr</span><span class="s5">,</span>
+                <span class="s1">operator=operators.comma_op</span><span class="s5">,</span>
+            <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">group=</span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">op</span><span class="s5">,</span>
+        <span class="s1">modifiers={</span><span class="s4">&quot;flags&quot;</span><span class="s1">: flags}</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s0"># a mapping of operators with the method they use, along with</span>
+<span class="s0"># additional keyword arguments to be passed</span>
+<span class="s1">operator_lookup: Dict[</span>
+    <span class="s1">str</span><span class="s5">,</span>
+    <span class="s1">Tuple[</span>
+        <span class="s1">Callable[...</span><span class="s5">, </span><span class="s1">ColumnElement[Any]]</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict[</span>
+            <span class="s1">str</span><span class="s5">, </span><span class="s1">Union[OperatorType</span><span class="s5">, </span><span class="s1">Callable[...</span><span class="s5">, </span><span class="s1">ColumnElement[Any]]]</span>
+        <span class="s1">]</span><span class="s5">,</span>
+    <span class="s1">]</span><span class="s5">,</span>
+<span class="s1">] = {</span>
+    <span class="s4">&quot;and_&quot;</span><span class="s1">: (_conjunction_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;or_&quot;</span><span class="s1">: (_conjunction_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;inv&quot;</span><span class="s1">: (_inv_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;add&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;mul&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;sub&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;div&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;mod&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;bitwise_xor_op&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;bitwise_or_op&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;bitwise_and_op&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;bitwise_not_op&quot;</span><span class="s1">: (_bitwise_not_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;bitwise_lshift_op&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;bitwise_rshift_op&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;truediv&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;floordiv&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;custom_op&quot;</span><span class="s1">: (_custom_op_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;json_path_getitem_op&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;json_getitem_op&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;concat_op&quot;</span><span class="s1">: (_binary_operate</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;any_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_scalar</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;fn&quot;</span><span class="s1">: CollectionAggregate._create_any})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;all_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_scalar</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;fn&quot;</span><span class="s1">: CollectionAggregate._create_all})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;lt&quot;</span><span class="s1">: (_boolean_compare</span><span class="s5">, </span><span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.ge}))</span><span class="s5">,</span>
+    <span class="s4">&quot;le&quot;</span><span class="s1">: (_boolean_compare</span><span class="s5">, </span><span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.gt}))</span><span class="s5">,</span>
+    <span class="s4">&quot;ne&quot;</span><span class="s1">: (_boolean_compare</span><span class="s5">, </span><span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.eq}))</span><span class="s5">,</span>
+    <span class="s4">&quot;gt&quot;</span><span class="s1">: (_boolean_compare</span><span class="s5">, </span><span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.le}))</span><span class="s5">,</span>
+    <span class="s4">&quot;ge&quot;</span><span class="s1">: (_boolean_compare</span><span class="s5">, </span><span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.lt}))</span><span class="s5">,</span>
+    <span class="s4">&quot;eq&quot;</span><span class="s1">: (_boolean_compare</span><span class="s5">, </span><span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.ne}))</span><span class="s5">,</span>
+    <span class="s4">&quot;is_distinct_from&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.is_not_distinct_from})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;is_not_distinct_from&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.is_distinct_from})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;like_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.not_like_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;ilike_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.not_ilike_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;not_like_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.like_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;not_ilike_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.ilike_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;contains_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.not_contains_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;icontains_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.not_icontains_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;startswith_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.not_startswith_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;istartswith_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.not_istartswith_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;endswith_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.not_endswith_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;iendswith_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.not_iendswith_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;desc_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_scalar</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;fn&quot;</span><span class="s1">: UnaryExpression._create_desc})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;asc_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_scalar</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;fn&quot;</span><span class="s1">: UnaryExpression._create_asc})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;nulls_first_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_scalar</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;fn&quot;</span><span class="s1">: UnaryExpression._create_nulls_first})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;nulls_last_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_scalar</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;fn&quot;</span><span class="s1">: UnaryExpression._create_nulls_last})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;in_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_in_impl</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.not_in_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;not_in_op&quot;</span><span class="s1">: (</span>
+        <span class="s1">_in_impl</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.in_op})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;is_&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.is_})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;is_not&quot;</span><span class="s1">: (</span>
+        <span class="s1">_boolean_compare</span><span class="s5">,</span>
+        <span class="s1">util.immutabledict({</span><span class="s4">&quot;negate_op&quot;</span><span class="s1">: operators.is_not})</span><span class="s5">,</span>
+    <span class="s1">)</span><span class="s5">,</span>
+    <span class="s4">&quot;collate&quot;</span><span class="s1">: (_collate_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;match_op&quot;</span><span class="s1">: (_match_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;not_match_op&quot;</span><span class="s1">: (_match_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;distinct_op&quot;</span><span class="s1">: (_distinct_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;between_op&quot;</span><span class="s1">: (_between_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;not_between_op&quot;</span><span class="s1">: (_between_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;neg&quot;</span><span class="s1">: (_neg_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;getitem&quot;</span><span class="s1">: (_getitem_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;lshift&quot;</span><span class="s1">: (_unsupported_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;rshift&quot;</span><span class="s1">: (_unsupported_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;contains&quot;</span><span class="s1">: (_unsupported_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;regexp_match_op&quot;</span><span class="s1">: (_regexp_match_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;not_regexp_match_op&quot;</span><span class="s1">: (_regexp_match_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+    <span class="s4">&quot;regexp_replace_op&quot;</span><span class="s1">: (_regexp_replace_impl</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span><span class="s5">,</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

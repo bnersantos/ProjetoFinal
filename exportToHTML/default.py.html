@@ -1,0 +1,2389 @@
+<html>
+<head>
+<title>default.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+default.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># engine/default.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">&quot;&quot;&quot;Default implementations of per-dialect sqlalchemy.engine classes. 
+ 
+These are semi-private implementation classes which are only of importance 
+to database dialect authors; dialects will usually use the classes here 
+as the base class for their own corresponding classes. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">functools</span>
+<span class="s3">import </span><span class="s1">operator</span>
+<span class="s3">import </span><span class="s1">random</span>
+<span class="s3">import </span><span class="s1">re</span>
+<span class="s3">from </span><span class="s1">time </span><span class="s3">import </span><span class="s1">perf_counter</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Callable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">MutableMapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">MutableSequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Set</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+<span class="s3">import </span><span class="s1">weakref</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">characteristics</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">cursor </span><span class="s3">as </span><span class="s1">_cursor</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">interfaces</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">Connection</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">CacheStats</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">DBAPICursor</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">Dialect</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">ExecuteStyle</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">ExecutionContext</span>
+<span class="s3">from </span><span class="s1">.reflection </span><span class="s3">import </span><span class="s1">ObjectKind</span>
+<span class="s3">from </span><span class="s1">.reflection </span><span class="s3">import </span><span class="s1">ObjectScope</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">event</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">pool</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">compiler</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">dml</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">expression</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">type_api</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">sql_util</span>
+<span class="s3">from </span><span class="s1">..sql._typing </span><span class="s3">import </span><span class="s1">is_tuple_type</span>
+<span class="s3">from </span><span class="s1">..sql.base </span><span class="s3">import </span><span class="s1">_NoArg</span>
+<span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">DDLCompiler</span>
+<span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">InsertmanyvaluesSentinelOpts</span>
+<span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">SQLCompiler</span>
+<span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">quoted_name</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Final</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">types </span><span class="s3">import </span><span class="s1">ModuleType</span>
+
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">Engine</span>
+    <span class="s3">from </span><span class="s1">.cursor </span><span class="s3">import </span><span class="s1">ResultFetchStrategy</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_CoreMultiExecuteParams</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_CoreSingleExecuteParams</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_DBAPICursorDescription</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_DBAPIMultiExecuteParams</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_ExecuteOptions</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_MutableCoreSingleExecuteParams</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_ParamStyle</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">DBAPIConnection</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">IsolationLevel</span>
+    <span class="s3">from </span><span class="s1">.row </span><span class="s3">import </span><span class="s1">Row</span>
+    <span class="s3">from </span><span class="s1">.url </span><span class="s3">import </span><span class="s1">URL</span>
+    <span class="s3">from </span><span class="s1">..event </span><span class="s3">import </span><span class="s1">_ListenerFnType</span>
+    <span class="s3">from </span><span class="s1">..pool </span><span class="s3">import </span><span class="s1">Pool</span>
+    <span class="s3">from </span><span class="s1">..pool </span><span class="s3">import </span><span class="s1">PoolProxiedConnection</span>
+    <span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">Executable</span>
+    <span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">Compiled</span>
+    <span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">Linting</span>
+    <span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">ResultColumnsEntry</span>
+    <span class="s3">from </span><span class="s1">..sql.dml </span><span class="s3">import </span><span class="s1">DMLState</span>
+    <span class="s3">from </span><span class="s1">..sql.dml </span><span class="s3">import </span><span class="s1">UpdateBase</span>
+    <span class="s3">from </span><span class="s1">..sql.elements </span><span class="s3">import </span><span class="s1">BindParameter</span>
+    <span class="s3">from </span><span class="s1">..sql.schema </span><span class="s3">import </span><span class="s1">Column</span>
+    <span class="s3">from </span><span class="s1">..sql.type_api </span><span class="s3">import </span><span class="s1">_BindProcessorType</span>
+    <span class="s3">from </span><span class="s1">..sql.type_api </span><span class="s3">import </span><span class="s1">_ResultProcessorType</span>
+    <span class="s3">from </span><span class="s1">..sql.type_api </span><span class="s3">import </span><span class="s1">TypeEngine</span>
+
+<span class="s0"># When we're handed literal SQL, ensure it's a SELECT query</span>
+<span class="s1">SERVER_SIDE_CURSOR_RE = re.compile(</span><span class="s4">r&quot;\s*SELECT&quot;</span><span class="s5">, </span><span class="s1">re.I | re.UNICODE)</span>
+
+
+<span class="s1">(</span>
+    <span class="s1">CACHE_HIT</span><span class="s5">,</span>
+    <span class="s1">CACHE_MISS</span><span class="s5">,</span>
+    <span class="s1">CACHING_DISABLED</span><span class="s5">,</span>
+    <span class="s1">NO_CACHE_KEY</span><span class="s5">,</span>
+    <span class="s1">NO_DIALECT_SUPPORT</span><span class="s5">,</span>
+<span class="s1">) = list(CacheStats)</span>
+
+
+<span class="s3">class </span><span class="s1">DefaultDialect(Dialect):</span>
+    <span class="s2">&quot;&quot;&quot;Default implementation of Dialect&quot;&quot;&quot;</span>
+
+    <span class="s1">statement_compiler = compiler.SQLCompiler</span>
+    <span class="s1">ddl_compiler = compiler.DDLCompiler</span>
+    <span class="s1">type_compiler_cls = compiler.GenericTypeCompiler</span>
+
+    <span class="s1">preparer = compiler.IdentifierPreparer</span>
+    <span class="s1">supports_alter = </span><span class="s3">True</span>
+    <span class="s1">supports_comments = </span><span class="s3">False</span>
+    <span class="s1">supports_constraint_comments = </span><span class="s3">False</span>
+    <span class="s1">inline_comments = </span><span class="s3">False</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s1">div_is_floordiv = </span><span class="s3">True</span>
+
+    <span class="s1">bind_typing = interfaces.BindTyping.NONE</span>
+
+    <span class="s1">include_set_input_sizes: Optional[Set[Any]] = </span><span class="s3">None</span>
+    <span class="s1">exclude_set_input_sizes: Optional[Set[Any]] = </span><span class="s3">None</span>
+
+    <span class="s0"># the first value we'd get for an autoincrement column.</span>
+    <span class="s1">default_sequence_base = </span><span class="s6">1</span>
+
+    <span class="s0"># most DBAPIs happy with this for execute().</span>
+    <span class="s0"># not cx_oracle.</span>
+    <span class="s1">execute_sequence_format = tuple</span>
+
+    <span class="s1">supports_schemas = </span><span class="s3">True</span>
+    <span class="s1">supports_views = </span><span class="s3">True</span>
+    <span class="s1">supports_sequences = </span><span class="s3">False</span>
+    <span class="s1">sequences_optional = </span><span class="s3">False</span>
+    <span class="s1">preexecute_autoincrement_sequences = </span><span class="s3">False</span>
+    <span class="s1">supports_identity_columns = </span><span class="s3">False</span>
+    <span class="s1">postfetch_lastrowid = </span><span class="s3">True</span>
+    <span class="s1">favor_returning_over_lastrowid = </span><span class="s3">False</span>
+    <span class="s1">insert_null_pk_still_autoincrements = </span><span class="s3">False</span>
+    <span class="s1">update_returning = </span><span class="s3">False</span>
+    <span class="s1">delete_returning = </span><span class="s3">False</span>
+    <span class="s1">update_returning_multifrom = </span><span class="s3">False</span>
+    <span class="s1">delete_returning_multifrom = </span><span class="s3">False</span>
+    <span class="s1">insert_returning = </span><span class="s3">False</span>
+
+    <span class="s1">cte_follows_insert = </span><span class="s3">False</span>
+
+    <span class="s1">supports_native_enum = </span><span class="s3">False</span>
+    <span class="s1">supports_native_boolean = </span><span class="s3">False</span>
+    <span class="s1">supports_native_uuid = </span><span class="s3">False</span>
+    <span class="s1">returns_native_bytes = </span><span class="s3">False</span>
+
+    <span class="s1">non_native_boolean_check_constraint = </span><span class="s3">True</span>
+
+    <span class="s1">supports_simple_order_by_label = </span><span class="s3">True</span>
+
+    <span class="s1">tuple_in_values = </span><span class="s3">False</span>
+
+    <span class="s1">connection_characteristics = util.immutabledict(</span>
+        <span class="s1">{</span>
+            <span class="s4">&quot;isolation_level&quot;</span><span class="s1">: characteristics.IsolationLevelCharacteristic()</span><span class="s5">,</span>
+            <span class="s4">&quot;logging_token&quot;</span><span class="s1">: characteristics.LoggingTokenCharacteristic()</span><span class="s5">,</span>
+        <span class="s1">}</span>
+    <span class="s1">)</span>
+
+    <span class="s1">engine_config_types: Mapping[str</span><span class="s5">, </span><span class="s1">Any] = util.immutabledict(</span>
+        <span class="s1">{</span>
+            <span class="s4">&quot;pool_timeout&quot;</span><span class="s1">: util.asint</span><span class="s5">,</span>
+            <span class="s4">&quot;echo&quot;</span><span class="s1">: util.bool_or_str(</span><span class="s4">&quot;debug&quot;</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s4">&quot;echo_pool&quot;</span><span class="s1">: util.bool_or_str(</span><span class="s4">&quot;debug&quot;</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s4">&quot;pool_recycle&quot;</span><span class="s1">: util.asint</span><span class="s5">,</span>
+            <span class="s4">&quot;pool_size&quot;</span><span class="s1">: util.asint</span><span class="s5">,</span>
+            <span class="s4">&quot;max_overflow&quot;</span><span class="s1">: util.asint</span><span class="s5">,</span>
+            <span class="s4">&quot;future&quot;</span><span class="s1">: util.asbool</span><span class="s5">,</span>
+        <span class="s1">}</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># if the NUMERIC type</span>
+    <span class="s0"># returns decimal.Decimal.</span>
+    <span class="s0"># *not* the FLOAT type however.</span>
+    <span class="s1">supports_native_decimal = </span><span class="s3">False</span>
+
+    <span class="s1">name = </span><span class="s4">&quot;default&quot;</span>
+
+    <span class="s0"># length at which to truncate</span>
+    <span class="s0"># any identifier.</span>
+    <span class="s1">max_identifier_length = </span><span class="s6">9999</span>
+    <span class="s1">_user_defined_max_identifier_length: Optional[int] = </span><span class="s3">None</span>
+
+    <span class="s1">isolation_level: Optional[str] = </span><span class="s3">None</span>
+
+    <span class="s0"># sub-categories of max_identifier_length.</span>
+    <span class="s0"># currently these accommodate for MySQL which allows alias names</span>
+    <span class="s0"># of 255 but DDL names only of 64.</span>
+    <span class="s1">max_index_name_length: Optional[int] = </span><span class="s3">None</span>
+    <span class="s1">max_constraint_name_length: Optional[int] = </span><span class="s3">None</span>
+
+    <span class="s1">supports_sane_rowcount = </span><span class="s3">True</span>
+    <span class="s1">supports_sane_multi_rowcount = </span><span class="s3">True</span>
+    <span class="s1">colspecs: MutableMapping[Type[TypeEngine[Any]]</span><span class="s5">, </span><span class="s1">Type[TypeEngine[Any]]] = {}</span>
+    <span class="s1">default_paramstyle = </span><span class="s4">&quot;named&quot;</span>
+
+    <span class="s1">supports_default_values = </span><span class="s3">False</span>
+    <span class="s4">&quot;&quot;&quot;dialect supports INSERT... DEFAULT VALUES syntax&quot;&quot;&quot;</span>
+
+    <span class="s1">supports_default_metavalue = </span><span class="s3">False</span>
+    <span class="s4">&quot;&quot;&quot;dialect supports INSERT... VALUES (DEFAULT) syntax&quot;&quot;&quot;</span>
+
+    <span class="s1">default_metavalue_token = </span><span class="s4">&quot;DEFAULT&quot;</span>
+    <span class="s4">&quot;&quot;&quot;for INSERT... VALUES (DEFAULT) syntax, the token to put in the 
+    parenthesis.&quot;&quot;&quot;</span>
+
+    <span class="s0"># not sure if this is a real thing but the compiler will deliver it</span>
+    <span class="s0"># if this is the only flag enabled.</span>
+    <span class="s1">supports_empty_insert = </span><span class="s3">True</span>
+    <span class="s4">&quot;&quot;&quot;dialect supports INSERT () VALUES ()&quot;&quot;&quot;</span>
+
+    <span class="s1">supports_multivalues_insert = </span><span class="s3">False</span>
+
+    <span class="s1">use_insertmanyvalues: bool = </span><span class="s3">False</span>
+
+    <span class="s1">use_insertmanyvalues_wo_returning: bool = </span><span class="s3">False</span>
+
+    <span class="s1">insertmanyvalues_implicit_sentinel: InsertmanyvaluesSentinelOpts = (</span>
+        <span class="s1">InsertmanyvaluesSentinelOpts.NOT_SUPPORTED</span>
+    <span class="s1">)</span>
+
+    <span class="s1">insertmanyvalues_page_size: int = </span><span class="s6">1000</span>
+    <span class="s1">insertmanyvalues_max_parameters = </span><span class="s6">32700</span>
+
+    <span class="s1">supports_is_distinct_from = </span><span class="s3">True</span>
+
+    <span class="s1">supports_server_side_cursors = </span><span class="s3">False</span>
+
+    <span class="s1">server_side_cursors = </span><span class="s3">False</span>
+
+    <span class="s0"># extra record-level locking features (#4860)</span>
+    <span class="s1">supports_for_update_of = </span><span class="s3">False</span>
+
+    <span class="s1">server_version_info = </span><span class="s3">None</span>
+
+    <span class="s1">default_schema_name: Optional[str] = </span><span class="s3">None</span>
+
+    <span class="s0"># indicates symbol names are</span>
+    <span class="s0"># UPPERCASEd if they are case insensitive</span>
+    <span class="s0"># within the database.</span>
+    <span class="s0"># if this is True, the methods normalize_name()</span>
+    <span class="s0"># and denormalize_name() must be provided.</span>
+    <span class="s1">requires_name_normalize = </span><span class="s3">False</span>
+
+    <span class="s1">is_async = </span><span class="s3">False</span>
+
+    <span class="s1">has_terminate = </span><span class="s3">False</span>
+
+    <span class="s0"># TODO: this is not to be part of 2.0.  implement rudimentary binary</span>
+    <span class="s0"># literals for SQLite, PostgreSQL, MySQL only within</span>
+    <span class="s0"># _Binary.literal_processor</span>
+    <span class="s1">_legacy_binary_type_literal_encoding = </span><span class="s4">&quot;utf-8&quot;</span>
+
+    <span class="s1">@util.deprecated_params(</span>
+        <span class="s1">empty_in_strategy=(</span>
+            <span class="s4">&quot;1.4&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;The :paramref:`_sa.create_engine.empty_in_strategy` keyword is &quot;</span>
+            <span class="s4">&quot;deprecated, and no longer has any effect.  All IN expressions &quot;</span>
+            <span class="s4">&quot;are now rendered using &quot;</span>
+            <span class="s4">'the &quot;expanding parameter&quot; strategy which renders a set of bound'</span>
+            <span class="s4">'expressions, or an &quot;empty set&quot; SELECT, at statement execution'</span>
+            <span class="s4">&quot;time.&quot;</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">server_side_cursors=(</span>
+            <span class="s4">&quot;1.4&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;The :paramref:`_sa.create_engine.server_side_cursors` parameter &quot;</span>
+            <span class="s4">&quot;is deprecated and will be removed in a future release.  Please &quot;</span>
+            <span class="s4">&quot;use the &quot;</span>
+            <span class="s4">&quot;:paramref:`_engine.Connection.execution_options.stream_results` &quot;</span>
+            <span class="s4">&quot;parameter.&quot;</span><span class="s5">,</span>
+        <span class="s1">)</span><span class="s5">,</span>
+    <span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">paramstyle: Optional[_ParamStyle] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">isolation_level: Optional[IsolationLevel] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">dbapi: Optional[ModuleType] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">implicit_returning: Literal[</span><span class="s3">True</span><span class="s1">] = </span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">supports_native_boolean: Optional[bool] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">max_identifier_length: Optional[int] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">label_length: Optional[int] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">insertmanyvalues_page_size: Union[_NoArg</span><span class="s5">, </span><span class="s1">int] = _NoArg.NO_ARG</span><span class="s5">,</span>
+        <span class="s1">use_insertmanyvalues: Optional[bool] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s0"># util.deprecated_params decorator cannot render the</span>
+        <span class="s0"># Linting.NO_LINTING constant</span>
+        <span class="s1">compiler_linting: Linting = int(compiler.NO_LINTING)</span><span class="s5">,  </span><span class="s0"># type: ignore</span>
+        <span class="s1">server_side_cursors: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">server_side_cursors:</span>
+            <span class="s3">if not </span><span class="s1">self.supports_server_side_cursors:</span>
+                <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                    <span class="s4">&quot;Dialect %s does not support server side cursors&quot; </span><span class="s1">% self</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self.server_side_cursors = </span><span class="s3">True</span>
+
+        <span class="s3">if </span><span class="s1">getattr(self</span><span class="s5">, </span><span class="s4">&quot;use_setinputsizes&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s1">util.warn_deprecated(</span>
+                <span class="s4">&quot;The dialect-level use_setinputsizes attribute is &quot;</span>
+                <span class="s4">&quot;deprecated.  Please use &quot;</span>
+                <span class="s4">&quot;bind_typing = BindTyping.SETINPUTSIZES&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;2.0&quot;</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s1">self.bind_typing = interfaces.BindTyping.SETINPUTSIZES</span>
+
+        <span class="s1">self.positional = </span><span class="s3">False</span>
+        <span class="s1">self._ischema = </span><span class="s3">None</span>
+
+        <span class="s1">self.dbapi = dbapi</span>
+
+        <span class="s3">if </span><span class="s1">paramstyle </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.paramstyle = paramstyle</span>
+        <span class="s3">elif </span><span class="s1">self.dbapi </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.paramstyle = self.dbapi.paramstyle</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.paramstyle = self.default_paramstyle</span>
+        <span class="s1">self.positional = self.paramstyle </span><span class="s3">in </span><span class="s1">(</span>
+            <span class="s4">&quot;qmark&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;format&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;numeric&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;numeric_dollar&quot;</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self.identifier_preparer = self.preparer(self)</span>
+        <span class="s1">self._on_connect_isolation_level = isolation_level</span>
+
+        <span class="s1">legacy_tt_callable = getattr(self</span><span class="s5">, </span><span class="s4">&quot;type_compiler&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">legacy_tt_callable </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">tt_callable = cast(</span>
+                <span class="s1">Type[compiler.GenericTypeCompiler]</span><span class="s5">,</span>
+                <span class="s1">self.type_compiler</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">tt_callable = self.type_compiler_cls</span>
+
+        <span class="s1">self.type_compiler_instance = self.type_compiler = tt_callable(self)</span>
+
+        <span class="s3">if </span><span class="s1">supports_native_boolean </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.supports_native_boolean = supports_native_boolean</span>
+
+        <span class="s1">self._user_defined_max_identifier_length = max_identifier_length</span>
+        <span class="s3">if </span><span class="s1">self._user_defined_max_identifier_length:</span>
+            <span class="s1">self.max_identifier_length = (</span>
+                <span class="s1">self._user_defined_max_identifier_length</span>
+            <span class="s1">)</span>
+        <span class="s1">self.label_length = label_length</span>
+        <span class="s1">self.compiler_linting = compiler_linting</span>
+
+        <span class="s3">if </span><span class="s1">use_insertmanyvalues </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.use_insertmanyvalues = use_insertmanyvalues</span>
+
+        <span class="s3">if </span><span class="s1">insertmanyvalues_page_size </span><span class="s3">is not </span><span class="s1">_NoArg.NO_ARG:</span>
+            <span class="s1">self.insertmanyvalues_page_size = insertmanyvalues_page_size</span>
+
+    <span class="s1">@property</span>
+    <span class="s1">@util.deprecated(</span>
+        <span class="s4">&quot;2.0&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;full_returning is deprecated, please use insert_returning, &quot;</span>
+        <span class="s4">&quot;update_returning, delete_returning&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">full_returning(self):</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">self.insert_returning</span>
+            <span class="s3">and </span><span class="s1">self.update_returning</span>
+            <span class="s3">and </span><span class="s1">self.delete_returning</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">insert_executemany_returning(self):</span>
+        <span class="s2">&quot;&quot;&quot;Default implementation for insert_executemany_returning, if not 
+        otherwise overridden by the specific dialect. 
+ 
+        The default dialect determines &quot;insert_executemany_returning&quot; is 
+        available if the dialect in use has opted into using the 
+        &quot;use_insertmanyvalues&quot; feature. If they haven't opted into that, then 
+        this attribute is False, unless the dialect in question overrides this 
+        and provides some other implementation (such as the Oracle dialect). 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.insert_returning </span><span class="s3">and </span><span class="s1">self.use_insertmanyvalues</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">insert_executemany_returning_sort_by_parameter_order(self):</span>
+        <span class="s2">&quot;&quot;&quot;Default implementation for 
+        insert_executemany_returning_deterministic_order, if not otherwise 
+        overridden by the specific dialect. 
+ 
+        The default dialect determines &quot;insert_executemany_returning&quot; can have 
+        deterministic order only if the dialect in use has opted into using the 
+        &quot;use_insertmanyvalues&quot; feature, which implements deterministic ordering 
+        using client side sentinel columns only by default.  The 
+        &quot;insertmanyvalues&quot; feature also features alternate forms that can 
+        use server-generated PK values as &quot;sentinels&quot;, but those are only 
+        used if the :attr:`.Dialect.insertmanyvalues_implicit_sentinel` 
+        bitflag enables those alternate SQL forms, which are disabled 
+        by default. 
+ 
+        If the dialect in use hasn't opted into that, then this attribute is 
+        False, unless the dialect in question overrides this and provides some 
+        other implementation (such as the Oracle dialect). 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.insert_returning </span><span class="s3">and </span><span class="s1">self.use_insertmanyvalues</span>
+
+    <span class="s1">update_executemany_returning = </span><span class="s3">False</span>
+    <span class="s1">delete_executemany_returning = </span><span class="s3">False</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">loaded_dbapi(self) -&gt; ModuleType:</span>
+        <span class="s3">if </span><span class="s1">self.dbapi </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">f&quot;Dialect </span><span class="s7">{</span><span class="s1">self</span><span class="s7">} </span><span class="s4">does not have a Python DBAPI established &quot;</span>
+                <span class="s4">&quot;and cannot be used for actual database interaction&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self.dbapi</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_bind_typing_render_casts(self):</span>
+        <span class="s3">return </span><span class="s1">self.bind_typing </span><span class="s3">is </span><span class="s1">interfaces.BindTyping.RENDER_CASTS</span>
+
+    <span class="s3">def </span><span class="s1">_ensure_has_table_connection(self</span><span class="s5">, </span><span class="s1">arg):</span>
+        <span class="s3">if not </span><span class="s1">isinstance(arg</span><span class="s5">, </span><span class="s1">Connection):</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;The argument passed to Dialect.has_table() should be a &quot;</span>
+                <span class="s4">&quot;%s, got %s. &quot;</span>
+                <span class="s4">&quot;Additionally, the Dialect.has_table() method is for &quot;</span>
+                <span class="s4">&quot;internal dialect &quot;</span>
+                <span class="s4">&quot;use only; please use &quot;</span>
+                <span class="s4">&quot;``inspect(some_engine).has_table(&lt;tablename&gt;&gt;)`` &quot;</span>
+                <span class="s4">&quot;for public API use.&quot; </span><span class="s1">% (Connection</span><span class="s5">, </span><span class="s1">type(arg))</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_supports_statement_cache(self):</span>
+        <span class="s1">ssc = self.__class__.__dict__.get(</span><span class="s4">&quot;supports_statement_cache&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">ssc </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">&quot;Dialect %s:%s will not make use of SQL compilation caching &quot;</span>
+                <span class="s4">&quot;as it does not set the 'supports_statement_cache' attribute &quot;</span>
+                <span class="s4">&quot;to ``True``.  This can have &quot;</span>
+                <span class="s4">&quot;significant performance implications including some &quot;</span>
+                <span class="s4">&quot;performance degradations in comparison to prior SQLAlchemy &quot;</span>
+                <span class="s4">&quot;versions.  Dialect maintainers should seek to set this &quot;</span>
+                <span class="s4">&quot;attribute to True after appropriate development and testing &quot;</span>
+                <span class="s4">&quot;for SQLAlchemy 1.4 caching support.   Alternatively, this &quot;</span>
+                <span class="s4">&quot;attribute may be set to False which will disable this &quot;</span>
+                <span class="s4">&quot;warning.&quot; </span><span class="s1">% (self.name</span><span class="s5">, </span><span class="s1">self.driver)</span><span class="s5">,</span>
+                <span class="s1">code=</span><span class="s4">&quot;cprf&quot;</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">bool(ssc)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_type_memos(self):</span>
+        <span class="s3">return </span><span class="s1">weakref.WeakKeyDictionary()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">dialect_description(self):</span>
+        <span class="s3">return </span><span class="s1">self.name + </span><span class="s4">&quot;+&quot; </span><span class="s1">+ self.driver</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">supports_sane_rowcount_returning(self):</span>
+        <span class="s2">&quot;&quot;&quot;True if this dialect supports sane rowcount even if RETURNING is 
+        in use. 
+ 
+        For dialects that don't support RETURNING, this is synonymous with 
+        ``supports_sane_rowcount``. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.supports_sane_rowcount</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_pool_class(cls</span><span class="s5">, </span><span class="s1">url: URL) -&gt; Type[Pool]:</span>
+        <span class="s3">return </span><span class="s1">getattr(cls</span><span class="s5">, </span><span class="s4">&quot;poolclass&quot;</span><span class="s5">, </span><span class="s1">pool.QueuePool)</span>
+
+    <span class="s3">def </span><span class="s1">get_dialect_pool_class(self</span><span class="s5">, </span><span class="s1">url: URL) -&gt; Type[Pool]:</span>
+        <span class="s3">return </span><span class="s1">self.get_pool_class(url)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">load_provisioning(cls):</span>
+        <span class="s1">package = </span><span class="s4">&quot;.&quot;</span><span class="s1">.join(cls.__module__.split(</span><span class="s4">&quot;.&quot;</span><span class="s1">)[</span><span class="s6">0</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">])</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">__import__(package + </span><span class="s4">&quot;.provision&quot;</span><span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">ImportError:</span>
+            <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">_builtin_onconnect(self) -&gt; Optional[_ListenerFnType]:</span>
+        <span class="s3">if </span><span class="s1">self._on_connect_isolation_level </span><span class="s3">is not None</span><span class="s1">:</span>
+
+            <span class="s3">def </span><span class="s1">builtin_connect(dbapi_conn</span><span class="s5">, </span><span class="s1">conn_rec):</span>
+                <span class="s1">self._assert_and_set_isolation_level(</span>
+                    <span class="s1">dbapi_conn</span><span class="s5">, </span><span class="s1">self._on_connect_isolation_level</span>
+                <span class="s1">)</span>
+
+            <span class="s3">return </span><span class="s1">builtin_connect</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">initialize(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self.server_version_info = self._get_server_version_info(</span>
+                <span class="s1">connection</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">NotImplementedError:</span>
+            <span class="s1">self.server_version_info = </span><span class="s3">None</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self.default_schema_name = self._get_default_schema_name(</span>
+                <span class="s1">connection</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">NotImplementedError:</span>
+            <span class="s1">self.default_schema_name = </span><span class="s3">None</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self.default_isolation_level = self.get_default_isolation_level(</span>
+                <span class="s1">connection.connection.dbapi_connection</span>
+            <span class="s1">)</span>
+        <span class="s3">except </span><span class="s1">NotImplementedError:</span>
+            <span class="s1">self.default_isolation_level = </span><span class="s3">None</span>
+
+        <span class="s3">if not </span><span class="s1">self._user_defined_max_identifier_length:</span>
+            <span class="s1">max_ident_length = self._check_max_identifier_length(connection)</span>
+            <span class="s3">if </span><span class="s1">max_ident_length:</span>
+                <span class="s1">self.max_identifier_length = max_ident_length</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">self.label_length</span>
+            <span class="s3">and </span><span class="s1">self.label_length &gt; self.max_identifier_length</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">&quot;Label length of %d is greater than this dialect's&quot;</span>
+                <span class="s4">&quot; maximum identifier length of %d&quot;</span>
+                <span class="s1">% (self.label_length</span><span class="s5">, </span><span class="s1">self.max_identifier_length)</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">on_connect(self):</span>
+        <span class="s0"># inherits the docstring from interfaces.Dialect.on_connect</span>
+        <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">_check_max_identifier_length(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s2">&quot;&quot;&quot;Perform a connection / server version specific check to determine 
+        the max_identifier_length. 
+ 
+        If the dialect's class level max_identifier_length should be used, 
+        can return None. 
+ 
+        .. versionadded:: 1.3.9 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">get_default_isolation_level(self</span><span class="s5">, </span><span class="s1">dbapi_conn):</span>
+        <span class="s2">&quot;&quot;&quot;Given a DBAPI connection, return its isolation level, or 
+        a default isolation level if one cannot be retrieved. 
+ 
+        May be overridden by subclasses in order to provide a 
+        &quot;fallback&quot; isolation level for databases that cannot reliably 
+        retrieve the actual isolation level. 
+ 
+        By default, calls the :meth:`_engine.Interfaces.get_isolation_level` 
+        method, propagating any exceptions raised. 
+ 
+        .. versionadded:: 1.3.22 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.get_isolation_level(dbapi_conn)</span>
+
+    <span class="s3">def </span><span class="s1">type_descriptor(self</span><span class="s5">, </span><span class="s1">typeobj):</span>
+        <span class="s2">&quot;&quot;&quot;Provide a database-specific :class:`.TypeEngine` object, given 
+        the generic object which comes from the types module. 
+ 
+        This method looks for a dictionary called 
+        ``colspecs`` as a class or instance-level variable, 
+        and passes on to :func:`_types.adapt_type`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">type_api.adapt_type(typeobj</span><span class="s5">, </span><span class="s1">self.colspecs)</span>
+
+    <span class="s3">def </span><span class="s1">has_index(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">table_name</span><span class="s5">, </span><span class="s1">index_name</span><span class="s5">, </span><span class="s1">schema=</span><span class="s3">None</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">if not </span><span class="s1">self.has_table(connection</span><span class="s5">, </span><span class="s1">table_name</span><span class="s5">, </span><span class="s1">schema=schema</span><span class="s5">, </span><span class="s1">**kw):</span>
+            <span class="s3">return False</span>
+        <span class="s3">for </span><span class="s1">idx </span><span class="s3">in </span><span class="s1">self.get_indexes(</span>
+            <span class="s1">connection</span><span class="s5">, </span><span class="s1">table_name</span><span class="s5">, </span><span class="s1">schema=schema</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">idx[</span><span class="s4">&quot;name&quot;</span><span class="s1">] == index_name:</span>
+                <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">has_schema(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">connection: Connection</span><span class="s5">, </span><span class="s1">schema_name: str</span><span class="s5">, </span><span class="s1">**kw: Any</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">schema_name </span><span class="s3">in </span><span class="s1">self.get_schema_names(connection</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">validate_identifier(self</span><span class="s5">, </span><span class="s1">ident):</span>
+        <span class="s3">if </span><span class="s1">len(ident) &gt; self.max_identifier_length:</span>
+            <span class="s3">raise </span><span class="s1">exc.IdentifierError(</span>
+                <span class="s4">&quot;Identifier '%s' exceeds maximum length of %d characters&quot;</span>
+                <span class="s1">% (ident</span><span class="s5">, </span><span class="s1">self.max_identifier_length)</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">connect(self</span><span class="s5">, </span><span class="s1">*cargs</span><span class="s5">, </span><span class="s1">**cparams):</span>
+        <span class="s0"># inherits the docstring from interfaces.Dialect.connect</span>
+        <span class="s3">return </span><span class="s1">self.loaded_dbapi.connect(*cargs</span><span class="s5">, </span><span class="s1">**cparams)</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s5">, </span><span class="s1">url):</span>
+        <span class="s0"># inherits the docstring from interfaces.Dialect.create_connect_args</span>
+        <span class="s1">opts = url.translate_connect_args()</span>
+        <span class="s1">opts.update(url.query)</span>
+        <span class="s3">return </span><span class="s1">([]</span><span class="s5">, </span><span class="s1">opts)</span>
+
+    <span class="s3">def </span><span class="s1">set_engine_execution_options(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">engine: Engine</span><span class="s5">, </span><span class="s1">opts: Mapping[str</span><span class="s5">, </span><span class="s1">Any]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">supported_names = set(self.connection_characteristics).intersection(</span>
+            <span class="s1">opts</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">supported_names:</span>
+            <span class="s1">characteristics: Mapping[str</span><span class="s5">, </span><span class="s1">Any] = util.immutabledict(</span>
+                <span class="s1">(name</span><span class="s5">, </span><span class="s1">opts[name]) </span><span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">supported_names</span>
+            <span class="s1">)</span>
+
+            <span class="s1">@event.listens_for(engine</span><span class="s5">, </span><span class="s4">&quot;engine_connect&quot;</span><span class="s1">)</span>
+            <span class="s3">def </span><span class="s1">set_connection_characteristics(connection):</span>
+                <span class="s1">self._set_connection_characteristics(</span>
+                    <span class="s1">connection</span><span class="s5">, </span><span class="s1">characteristics</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">set_connection_execution_options(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">connection: Connection</span><span class="s5">, </span><span class="s1">opts: Mapping[str</span><span class="s5">, </span><span class="s1">Any]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">supported_names = set(self.connection_characteristics).intersection(</span>
+            <span class="s1">opts</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">supported_names:</span>
+            <span class="s1">characteristics: Mapping[str</span><span class="s5">, </span><span class="s1">Any] = util.immutabledict(</span>
+                <span class="s1">(name</span><span class="s5">, </span><span class="s1">opts[name]) </span><span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">supported_names</span>
+            <span class="s1">)</span>
+            <span class="s1">self._set_connection_characteristics(connection</span><span class="s5">, </span><span class="s1">characteristics)</span>
+
+    <span class="s3">def </span><span class="s1">_set_connection_characteristics(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">characteristics):</span>
+        <span class="s1">characteristic_values = [</span>
+            <span class="s1">(name</span><span class="s5">, </span><span class="s1">self.connection_characteristics[name]</span><span class="s5">, </span><span class="s1">value)</span>
+            <span class="s3">for </span><span class="s1">name</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">characteristics.items()</span>
+        <span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s1">connection.in_transaction():</span>
+            <span class="s1">trans_objs = [</span>
+                <span class="s1">(name</span><span class="s5">, </span><span class="s1">obj)</span>
+                <span class="s3">for </span><span class="s1">name</span><span class="s5">, </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">characteristic_values</span>
+                <span class="s3">if </span><span class="s1">obj.transactional</span>
+            <span class="s1">]</span>
+            <span class="s3">if </span><span class="s1">trans_objs:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;This connection has already initialized a SQLAlchemy &quot;</span>
+                    <span class="s4">&quot;Transaction() object via begin() or autobegin; &quot;</span>
+                    <span class="s4">&quot;%s may not be altered unless rollback() or commit() &quot;</span>
+                    <span class="s4">&quot;is called first.&quot;</span>
+                    <span class="s1">% (</span><span class="s4">&quot;, &quot;</span><span class="s1">.join(name </span><span class="s3">for </span><span class="s1">name</span><span class="s5">, </span><span class="s1">obj </span><span class="s3">in </span><span class="s1">trans_objs))</span>
+                <span class="s1">)</span>
+
+        <span class="s1">dbapi_connection = connection.connection.dbapi_connection</span>
+        <span class="s3">for </span><span class="s1">_</span><span class="s5">, </span><span class="s1">characteristic</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">characteristic_values:</span>
+            <span class="s1">characteristic.set_connection_characteristic(</span>
+                <span class="s1">self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">dbapi_connection</span><span class="s5">, </span><span class="s1">value</span>
+            <span class="s1">)</span>
+        <span class="s1">connection.connection._connection_record.finalize_callback.append(</span>
+            <span class="s1">functools.partial(self._reset_characteristics</span><span class="s5">, </span><span class="s1">characteristics)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_reset_characteristics(self</span><span class="s5">, </span><span class="s1">characteristics</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s3">for </span><span class="s1">characteristic_name </span><span class="s3">in </span><span class="s1">characteristics:</span>
+            <span class="s1">characteristic = self.connection_characteristics[</span>
+                <span class="s1">characteristic_name</span>
+            <span class="s1">]</span>
+            <span class="s1">characteristic.reset_characteristic(self</span><span class="s5">, </span><span class="s1">dbapi_connection)</span>
+
+    <span class="s3">def </span><span class="s1">do_begin(self</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">do_rollback(self</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s1">dbapi_connection.rollback()</span>
+
+    <span class="s3">def </span><span class="s1">do_commit(self</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s1">dbapi_connection.commit()</span>
+
+    <span class="s3">def </span><span class="s1">do_terminate(self</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s1">self.do_close(dbapi_connection)</span>
+
+    <span class="s3">def </span><span class="s1">do_close(self</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s1">dbapi_connection.close()</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_dialect_specific_select_one(self):</span>
+        <span class="s3">return </span><span class="s1">str(expression.select(</span><span class="s6">1</span><span class="s1">).compile(dialect=self))</span>
+
+    <span class="s3">def </span><span class="s1">_do_ping_w_event(self</span><span class="s5">, </span><span class="s1">dbapi_connection: DBAPIConnection) -&gt; bool:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.do_ping(dbapi_connection)</span>
+        <span class="s3">except </span><span class="s1">self.loaded_dbapi.Error </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s1">is_disconnect = self.is_disconnect(err</span><span class="s5">, </span><span class="s1">dbapi_connection</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">self._has_events:</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">Connection._handle_dbapi_exception_noconnection(</span>
+                        <span class="s1">err</span><span class="s5">,</span>
+                        <span class="s1">self</span><span class="s5">,</span>
+                        <span class="s1">is_disconnect=is_disconnect</span><span class="s5">,</span>
+                        <span class="s1">invalidate_pool_on_disconnect=</span><span class="s3">False</span><span class="s5">,</span>
+                        <span class="s1">is_pre_ping=</span><span class="s3">True</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">except </span><span class="s1">exc.StatementError </span><span class="s3">as </span><span class="s1">new_err:</span>
+                    <span class="s1">is_disconnect = new_err.connection_invalidated</span>
+
+            <span class="s3">if </span><span class="s1">is_disconnect:</span>
+                <span class="s3">return False</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise</span>
+
+    <span class="s3">def </span><span class="s1">do_ping(self</span><span class="s5">, </span><span class="s1">dbapi_connection: DBAPIConnection) -&gt; bool:</span>
+        <span class="s1">cursor = </span><span class="s3">None</span>
+
+        <span class="s1">cursor = dbapi_connection.cursor()</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">cursor.execute(self._dialect_specific_select_one)</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s1">cursor.close()</span>
+        <span class="s3">return True</span>
+
+    <span class="s3">def </span><span class="s1">create_xid(self):</span>
+        <span class="s2">&quot;&quot;&quot;Create a random two-phase transaction ID. 
+ 
+        This id will be passed to do_begin_twophase(), do_rollback_twophase(), 
+        do_commit_twophase().  Its format is unspecified. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s4">&quot;_sa_%032x&quot; </span><span class="s1">% random.randint(</span><span class="s6">0</span><span class="s5">, </span><span class="s6">2</span><span class="s1">**</span><span class="s6">128</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">do_savepoint(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">name):</span>
+        <span class="s1">connection.execute(expression.SavepointClause(name))</span>
+
+    <span class="s3">def </span><span class="s1">do_rollback_to_savepoint(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">name):</span>
+        <span class="s1">connection.execute(expression.RollbackToSavepointClause(name))</span>
+
+    <span class="s3">def </span><span class="s1">do_release_savepoint(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">name):</span>
+        <span class="s1">connection.execute(expression.ReleaseSavepointClause(name))</span>
+
+    <span class="s3">def </span><span class="s1">_deliver_insertmanyvalues_batches(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">connection</span><span class="s5">,</span>
+        <span class="s1">cursor</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">parameters</span><span class="s5">,</span>
+        <span class="s1">generic_setinputsizes</span><span class="s5">,</span>
+        <span class="s1">context</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">context = cast(DefaultExecutionContext</span><span class="s5">, </span><span class="s1">context)</span>
+        <span class="s1">compiled = cast(SQLCompiler</span><span class="s5">, </span><span class="s1">context.compiled)</span>
+
+        <span class="s1">_composite_sentinel_proc: Sequence[</span>
+            <span class="s1">Optional[_ResultProcessorType[Any]]</span>
+        <span class="s1">] = ()</span>
+        <span class="s1">_scalar_sentinel_proc: Optional[_ResultProcessorType[Any]] = </span><span class="s3">None</span>
+        <span class="s1">_sentinel_proc_initialized: bool = </span><span class="s3">False</span>
+
+        <span class="s1">compiled_parameters = context.compiled_parameters</span>
+
+        <span class="s1">imv = compiled._insertmanyvalues</span>
+        <span class="s3">assert </span><span class="s1">imv </span><span class="s3">is not None</span>
+
+        <span class="s1">is_returning: Final[bool] = bool(compiled.effective_returning)</span>
+        <span class="s1">batch_size = context.execution_options.get(</span>
+            <span class="s4">&quot;insertmanyvalues_page_size&quot;</span><span class="s5">, </span><span class="s1">self.insertmanyvalues_page_size</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">compiled.schema_translate_map:</span>
+            <span class="s1">schema_translate_map = context.execution_options.get(</span>
+                <span class="s4">&quot;schema_translate_map&quot;</span><span class="s5">, </span><span class="s1">{}</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">schema_translate_map = </span><span class="s3">None</span>
+
+        <span class="s3">if </span><span class="s1">is_returning:</span>
+            <span class="s1">result: Optional[List[Any]] = []</span>
+            <span class="s1">context._insertmanyvalues_rows = result</span>
+
+            <span class="s1">sort_by_parameter_order = imv.sort_by_parameter_order</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">sort_by_parameter_order = </span><span class="s3">False</span>
+            <span class="s1">result = </span><span class="s3">None</span>
+
+        <span class="s3">for </span><span class="s1">imv_batch </span><span class="s3">in </span><span class="s1">compiled._deliver_insertmanyvalues_batches(</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">parameters</span><span class="s5">,</span>
+            <span class="s1">compiled_parameters</span><span class="s5">,</span>
+            <span class="s1">generic_setinputsizes</span><span class="s5">,</span>
+            <span class="s1">batch_size</span><span class="s5">,</span>
+            <span class="s1">sort_by_parameter_order</span><span class="s5">,</span>
+            <span class="s1">schema_translate_map</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s3">yield </span><span class="s1">imv_batch</span>
+
+            <span class="s3">if </span><span class="s1">is_returning:</span>
+
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">rows = context.fetchall_for_returning(cursor)</span>
+                <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">be:</span>
+                    <span class="s1">connection._handle_dbapi_exception(</span>
+                        <span class="s1">be</span><span class="s5">,</span>
+                        <span class="s1">sql_util._long_statement(imv_batch.replaced_statement)</span><span class="s5">,</span>
+                        <span class="s1">imv_batch.replaced_parameters</span><span class="s5">,</span>
+                        <span class="s3">None</span><span class="s5">,</span>
+                        <span class="s1">context</span><span class="s5">,</span>
+                        <span class="s1">is_sub_exec=</span><span class="s3">True</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+
+                <span class="s0"># I would have thought &quot;is_returning: Final[bool]&quot;</span>
+                <span class="s0"># would have assured this but pylance thinks not</span>
+                <span class="s3">assert </span><span class="s1">result </span><span class="s3">is not None</span>
+
+                <span class="s3">if </span><span class="s1">imv.num_sentinel_columns </span><span class="s3">and not </span><span class="s1">imv_batch.is_downgraded:</span>
+                    <span class="s1">composite_sentinel = imv.num_sentinel_columns &gt; </span><span class="s6">1</span>
+                    <span class="s3">if </span><span class="s1">imv.implicit_sentinel:</span>
+                        <span class="s0"># for implicit sentinel, which is currently single-col</span>
+                        <span class="s0"># integer autoincrement, do a simple sort.</span>
+                        <span class="s3">assert not </span><span class="s1">composite_sentinel</span>
+                        <span class="s1">result.extend(</span>
+                            <span class="s1">sorted(rows</span><span class="s5">, </span><span class="s1">key=operator.itemgetter(-</span><span class="s6">1</span><span class="s1">))</span>
+                        <span class="s1">)</span>
+                        <span class="s3">continue</span>
+
+                    <span class="s0"># otherwise, create dictionaries to match up batches</span>
+                    <span class="s0"># with parameters</span>
+                    <span class="s3">assert </span><span class="s1">imv.sentinel_param_keys</span>
+                    <span class="s3">assert </span><span class="s1">imv.sentinel_columns</span>
+
+                    <span class="s1">_nsc = imv.num_sentinel_columns</span>
+
+                    <span class="s3">if not </span><span class="s1">_sentinel_proc_initialized:</span>
+                        <span class="s3">if </span><span class="s1">composite_sentinel:</span>
+                            <span class="s1">_composite_sentinel_proc = [</span>
+                                <span class="s1">col.type._cached_result_processor(</span>
+                                    <span class="s1">self</span><span class="s5">, </span><span class="s1">cursor_desc[</span><span class="s6">1</span><span class="s1">]</span>
+                                <span class="s1">)</span>
+                                <span class="s3">for </span><span class="s1">col</span><span class="s5">, </span><span class="s1">cursor_desc </span><span class="s3">in </span><span class="s1">zip(</span>
+                                    <span class="s1">imv.sentinel_columns</span><span class="s5">,</span>
+                                    <span class="s1">cursor.description[-_nsc:]</span><span class="s5">,</span>
+                                <span class="s1">)</span>
+                            <span class="s1">]</span>
+                        <span class="s3">else</span><span class="s1">:</span>
+                            <span class="s1">_scalar_sentinel_proc = (</span>
+                                <span class="s1">imv.sentinel_columns[</span><span class="s6">0</span><span class="s1">]</span>
+                            <span class="s1">).type._cached_result_processor(</span>
+                                <span class="s1">self</span><span class="s5">, </span><span class="s1">cursor.description[-</span><span class="s6">1</span><span class="s1">][</span><span class="s6">1</span><span class="s1">]</span>
+                            <span class="s1">)</span>
+                        <span class="s1">_sentinel_proc_initialized = </span><span class="s3">True</span>
+
+                    <span class="s1">rows_by_sentinel: Union[</span>
+                        <span class="s1">Dict[Tuple[Any</span><span class="s5">, </span><span class="s1">...]</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">,</span>
+                        <span class="s1">Dict[Any</span><span class="s5">, </span><span class="s1">Any]</span><span class="s5">,</span>
+                    <span class="s1">]</span>
+                    <span class="s3">if </span><span class="s1">composite_sentinel:</span>
+                        <span class="s1">rows_by_sentinel = {</span>
+                            <span class="s1">tuple(</span>
+                                <span class="s1">(proc(val) </span><span class="s3">if </span><span class="s1">proc </span><span class="s3">else </span><span class="s1">val)</span>
+                                <span class="s3">for </span><span class="s1">val</span><span class="s5">, </span><span class="s1">proc </span><span class="s3">in </span><span class="s1">zip(</span>
+                                    <span class="s1">row[-_nsc:]</span><span class="s5">, </span><span class="s1">_composite_sentinel_proc</span>
+                                <span class="s1">)</span>
+                            <span class="s1">): row</span>
+                            <span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">rows</span>
+                        <span class="s1">}</span>
+                    <span class="s3">elif </span><span class="s1">_scalar_sentinel_proc:</span>
+                        <span class="s1">rows_by_sentinel = {</span>
+                            <span class="s1">_scalar_sentinel_proc(row[-</span><span class="s6">1</span><span class="s1">]): row </span><span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">rows</span>
+                        <span class="s1">}</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">rows_by_sentinel = {row[-</span><span class="s6">1</span><span class="s1">]: row </span><span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">rows}</span>
+
+                    <span class="s3">if </span><span class="s1">len(rows_by_sentinel) != len(imv_batch.batch):</span>
+                        <span class="s0"># see test_insert_exec.py::</span>
+                        <span class="s0"># IMVSentinelTest::test_sentinel_incorrect_rowcount</span>
+                        <span class="s0"># for coverage / demonstration</span>
+                        <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                            <span class="s4">f&quot;Sentinel-keyed result set did not produce &quot;</span>
+                            <span class="s4">f&quot;correct number of rows </span><span class="s7">{</span><span class="s1">len(imv_batch.batch)</span><span class="s7">}</span><span class="s4">; &quot;</span>
+                            <span class="s4">&quot;produced &quot;</span>
+                            <span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">len(rows_by_sentinel)</span><span class="s7">}</span><span class="s4">.  Please ensure the &quot;</span>
+                            <span class="s4">&quot;sentinel column is fully unique and populated in &quot;</span>
+                            <span class="s4">&quot;all cases.&quot;</span>
+                        <span class="s1">)</span>
+
+                    <span class="s3">try</span><span class="s1">:</span>
+                        <span class="s1">ordered_rows = [</span>
+                            <span class="s1">rows_by_sentinel[sentinel_keys]</span>
+                            <span class="s3">for </span><span class="s1">sentinel_keys </span><span class="s3">in </span><span class="s1">imv_batch.sentinel_values</span>
+                        <span class="s1">]</span>
+                    <span class="s3">except </span><span class="s1">KeyError </span><span class="s3">as </span><span class="s1">ke:</span>
+                        <span class="s0"># see test_insert_exec.py::</span>
+                        <span class="s0"># IMVSentinelTest::test_sentinel_cant_match_keys</span>
+                        <span class="s0"># for coverage / demonstration</span>
+                        <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                            <span class="s4">f&quot;Can't match sentinel values in result set to &quot;</span>
+                            <span class="s4">f&quot;parameter sets; key </span><span class="s7">{</span><span class="s1">ke.args[</span><span class="s6">0</span><span class="s1">]</span><span class="s7">!r} </span><span class="s4">was not &quot;</span>
+                            <span class="s4">&quot;found. &quot;</span>
+                            <span class="s4">&quot;There may be a mismatch between the datatype &quot;</span>
+                            <span class="s4">&quot;passed to the DBAPI driver vs. that which it &quot;</span>
+                            <span class="s4">&quot;returns in a result row.  Ensure the given &quot;</span>
+                            <span class="s4">&quot;Python value matches the expected result type &quot;</span>
+                            <span class="s4">&quot;*exactly*, taking care to not rely upon implicit &quot;</span>
+                            <span class="s4">&quot;conversions which may occur such as when using &quot;</span>
+                            <span class="s4">&quot;strings in place of UUID or integer values, etc. &quot;</span>
+                        <span class="s1">) </span><span class="s3">from </span><span class="s1">ke</span>
+
+                    <span class="s1">result.extend(ordered_rows)</span>
+
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">result.extend(rows)</span>
+
+    <span class="s3">def </span><span class="s1">do_executemany(self</span><span class="s5">, </span><span class="s1">cursor</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">parameters</span><span class="s5">, </span><span class="s1">context=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">cursor.executemany(statement</span><span class="s5">, </span><span class="s1">parameters)</span>
+
+    <span class="s3">def </span><span class="s1">do_execute(self</span><span class="s5">, </span><span class="s1">cursor</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">parameters</span><span class="s5">, </span><span class="s1">context=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">cursor.execute(statement</span><span class="s5">, </span><span class="s1">parameters)</span>
+
+    <span class="s3">def </span><span class="s1">do_execute_no_params(self</span><span class="s5">, </span><span class="s1">cursor</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">context=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">cursor.execute(statement)</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s5">, </span><span class="s1">e</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">cursor):</span>
+        <span class="s3">return False</span>
+
+    <span class="s1">@util.memoized_instancemethod</span>
+    <span class="s3">def </span><span class="s1">_gen_allowed_isolation_levels(self</span><span class="s5">, </span><span class="s1">dbapi_conn):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">raw_levels = list(self.get_isolation_level_values(dbapi_conn))</span>
+        <span class="s3">except </span><span class="s1">NotImplementedError:</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">normalized_levels = [</span>
+                <span class="s1">level.replace(</span><span class="s4">&quot;_&quot;</span><span class="s5">, </span><span class="s4">&quot; &quot;</span><span class="s1">).upper() </span><span class="s3">for </span><span class="s1">level </span><span class="s3">in </span><span class="s1">raw_levels</span>
+            <span class="s1">]</span>
+            <span class="s3">if </span><span class="s1">raw_levels != normalized_levels:</span>
+                <span class="s3">raise </span><span class="s1">ValueError(</span>
+                    <span class="s4">f&quot;Dialect </span><span class="s7">{</span><span class="s1">self.name</span><span class="s7">!r} </span><span class="s4">get_isolation_level_values() &quot;</span>
+                    <span class="s4">f&quot;method should return names as UPPERCASE using spaces, &quot;</span>
+                    <span class="s4">f&quot;not underscores; got &quot;</span>
+                    <span class="s4">f&quot;</span><span class="s7">{</span><span class="s1">sorted(set(raw_levels).difference(normalized_levels))</span><span class="s7">}</span><span class="s4">&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">tuple(normalized_levels)</span>
+
+    <span class="s3">def </span><span class="s1">_assert_and_set_isolation_level(self</span><span class="s5">, </span><span class="s1">dbapi_conn</span><span class="s5">, </span><span class="s1">level):</span>
+        <span class="s1">level = level.replace(</span><span class="s4">&quot;_&quot;</span><span class="s5">, </span><span class="s4">&quot; &quot;</span><span class="s1">).upper()</span>
+
+        <span class="s1">_allowed_isolation_levels = self._gen_allowed_isolation_levels(</span>
+            <span class="s1">dbapi_conn</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">_allowed_isolation_levels</span>
+            <span class="s3">and </span><span class="s1">level </span><span class="s3">not in </span><span class="s1">_allowed_isolation_levels</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s4">f&quot;Invalid value </span><span class="s7">{</span><span class="s1">level</span><span class="s7">!r} </span><span class="s4">for isolation_level. &quot;</span>
+                <span class="s4">f&quot;Valid isolation levels for </span><span class="s7">{</span><span class="s1">self.name</span><span class="s7">!r} </span><span class="s4">are &quot;</span>
+                <span class="s4">f&quot;</span><span class="s7">{</span><span class="s4">', '</span><span class="s1">.join(_allowed_isolation_levels)</span><span class="s7">}</span><span class="s4">&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">self.set_isolation_level(dbapi_conn</span><span class="s5">, </span><span class="s1">level)</span>
+
+    <span class="s3">def </span><span class="s1">reset_isolation_level(self</span><span class="s5">, </span><span class="s1">dbapi_conn):</span>
+        <span class="s3">if </span><span class="s1">self._on_connect_isolation_level </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">assert </span><span class="s1">(</span>
+                <span class="s1">self._on_connect_isolation_level == </span><span class="s4">&quot;AUTOCOMMIT&quot;</span>
+                <span class="s3">or </span><span class="s1">self._on_connect_isolation_level</span>
+                <span class="s1">== self.default_isolation_level</span>
+            <span class="s1">)</span>
+            <span class="s1">self._assert_and_set_isolation_level(</span>
+                <span class="s1">dbapi_conn</span><span class="s5">, </span><span class="s1">self._on_connect_isolation_level</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">assert </span><span class="s1">self.default_isolation_level </span><span class="s3">is not None</span>
+            <span class="s1">self._assert_and_set_isolation_level(</span>
+                <span class="s1">dbapi_conn</span><span class="s5">,</span>
+                <span class="s1">self.default_isolation_level</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">normalize_name(self</span><span class="s5">, </span><span class="s1">name):</span>
+        <span class="s3">if </span><span class="s1">name </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">name_lower = name.lower()</span>
+        <span class="s1">name_upper = name.upper()</span>
+
+        <span class="s3">if </span><span class="s1">name_upper == name_lower:</span>
+            <span class="s0"># name has no upper/lower conversion, e.g. non-european characters.</span>
+            <span class="s0"># return unchanged</span>
+            <span class="s3">return </span><span class="s1">name</span>
+        <span class="s3">elif </span><span class="s1">name_upper == name </span><span class="s3">and not </span><span class="s1">(</span>
+            <span class="s1">self.identifier_preparer._requires_quotes</span>
+        <span class="s1">)(name_lower):</span>
+            <span class="s0"># name is all uppercase and doesn't require quoting; normalize</span>
+            <span class="s0"># to all lower case</span>
+            <span class="s3">return </span><span class="s1">name_lower</span>
+        <span class="s3">elif </span><span class="s1">name_lower == name:</span>
+            <span class="s0"># name is all lower case, which if denormalized means we need to</span>
+            <span class="s0"># force quoting on it</span>
+            <span class="s3">return </span><span class="s1">quoted_name(name</span><span class="s5">, </span><span class="s1">quote=</span><span class="s3">True</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># name is mixed case, means it will be quoted in SQL when used</span>
+            <span class="s0"># later, no normalizes</span>
+            <span class="s3">return </span><span class="s1">name</span>
+
+    <span class="s3">def </span><span class="s1">denormalize_name(self</span><span class="s5">, </span><span class="s1">name):</span>
+        <span class="s3">if </span><span class="s1">name </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">name_lower = name.lower()</span>
+        <span class="s1">name_upper = name.upper()</span>
+
+        <span class="s3">if </span><span class="s1">name_upper == name_lower:</span>
+            <span class="s0"># name has no upper/lower conversion, e.g. non-european characters.</span>
+            <span class="s0"># return unchanged</span>
+            <span class="s3">return </span><span class="s1">name</span>
+        <span class="s3">elif </span><span class="s1">name_lower == name </span><span class="s3">and not </span><span class="s1">(</span>
+            <span class="s1">self.identifier_preparer._requires_quotes</span>
+        <span class="s1">)(name_lower):</span>
+            <span class="s1">name = name_upper</span>
+        <span class="s3">return </span><span class="s1">name</span>
+
+    <span class="s3">def </span><span class="s1">get_driver_connection(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">connection</span>
+
+    <span class="s3">def </span><span class="s1">_overrides_default(self</span><span class="s5">, </span><span class="s1">method):</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">getattr(type(self)</span><span class="s5">, </span><span class="s1">method).__code__</span>
+            <span class="s3">is not </span><span class="s1">getattr(DefaultDialect</span><span class="s5">, </span><span class="s1">method).__code__</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_default_multi_reflect(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">single_tbl_method</span><span class="s5">,</span>
+        <span class="s1">connection</span><span class="s5">,</span>
+        <span class="s1">kind</span><span class="s5">,</span>
+        <span class="s1">schema</span><span class="s5">,</span>
+        <span class="s1">filter_names</span><span class="s5">,</span>
+        <span class="s1">scope</span><span class="s5">,</span>
+        <span class="s1">**kw</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">names_fns = []</span>
+        <span class="s1">temp_names_fns = []</span>
+        <span class="s3">if </span><span class="s1">ObjectKind.TABLE </span><span class="s3">in </span><span class="s1">kind:</span>
+            <span class="s1">names_fns.append(self.get_table_names)</span>
+            <span class="s1">temp_names_fns.append(self.get_temp_table_names)</span>
+        <span class="s3">if </span><span class="s1">ObjectKind.VIEW </span><span class="s3">in </span><span class="s1">kind:</span>
+            <span class="s1">names_fns.append(self.get_view_names)</span>
+            <span class="s1">temp_names_fns.append(self.get_temp_view_names)</span>
+        <span class="s3">if </span><span class="s1">ObjectKind.MATERIALIZED_VIEW </span><span class="s3">in </span><span class="s1">kind:</span>
+            <span class="s1">names_fns.append(self.get_materialized_view_names)</span>
+            <span class="s0"># no temp materialized view at the moment</span>
+            <span class="s0"># temp_names_fns.append(self.get_temp_materialized_view_names)</span>
+
+        <span class="s1">unreflectable = kw.pop(</span><span class="s4">&quot;unreflectable&quot;</span><span class="s5">, </span><span class="s1">{})</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">filter_names</span>
+            <span class="s3">and </span><span class="s1">scope </span><span class="s3">is </span><span class="s1">ObjectScope.ANY</span>
+            <span class="s3">and </span><span class="s1">kind </span><span class="s3">is </span><span class="s1">ObjectKind.ANY</span>
+        <span class="s1">):</span>
+            <span class="s0"># if names are given and no qualification on type of table</span>
+            <span class="s0"># (i.e. the Table(..., autoload) case), take the names as given,</span>
+            <span class="s0"># don't run names queries. If a table does not exit</span>
+            <span class="s0"># NoSuchTableError is raised and it's skipped</span>
+
+            <span class="s0"># this also suits the case for mssql where we can reflect</span>
+            <span class="s0"># individual temp tables but there's no temp_names_fn</span>
+            <span class="s1">names = filter_names</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">names = []</span>
+            <span class="s1">name_kw = {</span><span class="s4">&quot;schema&quot;</span><span class="s1">: schema</span><span class="s5">, </span><span class="s1">**kw}</span>
+            <span class="s1">fns = []</span>
+            <span class="s3">if </span><span class="s1">ObjectScope.DEFAULT </span><span class="s3">in </span><span class="s1">scope:</span>
+                <span class="s1">fns.extend(names_fns)</span>
+            <span class="s3">if </span><span class="s1">ObjectScope.TEMPORARY </span><span class="s3">in </span><span class="s1">scope:</span>
+                <span class="s1">fns.extend(temp_names_fns)</span>
+
+            <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">fns:</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">names.extend(fn(connection</span><span class="s5">, </span><span class="s1">**name_kw))</span>
+                <span class="s3">except </span><span class="s1">NotImplementedError:</span>
+                    <span class="s3">pass</span>
+
+        <span class="s3">if </span><span class="s1">filter_names:</span>
+            <span class="s1">filter_names = set(filter_names)</span>
+
+        <span class="s0"># iterate over all the tables/views and call the single table method</span>
+        <span class="s3">for </span><span class="s1">table </span><span class="s3">in </span><span class="s1">names:</span>
+            <span class="s3">if not </span><span class="s1">filter_names </span><span class="s3">or </span><span class="s1">table </span><span class="s3">in </span><span class="s1">filter_names:</span>
+                <span class="s1">key = (schema</span><span class="s5">, </span><span class="s1">table)</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s3">yield </span><span class="s1">(</span>
+                        <span class="s1">key</span><span class="s5">,</span>
+                        <span class="s1">single_tbl_method(</span>
+                            <span class="s1">connection</span><span class="s5">, </span><span class="s1">table</span><span class="s5">, </span><span class="s1">schema=schema</span><span class="s5">, </span><span class="s1">**kw</span>
+                        <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">except </span><span class="s1">exc.UnreflectableTableError </span><span class="s3">as </span><span class="s1">err:</span>
+                    <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">unreflectable:</span>
+                        <span class="s1">unreflectable[key] = err</span>
+                <span class="s3">except </span><span class="s1">exc.NoSuchTableError:</span>
+                    <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">get_multi_table_options(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">self._default_multi_reflect(</span>
+            <span class="s1">self.get_table_options</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get_multi_columns(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">self._default_multi_reflect(self.get_columns</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">get_multi_pk_constraint(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">self._default_multi_reflect(</span>
+            <span class="s1">self.get_pk_constraint</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get_multi_foreign_keys(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">self._default_multi_reflect(</span>
+            <span class="s1">self.get_foreign_keys</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get_multi_indexes(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">self._default_multi_reflect(self.get_indexes</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+    <span class="s3">def </span><span class="s1">get_multi_unique_constraints(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">self._default_multi_reflect(</span>
+            <span class="s1">self.get_unique_constraints</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get_multi_check_constraints(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">self._default_multi_reflect(</span>
+            <span class="s1">self.get_check_constraints</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get_multi_table_comment(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s3">return </span><span class="s1">self._default_multi_reflect(</span>
+            <span class="s1">self.get_table_comment</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">StrCompileDialect(DefaultDialect):</span>
+    <span class="s1">statement_compiler = compiler.StrSQLCompiler</span>
+    <span class="s1">ddl_compiler = compiler.DDLCompiler</span>
+    <span class="s1">type_compiler_cls = compiler.StrSQLTypeCompiler</span>
+    <span class="s1">preparer = compiler.IdentifierPreparer</span>
+
+    <span class="s1">insert_returning = </span><span class="s3">True</span>
+    <span class="s1">update_returning = </span><span class="s3">True</span>
+    <span class="s1">delete_returning = </span><span class="s3">True</span>
+
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s1">supports_identity_columns = </span><span class="s3">True</span>
+
+    <span class="s1">supports_sequences = </span><span class="s3">True</span>
+    <span class="s1">sequences_optional = </span><span class="s3">True</span>
+    <span class="s1">preexecute_autoincrement_sequences = </span><span class="s3">False</span>
+
+    <span class="s1">supports_native_boolean = </span><span class="s3">True</span>
+
+    <span class="s1">supports_multivalues_insert = </span><span class="s3">True</span>
+    <span class="s1">supports_simple_order_by_label = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">DefaultExecutionContext(ExecutionContext):</span>
+    <span class="s1">isinsert = </span><span class="s3">False</span>
+    <span class="s1">isupdate = </span><span class="s3">False</span>
+    <span class="s1">isdelete = </span><span class="s3">False</span>
+    <span class="s1">is_crud = </span><span class="s3">False</span>
+    <span class="s1">is_text = </span><span class="s3">False</span>
+    <span class="s1">isddl = </span><span class="s3">False</span>
+
+    <span class="s1">execute_style: ExecuteStyle = ExecuteStyle.EXECUTE</span>
+
+    <span class="s1">compiled: Optional[Compiled] = </span><span class="s3">None</span>
+    <span class="s1">result_column_struct: Optional[</span>
+        <span class="s1">Tuple[List[ResultColumnsEntry]</span><span class="s5">, </span><span class="s1">bool</span><span class="s5">, </span><span class="s1">bool</span><span class="s5">, </span><span class="s1">bool</span><span class="s5">, </span><span class="s1">bool]</span>
+    <span class="s1">] = </span><span class="s3">None</span>
+    <span class="s1">returned_default_rows: Optional[Sequence[Row[Any]]] = </span><span class="s3">None</span>
+
+    <span class="s1">execution_options: _ExecuteOptions = util.EMPTY_DICT</span>
+
+    <span class="s1">cursor_fetch_strategy = _cursor._DEFAULT_FETCH</span>
+
+    <span class="s1">invoked_statement: Optional[Executable] = </span><span class="s3">None</span>
+
+    <span class="s1">_is_implicit_returning = </span><span class="s3">False</span>
+    <span class="s1">_is_explicit_returning = </span><span class="s3">False</span>
+    <span class="s1">_is_supplemental_returning = </span><span class="s3">False</span>
+    <span class="s1">_is_server_side = </span><span class="s3">False</span>
+
+    <span class="s1">_soft_closed = </span><span class="s3">False</span>
+
+    <span class="s1">_rowcount: Optional[int] = </span><span class="s3">None</span>
+
+    <span class="s0"># a hook for SQLite's translation of</span>
+    <span class="s0"># result column names</span>
+    <span class="s0"># NOTE: pyhive is using this hook, can't remove it :(</span>
+    <span class="s1">_translate_colname: Optional[Callable[[str]</span><span class="s5">, </span><span class="s1">str]] = </span><span class="s3">None</span>
+
+    <span class="s1">_expanded_parameters: Mapping[str</span><span class="s5">, </span><span class="s1">List[str]] = util.immutabledict()</span>
+    <span class="s4">&quot;&quot;&quot;used by set_input_sizes(). 
+ 
+    This collection comes from ``ExpandedState.parameter_expansion``. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">cache_hit = NO_CACHE_KEY</span>
+
+    <span class="s1">root_connection: Connection</span>
+    <span class="s1">_dbapi_connection: PoolProxiedConnection</span>
+    <span class="s1">dialect: Dialect</span>
+    <span class="s1">unicode_statement: str</span>
+    <span class="s1">cursor: DBAPICursor</span>
+    <span class="s1">compiled_parameters: List[_MutableCoreSingleExecuteParams]</span>
+    <span class="s1">parameters: _DBAPIMultiExecuteParams</span>
+    <span class="s1">extracted_parameters: Optional[Sequence[BindParameter[Any]]]</span>
+
+    <span class="s1">_empty_dict_params = cast(</span><span class="s4">&quot;Mapping[str, Any]&quot;</span><span class="s5">, </span><span class="s1">util.EMPTY_DICT)</span>
+
+    <span class="s1">_insertmanyvalues_rows: Optional[List[Tuple[Any</span><span class="s5">, </span><span class="s1">...]]] = </span><span class="s3">None</span>
+    <span class="s1">_num_sentinel_cols: int = </span><span class="s6">0</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_init_ddl(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">dialect: Dialect</span><span class="s5">,</span>
+        <span class="s1">connection: Connection</span><span class="s5">,</span>
+        <span class="s1">dbapi_connection: PoolProxiedConnection</span><span class="s5">,</span>
+        <span class="s1">execution_options: _ExecuteOptions</span><span class="s5">,</span>
+        <span class="s1">compiled_ddl: DDLCompiler</span><span class="s5">,</span>
+    <span class="s1">) -&gt; ExecutionContext:</span>
+        <span class="s2">&quot;&quot;&quot;Initialize execution context for an ExecutableDDLElement 
+        construct.&quot;&quot;&quot;</span>
+
+        <span class="s1">self = cls.__new__(cls)</span>
+        <span class="s1">self.root_connection = connection</span>
+        <span class="s1">self._dbapi_connection = dbapi_connection</span>
+        <span class="s1">self.dialect = connection.dialect</span>
+
+        <span class="s1">self.compiled = compiled = compiled_ddl</span>
+        <span class="s1">self.isddl = </span><span class="s3">True</span>
+
+        <span class="s1">self.execution_options = execution_options</span>
+
+        <span class="s1">self.unicode_statement = str(compiled)</span>
+        <span class="s3">if </span><span class="s1">compiled.schema_translate_map:</span>
+            <span class="s1">schema_translate_map = self.execution_options.get(</span>
+                <span class="s4">&quot;schema_translate_map&quot;</span><span class="s5">, </span><span class="s1">{}</span>
+            <span class="s1">)</span>
+
+            <span class="s1">rst = compiled.preparer._render_schema_translates</span>
+            <span class="s1">self.unicode_statement = rst(</span>
+                <span class="s1">self.unicode_statement</span><span class="s5">, </span><span class="s1">schema_translate_map</span>
+            <span class="s1">)</span>
+
+        <span class="s1">self.statement = self.unicode_statement</span>
+
+        <span class="s1">self.cursor = self.create_cursor()</span>
+        <span class="s1">self.compiled_parameters = []</span>
+
+        <span class="s3">if </span><span class="s1">dialect.positional:</span>
+            <span class="s1">self.parameters = [dialect.execute_sequence_format()]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.parameters = [self._empty_dict_params]</span>
+
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_init_compiled(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">dialect: Dialect</span><span class="s5">,</span>
+        <span class="s1">connection: Connection</span><span class="s5">,</span>
+        <span class="s1">dbapi_connection: PoolProxiedConnection</span><span class="s5">,</span>
+        <span class="s1">execution_options: _ExecuteOptions</span><span class="s5">,</span>
+        <span class="s1">compiled: SQLCompiler</span><span class="s5">,</span>
+        <span class="s1">parameters: _CoreMultiExecuteParams</span><span class="s5">,</span>
+        <span class="s1">invoked_statement: Executable</span><span class="s5">,</span>
+        <span class="s1">extracted_parameters: Optional[Sequence[BindParameter[Any]]]</span><span class="s5">,</span>
+        <span class="s1">cache_hit: CacheStats = CacheStats.CACHING_DISABLED</span><span class="s5">,</span>
+    <span class="s1">) -&gt; ExecutionContext:</span>
+        <span class="s2">&quot;&quot;&quot;Initialize execution context for a Compiled construct.&quot;&quot;&quot;</span>
+
+        <span class="s1">self = cls.__new__(cls)</span>
+        <span class="s1">self.root_connection = connection</span>
+        <span class="s1">self._dbapi_connection = dbapi_connection</span>
+        <span class="s1">self.dialect = connection.dialect</span>
+        <span class="s1">self.extracted_parameters = extracted_parameters</span>
+        <span class="s1">self.invoked_statement = invoked_statement</span>
+        <span class="s1">self.compiled = compiled</span>
+        <span class="s1">self.cache_hit = cache_hit</span>
+
+        <span class="s1">self.execution_options = execution_options</span>
+
+        <span class="s1">self.result_column_struct = (</span>
+            <span class="s1">compiled._result_columns</span><span class="s5">,</span>
+            <span class="s1">compiled._ordered_columns</span><span class="s5">,</span>
+            <span class="s1">compiled._textual_ordered_columns</span><span class="s5">,</span>
+            <span class="s1">compiled._ad_hoc_textual</span><span class="s5">,</span>
+            <span class="s1">compiled._loose_column_name_matching</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">self.isinsert = ii = compiled.isinsert</span>
+        <span class="s1">self.isupdate = iu = compiled.isupdate</span>
+        <span class="s1">self.isdelete = id_ = compiled.isdelete</span>
+        <span class="s1">self.is_text = compiled.isplaintext</span>
+
+        <span class="s3">if </span><span class="s1">ii </span><span class="s3">or </span><span class="s1">iu </span><span class="s3">or </span><span class="s1">id_:</span>
+            <span class="s1">dml_statement = compiled.compile_state.statement  </span><span class="s0"># type: ignore</span>
+            <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+                <span class="s3">assert </span><span class="s1">isinstance(dml_statement</span><span class="s5">, </span><span class="s1">UpdateBase)</span>
+            <span class="s1">self.is_crud = </span><span class="s3">True</span>
+            <span class="s1">self._is_explicit_returning = ier = bool(dml_statement._returning)</span>
+            <span class="s1">self._is_implicit_returning = iir = bool(</span>
+                <span class="s1">compiled.implicit_returning</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">iir </span><span class="s3">and </span><span class="s1">dml_statement._supplemental_returning:</span>
+                <span class="s1">self._is_supplemental_returning = </span><span class="s3">True</span>
+
+            <span class="s0"># dont mix implicit and explicit returning</span>
+            <span class="s3">assert not </span><span class="s1">(iir </span><span class="s3">and </span><span class="s1">ier)</span>
+
+            <span class="s3">if </span><span class="s1">(ier </span><span class="s3">or </span><span class="s1">iir) </span><span class="s3">and </span><span class="s1">compiled.for_executemany:</span>
+                <span class="s3">if </span><span class="s1">ii </span><span class="s3">and not </span><span class="s1">self.dialect.insert_executemany_returning:</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">f&quot;Dialect </span><span class="s7">{</span><span class="s1">self.dialect.dialect_description</span><span class="s7">} </span><span class="s4">with &quot;</span>
+                        <span class="s4">f&quot;current server capabilities does not support &quot;</span>
+                        <span class="s4">&quot;INSERT..RETURNING when executemany is used&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">(</span>
+                    <span class="s1">ii</span>
+                    <span class="s3">and </span><span class="s1">dml_statement._sort_by_parameter_order</span>
+                    <span class="s3">and not </span><span class="s1">self.dialect.insert_executemany_returning_sort_by_parameter_order  </span><span class="s0"># noqa: E501</span>
+                <span class="s1">):</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">f&quot;Dialect </span><span class="s7">{</span><span class="s1">self.dialect.dialect_description</span><span class="s7">} </span><span class="s4">with &quot;</span>
+                        <span class="s4">f&quot;current server capabilities does not support &quot;</span>
+                        <span class="s4">&quot;INSERT..RETURNING with deterministic row ordering &quot;</span>
+                        <span class="s4">&quot;when executemany is used&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">(</span>
+                    <span class="s1">ii</span>
+                    <span class="s3">and </span><span class="s1">self.dialect.use_insertmanyvalues</span>
+                    <span class="s3">and not </span><span class="s1">compiled._insertmanyvalues</span>
+                <span class="s1">):</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">'Statement does not have &quot;insertmanyvalues&quot; '</span>
+                        <span class="s4">&quot;enabled, can't use INSERT..RETURNING with &quot;</span>
+                        <span class="s4">&quot;executemany in this case.&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">iu </span><span class="s3">and not </span><span class="s1">self.dialect.update_executemany_returning:</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">f&quot;Dialect </span><span class="s7">{</span><span class="s1">self.dialect.dialect_description</span><span class="s7">} </span><span class="s4">with &quot;</span>
+                        <span class="s4">f&quot;current server capabilities does not support &quot;</span>
+                        <span class="s4">&quot;UPDATE..RETURNING when executemany is used&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">id_ </span><span class="s3">and not </span><span class="s1">self.dialect.delete_executemany_returning:</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">f&quot;Dialect </span><span class="s7">{</span><span class="s1">self.dialect.dialect_description</span><span class="s7">} </span><span class="s4">with &quot;</span>
+                        <span class="s4">f&quot;current server capabilities does not support &quot;</span>
+                        <span class="s4">&quot;DELETE..RETURNING when executemany is used&quot;</span>
+                    <span class="s1">)</span>
+
+        <span class="s3">if not </span><span class="s1">parameters:</span>
+            <span class="s1">self.compiled_parameters = [</span>
+                <span class="s1">compiled.construct_params(</span>
+                    <span class="s1">extracted_parameters=extracted_parameters</span><span class="s5">,</span>
+                    <span class="s1">escape_names=</span><span class="s3">False</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.compiled_parameters = [</span>
+                <span class="s1">compiled.construct_params(</span>
+                    <span class="s1">m</span><span class="s5">,</span>
+                    <span class="s1">escape_names=</span><span class="s3">False</span><span class="s5">,</span>
+                    <span class="s1">_group_number=grp</span><span class="s5">,</span>
+                    <span class="s1">extracted_parameters=extracted_parameters</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">grp</span><span class="s5">, </span><span class="s1">m </span><span class="s3">in </span><span class="s1">enumerate(parameters)</span>
+            <span class="s1">]</span>
+
+            <span class="s3">if </span><span class="s1">len(parameters) &gt; </span><span class="s6">1</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">self.isinsert </span><span class="s3">and </span><span class="s1">compiled._insertmanyvalues:</span>
+                    <span class="s1">self.execute_style = ExecuteStyle.INSERTMANYVALUES</span>
+
+                    <span class="s1">imv = compiled._insertmanyvalues</span>
+                    <span class="s3">if </span><span class="s1">imv.sentinel_columns </span><span class="s3">is not None</span><span class="s1">:</span>
+                        <span class="s1">self._num_sentinel_cols = imv.num_sentinel_columns</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">self.execute_style = ExecuteStyle.EXECUTEMANY</span>
+
+        <span class="s1">self.unicode_statement = compiled.string</span>
+
+        <span class="s1">self.cursor = self.create_cursor()</span>
+
+        <span class="s3">if </span><span class="s1">self.compiled.insert_prefetch </span><span class="s3">or </span><span class="s1">self.compiled.update_prefetch:</span>
+            <span class="s1">self._process_execute_defaults()</span>
+
+        <span class="s1">processors = compiled._bind_processors</span>
+
+        <span class="s1">flattened_processors: Mapping[</span>
+            <span class="s1">str</span><span class="s5">, </span><span class="s1">_BindProcessorType[Any]</span>
+        <span class="s1">] = processors  </span><span class="s0"># type: ignore[assignment]</span>
+
+        <span class="s3">if </span><span class="s1">compiled.literal_execute_params </span><span class="s3">or </span><span class="s1">compiled.post_compile_params:</span>
+            <span class="s3">if </span><span class="s1">self.executemany:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;'literal_execute' or 'expanding' parameters can't be &quot;</span>
+                    <span class="s4">&quot;used with executemany()&quot;</span>
+                <span class="s1">)</span>
+
+            <span class="s1">expanded_state = compiled._process_parameters_for_postcompile(</span>
+                <span class="s1">self.compiled_parameters[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s1">)</span>
+
+            <span class="s0"># re-assign self.unicode_statement</span>
+            <span class="s1">self.unicode_statement = expanded_state.statement</span>
+
+            <span class="s1">self._expanded_parameters = expanded_state.parameter_expansion</span>
+
+            <span class="s1">flattened_processors = dict(processors)  </span><span class="s0"># type: ignore</span>
+            <span class="s1">flattened_processors.update(expanded_state.processors)</span>
+            <span class="s1">positiontup = expanded_state.positiontup</span>
+        <span class="s3">elif </span><span class="s1">compiled.positional:</span>
+            <span class="s1">positiontup = self.compiled.positiontup</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">positiontup = </span><span class="s3">None</span>
+
+        <span class="s3">if </span><span class="s1">compiled.schema_translate_map:</span>
+            <span class="s1">schema_translate_map = self.execution_options.get(</span>
+                <span class="s4">&quot;schema_translate_map&quot;</span><span class="s5">, </span><span class="s1">{}</span>
+            <span class="s1">)</span>
+            <span class="s1">rst = compiled.preparer._render_schema_translates</span>
+            <span class="s1">self.unicode_statement = rst(</span>
+                <span class="s1">self.unicode_statement</span><span class="s5">, </span><span class="s1">schema_translate_map</span>
+            <span class="s1">)</span>
+
+        <span class="s0"># final self.unicode_statement is now assigned, encode if needed</span>
+        <span class="s0"># by dialect</span>
+        <span class="s1">self.statement = self.unicode_statement</span>
+
+        <span class="s0"># Convert the dictionary of bind parameter values</span>
+        <span class="s0"># into a dict or list to be sent to the DBAPI's</span>
+        <span class="s0"># execute() or executemany() method.</span>
+
+        <span class="s3">if </span><span class="s1">compiled.positional:</span>
+            <span class="s1">core_positional_parameters: MutableSequence[Sequence[Any]] = []</span>
+            <span class="s3">assert </span><span class="s1">positiontup </span><span class="s3">is not None</span>
+            <span class="s3">for </span><span class="s1">compiled_params </span><span class="s3">in </span><span class="s1">self.compiled_parameters:</span>
+                <span class="s1">l_param: List[Any] = [</span>
+                    <span class="s1">(</span>
+                        <span class="s1">flattened_processors[key](compiled_params[key])</span>
+                        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">flattened_processors</span>
+                        <span class="s3">else </span><span class="s1">compiled_params[key]</span>
+                    <span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">positiontup</span>
+                <span class="s1">]</span>
+                <span class="s1">core_positional_parameters.append(</span>
+                    <span class="s1">dialect.execute_sequence_format(l_param)</span>
+                <span class="s1">)</span>
+
+            <span class="s1">self.parameters = core_positional_parameters</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">core_dict_parameters: MutableSequence[Dict[str</span><span class="s5">, </span><span class="s1">Any]] = []</span>
+            <span class="s1">escaped_names = compiled.escaped_bind_names</span>
+
+            <span class="s0"># note that currently, &quot;expanded&quot; parameters will be present</span>
+            <span class="s0"># in self.compiled_parameters in their quoted form.   This is</span>
+            <span class="s0"># slightly inconsistent with the approach taken as of</span>
+            <span class="s0"># #8056 where self.compiled_parameters is meant to contain unquoted</span>
+            <span class="s0"># param names.</span>
+            <span class="s1">d_param: Dict[str</span><span class="s5">, </span><span class="s1">Any]</span>
+            <span class="s3">for </span><span class="s1">compiled_params </span><span class="s3">in </span><span class="s1">self.compiled_parameters:</span>
+                <span class="s3">if </span><span class="s1">escaped_names:</span>
+                    <span class="s1">d_param = {</span>
+                        <span class="s1">escaped_names.get(key</span><span class="s5">, </span><span class="s1">key): (</span>
+                            <span class="s1">flattened_processors[key](compiled_params[key])</span>
+                            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">flattened_processors</span>
+                            <span class="s3">else </span><span class="s1">compiled_params[key]</span>
+                        <span class="s1">)</span>
+                        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compiled_params</span>
+                    <span class="s1">}</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">d_param = {</span>
+                        <span class="s1">key: (</span>
+                            <span class="s1">flattened_processors[key](compiled_params[key])</span>
+                            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">flattened_processors</span>
+                            <span class="s3">else </span><span class="s1">compiled_params[key]</span>
+                        <span class="s1">)</span>
+                        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compiled_params</span>
+                    <span class="s1">}</span>
+
+                <span class="s1">core_dict_parameters.append(d_param)</span>
+
+            <span class="s1">self.parameters = core_dict_parameters</span>
+
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_init_statement(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">dialect: Dialect</span><span class="s5">,</span>
+        <span class="s1">connection: Connection</span><span class="s5">,</span>
+        <span class="s1">dbapi_connection: PoolProxiedConnection</span><span class="s5">,</span>
+        <span class="s1">execution_options: _ExecuteOptions</span><span class="s5">,</span>
+        <span class="s1">statement: str</span><span class="s5">,</span>
+        <span class="s1">parameters: _DBAPIMultiExecuteParams</span><span class="s5">,</span>
+    <span class="s1">) -&gt; ExecutionContext:</span>
+        <span class="s2">&quot;&quot;&quot;Initialize execution context for a string SQL statement.&quot;&quot;&quot;</span>
+
+        <span class="s1">self = cls.__new__(cls)</span>
+        <span class="s1">self.root_connection = connection</span>
+        <span class="s1">self._dbapi_connection = dbapi_connection</span>
+        <span class="s1">self.dialect = connection.dialect</span>
+        <span class="s1">self.is_text = </span><span class="s3">True</span>
+
+        <span class="s1">self.execution_options = execution_options</span>
+
+        <span class="s3">if not </span><span class="s1">parameters:</span>
+            <span class="s3">if </span><span class="s1">self.dialect.positional:</span>
+                <span class="s1">self.parameters = [dialect.execute_sequence_format()]</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self.parameters = [self._empty_dict_params]</span>
+        <span class="s3">elif </span><span class="s1">isinstance(parameters[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">dialect.execute_sequence_format):</span>
+            <span class="s1">self.parameters = parameters</span>
+        <span class="s3">elif </span><span class="s1">isinstance(parameters[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">dict):</span>
+            <span class="s1">self.parameters = parameters</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.parameters = [</span>
+                <span class="s1">dialect.execute_sequence_format(p) </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">parameters</span>
+            <span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s1">len(parameters) &gt; </span><span class="s6">1</span><span class="s1">:</span>
+            <span class="s1">self.execute_style = ExecuteStyle.EXECUTEMANY</span>
+
+        <span class="s1">self.statement = self.unicode_statement = statement</span>
+
+        <span class="s1">self.cursor = self.create_cursor()</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_init_default(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">dialect: Dialect</span><span class="s5">,</span>
+        <span class="s1">connection: Connection</span><span class="s5">,</span>
+        <span class="s1">dbapi_connection: PoolProxiedConnection</span><span class="s5">,</span>
+        <span class="s1">execution_options: _ExecuteOptions</span><span class="s5">,</span>
+    <span class="s1">) -&gt; ExecutionContext:</span>
+        <span class="s2">&quot;&quot;&quot;Initialize execution context for a ColumnDefault construct.&quot;&quot;&quot;</span>
+
+        <span class="s1">self = cls.__new__(cls)</span>
+        <span class="s1">self.root_connection = connection</span>
+        <span class="s1">self._dbapi_connection = dbapi_connection</span>
+        <span class="s1">self.dialect = connection.dialect</span>
+
+        <span class="s1">self.execution_options = execution_options</span>
+
+        <span class="s1">self.cursor = self.create_cursor()</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_get_cache_stats(self) -&gt; str:</span>
+        <span class="s3">if </span><span class="s1">self.compiled </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s4">&quot;raw sql&quot;</span>
+
+        <span class="s1">now = perf_counter()</span>
+
+        <span class="s1">ch = self.cache_hit</span>
+
+        <span class="s1">gen_time = self.compiled._gen_time</span>
+        <span class="s3">assert </span><span class="s1">gen_time </span><span class="s3">is not None</span>
+
+        <span class="s3">if </span><span class="s1">ch </span><span class="s3">is </span><span class="s1">NO_CACHE_KEY:</span>
+            <span class="s3">return </span><span class="s4">&quot;no key %.5fs&quot; </span><span class="s1">% (now - gen_time</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">ch </span><span class="s3">is </span><span class="s1">CACHE_HIT:</span>
+            <span class="s3">return </span><span class="s4">&quot;cached since %.4gs ago&quot; </span><span class="s1">% (now - gen_time</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">ch </span><span class="s3">is </span><span class="s1">CACHE_MISS:</span>
+            <span class="s3">return </span><span class="s4">&quot;generated in %.5fs&quot; </span><span class="s1">% (now - gen_time</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">ch </span><span class="s3">is </span><span class="s1">CACHING_DISABLED:</span>
+            <span class="s3">if </span><span class="s4">&quot;_cache_disable_reason&quot; </span><span class="s3">in </span><span class="s1">self.execution_options:</span>
+                <span class="s3">return </span><span class="s4">&quot;caching disabled (%s) %.5fs &quot; </span><span class="s1">% (</span>
+                    <span class="s1">self.execution_options[</span><span class="s4">&quot;_cache_disable_reason&quot;</span><span class="s1">]</span><span class="s5">,</span>
+                    <span class="s1">now - gen_time</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s4">&quot;caching disabled %.5fs&quot; </span><span class="s1">% (now - gen_time</span><span class="s5">,</span><span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">ch </span><span class="s3">is </span><span class="s1">NO_DIALECT_SUPPORT:</span>
+            <span class="s3">return </span><span class="s4">&quot;dialect %s+%s does not support caching %.5fs&quot; </span><span class="s1">% (</span>
+                <span class="s1">self.dialect.name</span><span class="s5">,</span>
+                <span class="s1">self.dialect.driver</span><span class="s5">,</span>
+                <span class="s1">now - gen_time</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s4">&quot;unknown&quot;</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">executemany(self):</span>
+        <span class="s3">return </span><span class="s1">self.execute_style </span><span class="s3">in </span><span class="s1">(</span>
+            <span class="s1">ExecuteStyle.EXECUTEMANY</span><span class="s5">,</span>
+            <span class="s1">ExecuteStyle.INSERTMANYVALUES</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">identifier_preparer(self):</span>
+        <span class="s3">if </span><span class="s1">self.compiled:</span>
+            <span class="s3">return </span><span class="s1">self.compiled.preparer</span>
+        <span class="s3">elif </span><span class="s4">&quot;schema_translate_map&quot; </span><span class="s3">in </span><span class="s1">self.execution_options:</span>
+            <span class="s3">return </span><span class="s1">self.dialect.identifier_preparer._with_schema_translate(</span>
+                <span class="s1">self.execution_options[</span><span class="s4">&quot;schema_translate_map&quot;</span><span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.dialect.identifier_preparer</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">engine(self):</span>
+        <span class="s3">return </span><span class="s1">self.root_connection.engine</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">postfetch_cols(self) -&gt; Optional[Sequence[Column[Any]]]:</span>
+        <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+            <span class="s3">assert </span><span class="s1">isinstance(self.compiled</span><span class="s5">, </span><span class="s1">SQLCompiler)</span>
+        <span class="s3">return </span><span class="s1">self.compiled.postfetch</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">prefetch_cols(self) -&gt; Optional[Sequence[Column[Any]]]:</span>
+        <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+            <span class="s3">assert </span><span class="s1">isinstance(self.compiled</span><span class="s5">, </span><span class="s1">SQLCompiler)</span>
+        <span class="s3">if </span><span class="s1">self.isinsert:</span>
+            <span class="s3">return </span><span class="s1">self.compiled.insert_prefetch</span>
+        <span class="s3">elif </span><span class="s1">self.isupdate:</span>
+            <span class="s3">return </span><span class="s1">self.compiled.update_prefetch</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">()</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">no_parameters(self):</span>
+        <span class="s3">return </span><span class="s1">self.execution_options.get(</span><span class="s4">&quot;no_parameters&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_execute_scalar(self</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">type_</span><span class="s5">, </span><span class="s1">parameters=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Execute a string statement on the current cursor, returning a 
+        scalar result. 
+ 
+        Used to fire off sequences, default phrases, and &quot;select lastrowid&quot; 
+        types of statements individually or in the context of a parent INSERT 
+        or UPDATE statement. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">conn = self.root_connection</span>
+
+        <span class="s3">if </span><span class="s4">&quot;schema_translate_map&quot; </span><span class="s3">in </span><span class="s1">self.execution_options:</span>
+            <span class="s1">schema_translate_map = self.execution_options.get(</span>
+                <span class="s4">&quot;schema_translate_map&quot;</span><span class="s5">, </span><span class="s1">{}</span>
+            <span class="s1">)</span>
+
+            <span class="s1">rst = self.identifier_preparer._render_schema_translates</span>
+            <span class="s1">stmt = rst(stmt</span><span class="s5">, </span><span class="s1">schema_translate_map)</span>
+
+        <span class="s3">if not </span><span class="s1">parameters:</span>
+            <span class="s3">if </span><span class="s1">self.dialect.positional:</span>
+                <span class="s1">parameters = self.dialect.execute_sequence_format()</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">parameters = {}</span>
+
+        <span class="s1">conn._cursor_execute(self.cursor</span><span class="s5">, </span><span class="s1">stmt</span><span class="s5">, </span><span class="s1">parameters</span><span class="s5">, </span><span class="s1">context=self)</span>
+        <span class="s1">row = self.cursor.fetchone()</span>
+        <span class="s3">if </span><span class="s1">row </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">r = row[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">r = </span><span class="s3">None</span>
+        <span class="s3">if </span><span class="s1">type_ </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s0"># apply type post processors to the result</span>
+            <span class="s1">proc = type_._cached_result_processor(</span>
+                <span class="s1">self.dialect</span><span class="s5">, </span><span class="s1">self.cursor.description[</span><span class="s6">0</span><span class="s1">][</span><span class="s6">1</span><span class="s1">]</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">proc:</span>
+                <span class="s3">return </span><span class="s1">proc(r)</span>
+        <span class="s3">return </span><span class="s1">r</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">connection(self):</span>
+        <span class="s3">return </span><span class="s1">self.root_connection</span>
+
+    <span class="s3">def </span><span class="s1">_use_server_side_cursor(self):</span>
+        <span class="s3">if not </span><span class="s1">self.dialect.supports_server_side_cursors:</span>
+            <span class="s3">return False</span>
+
+        <span class="s3">if </span><span class="s1">self.dialect.server_side_cursors:</span>
+            <span class="s0"># this is deprecated</span>
+            <span class="s1">use_server_side = self.execution_options.get(</span>
+                <span class="s4">&quot;stream_results&quot;</span><span class="s5">, </span><span class="s3">True</span>
+            <span class="s1">) </span><span class="s3">and </span><span class="s1">(</span>
+                <span class="s1">self.compiled</span>
+                <span class="s3">and </span><span class="s1">isinstance(self.compiled.statement</span><span class="s5">, </span><span class="s1">expression.Selectable)</span>
+                <span class="s3">or </span><span class="s1">(</span>
+                    <span class="s1">(</span>
+                        <span class="s3">not </span><span class="s1">self.compiled</span>
+                        <span class="s3">or </span><span class="s1">isinstance(</span>
+                            <span class="s1">self.compiled.statement</span><span class="s5">, </span><span class="s1">expression.TextClause</span>
+                        <span class="s1">)</span>
+                    <span class="s1">)</span>
+                    <span class="s3">and </span><span class="s1">self.unicode_statement</span>
+                    <span class="s3">and </span><span class="s1">SERVER_SIDE_CURSOR_RE.match(self.unicode_statement)</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">use_server_side = self.execution_options.get(</span>
+                <span class="s4">&quot;stream_results&quot;</span><span class="s5">, </span><span class="s3">False</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">use_server_side</span>
+
+    <span class="s3">def </span><span class="s1">create_cursor(self):</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s0"># inlining initial preference checks for SS cursors</span>
+            <span class="s1">self.dialect.supports_server_side_cursors</span>
+            <span class="s3">and </span><span class="s1">(</span>
+                <span class="s1">self.execution_options.get(</span><span class="s4">&quot;stream_results&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+                <span class="s3">or </span><span class="s1">(</span>
+                    <span class="s1">self.dialect.server_side_cursors</span>
+                    <span class="s3">and </span><span class="s1">self._use_server_side_cursor()</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s1">self._is_server_side = </span><span class="s3">True</span>
+            <span class="s3">return </span><span class="s1">self.create_server_side_cursor()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._is_server_side = </span><span class="s3">False</span>
+            <span class="s3">return </span><span class="s1">self.create_default_cursor()</span>
+
+    <span class="s3">def </span><span class="s1">fetchall_for_returning(self</span><span class="s5">, </span><span class="s1">cursor):</span>
+        <span class="s3">return </span><span class="s1">cursor.fetchall()</span>
+
+    <span class="s3">def </span><span class="s1">create_default_cursor(self):</span>
+        <span class="s3">return </span><span class="s1">self._dbapi_connection.cursor()</span>
+
+    <span class="s3">def </span><span class="s1">create_server_side_cursor(self):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">pre_exec(self):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">get_out_parameter_values(self</span><span class="s5">, </span><span class="s1">names):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+            <span class="s4">&quot;This dialect does not support OUT parameters&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">post_exec(self):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">get_result_processor(self</span><span class="s5">, </span><span class="s1">type_</span><span class="s5">, </span><span class="s1">colname</span><span class="s5">, </span><span class="s1">coltype):</span>
+        <span class="s2">&quot;&quot;&quot;Return a 'result processor' for a given type as present in 
+        cursor.description. 
+ 
+        This has a default implementation that dialects can override 
+        for context-sensitive result type handling. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">type_._cached_result_processor(self.dialect</span><span class="s5">, </span><span class="s1">coltype)</span>
+
+    <span class="s3">def </span><span class="s1">get_lastrowid(self):</span>
+        <span class="s2">&quot;&quot;&quot;return self.cursor.lastrowid, or equivalent, after an INSERT. 
+ 
+        This may involve calling special cursor functions, issuing a new SELECT 
+        on the cursor (or a new one), or returning a stored value that was 
+        calculated within post_exec(). 
+ 
+        This function will only be called for dialects which support &quot;implicit&quot; 
+        primary key generation, keep preexecute_autoincrement_sequences set to 
+        False, and when no explicit id value was bound to the statement. 
+ 
+        The function is called once for an INSERT statement that would need to 
+        return the last inserted primary key for those dialects that make use 
+        of the lastrowid concept.  In these cases, it is called directly after 
+        :meth:`.ExecutionContext.post_exec`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.cursor.lastrowid</span>
+
+    <span class="s3">def </span><span class="s1">handle_dbapi_exception(self</span><span class="s5">, </span><span class="s1">e):</span>
+        <span class="s3">pass</span>
+
+    <span class="s1">@util.non_memoized_property</span>
+    <span class="s3">def </span><span class="s1">rowcount(self) -&gt; int:</span>
+        <span class="s3">if </span><span class="s1">self._rowcount </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._rowcount</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.cursor.rowcount</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_has_rowcount(self):</span>
+        <span class="s3">return </span><span class="s1">self._rowcount </span><span class="s3">is not None</span>
+
+    <span class="s3">def </span><span class="s1">supports_sane_rowcount(self):</span>
+        <span class="s3">return </span><span class="s1">self.dialect.supports_sane_rowcount</span>
+
+    <span class="s3">def </span><span class="s1">supports_sane_multi_rowcount(self):</span>
+        <span class="s3">return </span><span class="s1">self.dialect.supports_sane_multi_rowcount</span>
+
+    <span class="s3">def </span><span class="s1">_setup_result_proxy(self):</span>
+        <span class="s1">exec_opt = self.execution_options</span>
+
+        <span class="s3">if </span><span class="s1">self._rowcount </span><span class="s3">is None and </span><span class="s1">exec_opt.get(</span><span class="s4">&quot;preserve_rowcount&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s1">self._rowcount = self.cursor.rowcount</span>
+
+        <span class="s3">if </span><span class="s1">self.is_crud </span><span class="s3">or </span><span class="s1">self.is_text:</span>
+            <span class="s1">result = self._setup_dml_or_text_result()</span>
+            <span class="s1">yp = sr = </span><span class="s3">False</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">yp = exec_opt.get(</span><span class="s4">&quot;yield_per&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s1">sr = self._is_server_side </span><span class="s3">or </span><span class="s1">exec_opt.get(</span><span class="s4">&quot;stream_results&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+            <span class="s1">strategy = self.cursor_fetch_strategy</span>
+            <span class="s3">if </span><span class="s1">sr </span><span class="s3">and </span><span class="s1">strategy </span><span class="s3">is </span><span class="s1">_cursor._DEFAULT_FETCH:</span>
+                <span class="s1">strategy = _cursor.BufferedRowCursorFetchStrategy(</span>
+                    <span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">self.execution_options</span>
+                <span class="s1">)</span>
+            <span class="s1">cursor_description: _DBAPICursorDescription = (</span>
+                <span class="s1">strategy.alternate_cursor_description</span>
+                <span class="s3">or </span><span class="s1">self.cursor.description</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">cursor_description </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">strategy = _cursor._NO_CURSOR_DQL</span>
+
+            <span class="s1">result = _cursor.CursorResult(self</span><span class="s5">, </span><span class="s1">strategy</span><span class="s5">, </span><span class="s1">cursor_description)</span>
+
+        <span class="s1">compiled = self.compiled</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">compiled</span>
+            <span class="s3">and not </span><span class="s1">self.isddl</span>
+            <span class="s3">and </span><span class="s1">cast(SQLCompiler</span><span class="s5">, </span><span class="s1">compiled).has_out_parameters</span>
+        <span class="s1">):</span>
+            <span class="s1">self._setup_out_parameters(result)</span>
+
+        <span class="s1">self._soft_closed = result._soft_closed</span>
+
+        <span class="s3">if </span><span class="s1">yp:</span>
+            <span class="s1">result = result.yield_per(yp)</span>
+
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">_setup_out_parameters(self</span><span class="s5">, </span><span class="s1">result):</span>
+        <span class="s1">compiled = cast(SQLCompiler</span><span class="s5">, </span><span class="s1">self.compiled)</span>
+
+        <span class="s1">out_bindparams = [</span>
+            <span class="s1">(param</span><span class="s5">, </span><span class="s1">name)</span>
+            <span class="s3">for </span><span class="s1">param</span><span class="s5">, </span><span class="s1">name </span><span class="s3">in </span><span class="s1">compiled.bind_names.items()</span>
+            <span class="s3">if </span><span class="s1">param.isoutparam</span>
+        <span class="s1">]</span>
+        <span class="s1">out_parameters = {}</span>
+
+        <span class="s3">for </span><span class="s1">bindparam</span><span class="s5">, </span><span class="s1">raw_value </span><span class="s3">in </span><span class="s1">zip(</span>
+            <span class="s1">[param </span><span class="s3">for </span><span class="s1">param</span><span class="s5">, </span><span class="s1">name </span><span class="s3">in </span><span class="s1">out_bindparams]</span><span class="s5">,</span>
+            <span class="s1">self.get_out_parameter_values(</span>
+                <span class="s1">[name </span><span class="s3">for </span><span class="s1">param</span><span class="s5">, </span><span class="s1">name </span><span class="s3">in </span><span class="s1">out_bindparams]</span>
+            <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s1">type_ = bindparam.type</span>
+            <span class="s1">impl_type = type_.dialect_impl(self.dialect)</span>
+            <span class="s1">dbapi_type = impl_type.get_dbapi_type(self.dialect.loaded_dbapi)</span>
+            <span class="s1">result_processor = impl_type.result_processor(</span>
+                <span class="s1">self.dialect</span><span class="s5">, </span><span class="s1">dbapi_type</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">result_processor </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">raw_value = result_processor(raw_value)</span>
+            <span class="s1">out_parameters[bindparam.key] = raw_value</span>
+
+        <span class="s1">result.out_parameters = out_parameters</span>
+
+    <span class="s3">def </span><span class="s1">_setup_dml_or_text_result(self):</span>
+        <span class="s1">compiled = cast(SQLCompiler</span><span class="s5">, </span><span class="s1">self.compiled)</span>
+
+        <span class="s1">strategy: ResultFetchStrategy = self.cursor_fetch_strategy</span>
+
+        <span class="s3">if </span><span class="s1">self.isinsert:</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">self.execute_style </span><span class="s3">is </span><span class="s1">ExecuteStyle.INSERTMANYVALUES</span>
+                <span class="s3">and </span><span class="s1">compiled.effective_returning</span>
+            <span class="s1">):</span>
+                <span class="s1">strategy = _cursor.FullyBufferedCursorFetchStrategy(</span>
+                    <span class="s1">self.cursor</span><span class="s5">,</span>
+                    <span class="s1">initial_buffer=self._insertmanyvalues_rows</span><span class="s5">,</span>
+                    <span class="s0"># maintain alt cursor description if set by the</span>
+                    <span class="s0"># dialect, e.g. mssql preserves it</span>
+                    <span class="s1">alternate_description=(</span>
+                        <span class="s1">strategy.alternate_cursor_description</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">compiled.postfetch_lastrowid:</span>
+                <span class="s1">self.inserted_primary_key_rows = (</span>
+                    <span class="s1">self._setup_ins_pk_from_lastrowid()</span>
+                <span class="s1">)</span>
+            <span class="s0"># else if not self._is_implicit_returning,</span>
+            <span class="s0"># the default inserted_primary_key_rows accessor will</span>
+            <span class="s0"># return an &quot;empty&quot; primary key collection when accessed.</span>
+
+        <span class="s3">if </span><span class="s1">self._is_server_side </span><span class="s3">and </span><span class="s1">strategy </span><span class="s3">is </span><span class="s1">_cursor._DEFAULT_FETCH:</span>
+            <span class="s1">strategy = _cursor.BufferedRowCursorFetchStrategy(</span>
+                <span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">self.execution_options</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">strategy </span><span class="s3">is </span><span class="s1">_cursor._NO_CURSOR_DML:</span>
+            <span class="s1">cursor_description = </span><span class="s3">None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">cursor_description = (</span>
+                <span class="s1">strategy.alternate_cursor_description</span>
+                <span class="s3">or </span><span class="s1">self.cursor.description</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">cursor_description </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">strategy = _cursor._NO_CURSOR_DML</span>
+        <span class="s3">elif </span><span class="s1">self._num_sentinel_cols:</span>
+            <span class="s3">assert </span><span class="s1">self.execute_style </span><span class="s3">is </span><span class="s1">ExecuteStyle.INSERTMANYVALUES</span>
+            <span class="s0"># strip out the sentinel columns from cursor description</span>
+            <span class="s0"># a similar logic is done to the rows only in CursorResult</span>
+            <span class="s1">cursor_description = cursor_description[</span>
+                <span class="s6">0 </span><span class="s1">: -self._num_sentinel_cols</span>
+            <span class="s1">]</span>
+
+        <span class="s1">result: _cursor.CursorResult[Any] = _cursor.CursorResult(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">strategy</span><span class="s5">, </span><span class="s1">cursor_description</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self.isinsert:</span>
+            <span class="s3">if </span><span class="s1">self._is_implicit_returning:</span>
+                <span class="s1">rows = result.all()</span>
+
+                <span class="s1">self.returned_default_rows = rows</span>
+
+                <span class="s1">self.inserted_primary_key_rows = (</span>
+                    <span class="s1">self._setup_ins_pk_from_implicit_returning(result</span><span class="s5">, </span><span class="s1">rows)</span>
+                <span class="s1">)</span>
+
+                <span class="s0"># test that it has a cursor metadata that is accurate. the</span>
+                <span class="s0"># first row will have been fetched and current assumptions</span>
+                <span class="s0"># are that the result has only one row, until executemany()</span>
+                <span class="s0"># support is added here.</span>
+                <span class="s3">assert </span><span class="s1">result._metadata.returns_rows</span>
+
+                <span class="s0"># Insert statement has both return_defaults() and</span>
+                <span class="s0"># returning().  rewind the result on the list of rows</span>
+                <span class="s0"># we just used.</span>
+                <span class="s3">if </span><span class="s1">self._is_supplemental_returning:</span>
+                    <span class="s1">result._rewind(rows)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">result._soft_close()</span>
+            <span class="s3">elif not </span><span class="s1">self._is_explicit_returning:</span>
+                <span class="s1">result._soft_close()</span>
+
+                <span class="s0"># we assume here the result does not return any rows.</span>
+                <span class="s0"># *usually*, this will be true.  However, some dialects</span>
+                <span class="s0"># such as that of MSSQL/pyodbc need to SELECT a post fetch</span>
+                <span class="s0"># function so this is not necessarily true.</span>
+                <span class="s0"># assert not result.returns_rows</span>
+
+        <span class="s3">elif </span><span class="s1">self._is_implicit_returning:</span>
+            <span class="s1">rows = result.all()</span>
+
+            <span class="s3">if </span><span class="s1">rows:</span>
+                <span class="s1">self.returned_default_rows = rows</span>
+            <span class="s1">self._rowcount = len(rows)</span>
+
+            <span class="s3">if </span><span class="s1">self._is_supplemental_returning:</span>
+                <span class="s1">result._rewind(rows)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">result._soft_close()</span>
+
+            <span class="s0"># test that it has a cursor metadata that is accurate.</span>
+            <span class="s0"># the rows have all been fetched however.</span>
+            <span class="s3">assert </span><span class="s1">result._metadata.returns_rows</span>
+
+        <span class="s3">elif not </span><span class="s1">result._metadata.returns_rows:</span>
+            <span class="s0"># no results, get rowcount</span>
+            <span class="s0"># (which requires open cursor on some drivers)</span>
+            <span class="s3">if </span><span class="s1">self._rowcount </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">self._rowcount = self.cursor.rowcount</span>
+            <span class="s1">result._soft_close()</span>
+        <span class="s3">elif </span><span class="s1">self.isupdate </span><span class="s3">or </span><span class="s1">self.isdelete:</span>
+            <span class="s3">if </span><span class="s1">self._rowcount </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">self._rowcount = self.cursor.rowcount</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">inserted_primary_key_rows(self):</span>
+        <span class="s0"># if no specific &quot;get primary key&quot; strategy was set up</span>
+        <span class="s0"># during execution, return a &quot;default&quot; primary key based</span>
+        <span class="s0"># on what's in the compiled_parameters and nothing else.</span>
+        <span class="s3">return </span><span class="s1">self._setup_ins_pk_from_empty()</span>
+
+    <span class="s3">def </span><span class="s1">_setup_ins_pk_from_lastrowid(self):</span>
+        <span class="s1">getter = cast(</span>
+            <span class="s1">SQLCompiler</span><span class="s5">, </span><span class="s1">self.compiled</span>
+        <span class="s1">)._inserted_primary_key_from_lastrowid_getter</span>
+        <span class="s1">lastrowid = self.get_lastrowid()</span>
+        <span class="s3">return </span><span class="s1">[getter(lastrowid</span><span class="s5">, </span><span class="s1">self.compiled_parameters[</span><span class="s6">0</span><span class="s1">])]</span>
+
+    <span class="s3">def </span><span class="s1">_setup_ins_pk_from_empty(self):</span>
+        <span class="s1">getter = cast(</span>
+            <span class="s1">SQLCompiler</span><span class="s5">, </span><span class="s1">self.compiled</span>
+        <span class="s1">)._inserted_primary_key_from_lastrowid_getter</span>
+        <span class="s3">return </span><span class="s1">[getter(</span><span class="s3">None</span><span class="s5">, </span><span class="s1">param) </span><span class="s3">for </span><span class="s1">param </span><span class="s3">in </span><span class="s1">self.compiled_parameters]</span>
+
+    <span class="s3">def </span><span class="s1">_setup_ins_pk_from_implicit_returning(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">rows):</span>
+        <span class="s3">if not </span><span class="s1">rows:</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s1">getter = cast(</span>
+            <span class="s1">SQLCompiler</span><span class="s5">, </span><span class="s1">self.compiled</span>
+        <span class="s1">)._inserted_primary_key_from_returning_getter</span>
+        <span class="s1">compiled_params = self.compiled_parameters</span>
+
+        <span class="s3">return </span><span class="s1">[</span>
+            <span class="s1">getter(row</span><span class="s5">, </span><span class="s1">param) </span><span class="s3">for </span><span class="s1">row</span><span class="s5">, </span><span class="s1">param </span><span class="s3">in </span><span class="s1">zip(rows</span><span class="s5">, </span><span class="s1">compiled_params)</span>
+        <span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">lastrow_has_defaults(self):</span>
+        <span class="s3">return </span><span class="s1">(self.isinsert </span><span class="s3">or </span><span class="s1">self.isupdate) </span><span class="s3">and </span><span class="s1">bool(</span>
+            <span class="s1">cast(SQLCompiler</span><span class="s5">, </span><span class="s1">self.compiled).postfetch</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_prepare_set_input_sizes(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Optional[List[Tuple[str</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">TypeEngine[Any]]]]:</span>
+        <span class="s2">&quot;&quot;&quot;Given a cursor and ClauseParameters, prepare arguments 
+        in order to call the appropriate 
+        style of ``setinputsizes()`` on the cursor, using DB-API types 
+        from the bind parameter's ``TypeEngine`` objects. 
+ 
+        This method only called by those dialects which set 
+        the :attr:`.Dialect.bind_typing` attribute to 
+        :attr:`.BindTyping.SETINPUTSIZES`.   cx_Oracle is the only DBAPI 
+        that requires setinputsizes(), pyodbc offers it as an option. 
+ 
+        Prior to SQLAlchemy 2.0, the setinputsizes() approach was also used 
+        for pg8000 and asyncpg, which has been changed to inline rendering 
+        of casts. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">self.isddl </span><span class="s3">or </span><span class="s1">self.is_text:</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">compiled = cast(SQLCompiler</span><span class="s5">, </span><span class="s1">self.compiled)</span>
+
+        <span class="s1">inputsizes = compiled._get_set_input_sizes_lookup()</span>
+
+        <span class="s3">if </span><span class="s1">inputsizes </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">dialect = self.dialect</span>
+
+        <span class="s0"># all of the rest of this... cython?</span>
+
+        <span class="s3">if </span><span class="s1">dialect._has_events:</span>
+            <span class="s1">inputsizes = dict(inputsizes)</span>
+            <span class="s1">dialect.dispatch.do_setinputsizes(</span>
+                <span class="s1">inputsizes</span><span class="s5">, </span><span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">self.statement</span><span class="s5">, </span><span class="s1">self.parameters</span><span class="s5">, </span><span class="s1">self</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">compiled.escaped_bind_names:</span>
+            <span class="s1">escaped_bind_names = compiled.escaped_bind_names</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">escaped_bind_names = </span><span class="s3">None</span>
+
+        <span class="s3">if </span><span class="s1">dialect.positional:</span>
+            <span class="s1">items = [</span>
+                <span class="s1">(key</span><span class="s5">, </span><span class="s1">compiled.binds[key])</span>
+                <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compiled.positiontup </span><span class="s3">or </span><span class="s1">()</span>
+            <span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">items = [</span>
+                <span class="s1">(key</span><span class="s5">, </span><span class="s1">bindparam)</span>
+                <span class="s3">for </span><span class="s1">bindparam</span><span class="s5">, </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compiled.bind_names.items()</span>
+            <span class="s1">]</span>
+
+        <span class="s1">generic_inputsizes: List[Tuple[str</span><span class="s5">, </span><span class="s1">Any</span><span class="s5">, </span><span class="s1">TypeEngine[Any]]] = []</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">bindparam </span><span class="s3">in </span><span class="s1">items:</span>
+            <span class="s3">if </span><span class="s1">bindparam </span><span class="s3">in </span><span class="s1">compiled.literal_execute_params:</span>
+                <span class="s3">continue</span>
+
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._expanded_parameters:</span>
+                <span class="s3">if </span><span class="s1">is_tuple_type(bindparam.type):</span>
+                    <span class="s1">num = len(bindparam.type.types)</span>
+                    <span class="s1">dbtypes = inputsizes[bindparam]</span>
+                    <span class="s1">generic_inputsizes.extend(</span>
+                        <span class="s1">(</span>
+                            <span class="s1">(</span>
+                                <span class="s1">escaped_bind_names.get(paramname</span><span class="s5">, </span><span class="s1">paramname)</span>
+                                <span class="s3">if </span><span class="s1">escaped_bind_names </span><span class="s3">is not None</span>
+                                <span class="s3">else </span><span class="s1">paramname</span>
+                            <span class="s1">)</span><span class="s5">,</span>
+                            <span class="s1">dbtypes[idx % num]</span><span class="s5">,</span>
+                            <span class="s1">bindparam.type.types[idx % num]</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+                        <span class="s3">for </span><span class="s1">idx</span><span class="s5">, </span><span class="s1">paramname </span><span class="s3">in </span><span class="s1">enumerate(</span>
+                            <span class="s1">self._expanded_parameters[key]</span>
+                        <span class="s1">)</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">dbtype = inputsizes.get(bindparam</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+                    <span class="s1">generic_inputsizes.extend(</span>
+                        <span class="s1">(</span>
+                            <span class="s1">(</span>
+                                <span class="s1">escaped_bind_names.get(paramname</span><span class="s5">, </span><span class="s1">paramname)</span>
+                                <span class="s3">if </span><span class="s1">escaped_bind_names </span><span class="s3">is not None</span>
+                                <span class="s3">else </span><span class="s1">paramname</span>
+                            <span class="s1">)</span><span class="s5">,</span>
+                            <span class="s1">dbtype</span><span class="s5">,</span>
+                            <span class="s1">bindparam.type</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+                        <span class="s3">for </span><span class="s1">paramname </span><span class="s3">in </span><span class="s1">self._expanded_parameters[key]</span>
+                    <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">dbtype = inputsizes.get(bindparam</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+                <span class="s1">escaped_name = (</span>
+                    <span class="s1">escaped_bind_names.get(key</span><span class="s5">, </span><span class="s1">key)</span>
+                    <span class="s3">if </span><span class="s1">escaped_bind_names </span><span class="s3">is not None</span>
+                    <span class="s3">else </span><span class="s1">key</span>
+                <span class="s1">)</span>
+
+                <span class="s1">generic_inputsizes.append(</span>
+                    <span class="s1">(escaped_name</span><span class="s5">, </span><span class="s1">dbtype</span><span class="s5">, </span><span class="s1">bindparam.type)</span>
+                <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">generic_inputsizes</span>
+
+    <span class="s3">def </span><span class="s1">_exec_default(self</span><span class="s5">, </span><span class="s1">column</span><span class="s5">, </span><span class="s1">default</span><span class="s5">, </span><span class="s1">type_):</span>
+        <span class="s3">if </span><span class="s1">default.is_sequence:</span>
+            <span class="s3">return </span><span class="s1">self.fire_sequence(default</span><span class="s5">, </span><span class="s1">type_)</span>
+        <span class="s3">elif </span><span class="s1">default.is_callable:</span>
+            <span class="s0"># this codepath is not normally used as it's inlined</span>
+            <span class="s0"># into _process_execute_defaults</span>
+            <span class="s1">self.current_column = column</span>
+            <span class="s3">return </span><span class="s1">default.arg(self)</span>
+        <span class="s3">elif </span><span class="s1">default.is_clause_element:</span>
+            <span class="s3">return </span><span class="s1">self._exec_default_clause_element(column</span><span class="s5">, </span><span class="s1">default</span><span class="s5">, </span><span class="s1">type_)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># this codepath is not normally used as it's inlined</span>
+            <span class="s0"># into _process_execute_defaults</span>
+            <span class="s3">return </span><span class="s1">default.arg</span>
+
+    <span class="s3">def </span><span class="s1">_exec_default_clause_element(self</span><span class="s5">, </span><span class="s1">column</span><span class="s5">, </span><span class="s1">default</span><span class="s5">, </span><span class="s1">type_):</span>
+        <span class="s0"># execute a default that's a complete clause element.  Here, we have</span>
+        <span class="s0"># to re-implement a miniature version of the compile-&gt;parameters-&gt;</span>
+        <span class="s0"># cursor.execute() sequence, since we don't want to modify the state</span>
+        <span class="s0"># of the connection  / result in progress or create new connection/</span>
+        <span class="s0"># result objects etc.</span>
+        <span class="s0"># .. versionchanged:: 1.4</span>
+
+        <span class="s3">if not </span><span class="s1">default._arg_is_typed:</span>
+            <span class="s1">default_arg = expression.type_coerce(default.arg</span><span class="s5">, </span><span class="s1">type_)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">default_arg = default.arg</span>
+        <span class="s1">compiled = expression.select(default_arg).compile(dialect=self.dialect)</span>
+        <span class="s1">compiled_params = compiled.construct_params()</span>
+        <span class="s1">processors = compiled._bind_processors</span>
+        <span class="s3">if </span><span class="s1">compiled.positional:</span>
+            <span class="s1">parameters = self.dialect.execute_sequence_format(</span>
+                <span class="s1">[</span>
+                    <span class="s1">(</span>
+                        <span class="s1">processors[key](compiled_params[key])  </span><span class="s0"># type: ignore</span>
+                        <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">processors</span>
+                        <span class="s3">else </span><span class="s1">compiled_params[key]</span>
+                    <span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compiled.positiontup </span><span class="s3">or </span><span class="s1">()</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">parameters = {</span>
+                <span class="s1">key: (</span>
+                    <span class="s1">processors[key](compiled_params[key])  </span><span class="s0"># type: ignore</span>
+                    <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">processors</span>
+                    <span class="s3">else </span><span class="s1">compiled_params[key]</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">compiled_params</span>
+            <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">self._execute_scalar(</span>
+            <span class="s1">str(compiled)</span><span class="s5">, </span><span class="s1">type_</span><span class="s5">, </span><span class="s1">parameters=parameters</span>
+        <span class="s1">)</span>
+
+    <span class="s1">current_parameters: Optional[_CoreSingleExecuteParams] = </span><span class="s3">None</span>
+    <span class="s4">&quot;&quot;&quot;A dictionary of parameters applied to the current row. 
+ 
+    This attribute is only available in the context of a user-defined default 
+    generation function, e.g. as described at :ref:`context_default_functions`. 
+    It consists of a dictionary which includes entries for each column/value 
+    pair that is to be part of the INSERT or UPDATE statement. The keys of the 
+    dictionary will be the key value of each :class:`_schema.Column`, 
+    which is usually 
+    synonymous with the name. 
+ 
+    Note that the :attr:`.DefaultExecutionContext.current_parameters` attribute 
+    does not accommodate for the &quot;multi-values&quot; feature of the 
+    :meth:`_expression.Insert.values` method.  The 
+    :meth:`.DefaultExecutionContext.get_current_parameters` method should be 
+    preferred. 
+ 
+    .. seealso:: 
+ 
+        :meth:`.DefaultExecutionContext.get_current_parameters` 
+ 
+        :ref:`context_default_functions` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">get_current_parameters(self</span><span class="s5">, </span><span class="s1">isolate_multiinsert_groups=</span><span class="s3">True</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Return a dictionary of parameters applied to the current row. 
+ 
+        This method can only be used in the context of a user-defined default 
+        generation function, e.g. as described at 
+        :ref:`context_default_functions`. When invoked, a dictionary is 
+        returned which includes entries for each column/value pair that is part 
+        of the INSERT or UPDATE statement. The keys of the dictionary will be 
+        the key value of each :class:`_schema.Column`, 
+        which is usually synonymous 
+        with the name. 
+ 
+        :param isolate_multiinsert_groups=True: indicates that multi-valued 
+         INSERT constructs created using :meth:`_expression.Insert.values` 
+         should be 
+         handled by returning only the subset of parameters that are local 
+         to the current column default invocation.   When ``False``, the 
+         raw parameters of the statement are returned including the 
+         naming convention used in the case of multi-valued INSERT. 
+ 
+        .. versionadded:: 1.2  added 
+           :meth:`.DefaultExecutionContext.get_current_parameters` 
+           which provides more functionality over the existing 
+           :attr:`.DefaultExecutionContext.current_parameters` 
+           attribute. 
+ 
+        .. seealso:: 
+ 
+            :attr:`.DefaultExecutionContext.current_parameters` 
+ 
+            :ref:`context_default_functions` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">parameters = self.current_parameters</span>
+            <span class="s1">column = self.current_column</span>
+        <span class="s3">except </span><span class="s1">AttributeError:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;get_current_parameters() can only be invoked in the &quot;</span>
+                <span class="s4">&quot;context of a Python side column default function&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">assert </span><span class="s1">column </span><span class="s3">is not None</span>
+            <span class="s3">assert </span><span class="s1">parameters </span><span class="s3">is not None</span>
+        <span class="s1">compile_state = cast(</span>
+            <span class="s4">&quot;DMLState&quot;</span><span class="s5">, </span><span class="s1">cast(SQLCompiler</span><span class="s5">, </span><span class="s1">self.compiled).compile_state</span>
+        <span class="s1">)</span>
+        <span class="s3">assert </span><span class="s1">compile_state </span><span class="s3">is not None</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">isolate_multiinsert_groups</span>
+            <span class="s3">and </span><span class="s1">dml.isinsert(compile_state)</span>
+            <span class="s3">and </span><span class="s1">compile_state._has_multi_parameters</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">column._is_multiparam_column:</span>
+                <span class="s1">index = column.index + </span><span class="s6">1</span>
+                <span class="s1">d = {column.original.key: parameters[column.key]}</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">d = {column.key: parameters[column.key]}</span>
+                <span class="s1">index = </span><span class="s6">0</span>
+            <span class="s3">assert </span><span class="s1">compile_state._dict_parameters </span><span class="s3">is not None</span>
+            <span class="s1">keys = compile_state._dict_parameters.keys()</span>
+            <span class="s1">d.update(</span>
+                <span class="s1">(key</span><span class="s5">, </span><span class="s1">parameters[</span><span class="s4">&quot;%s_m%d&quot; </span><span class="s1">% (key</span><span class="s5">, </span><span class="s1">index)]) </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">keys</span>
+            <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">d</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">parameters</span>
+
+    <span class="s3">def </span><span class="s1">get_insert_default(self</span><span class="s5">, </span><span class="s1">column):</span>
+        <span class="s3">if </span><span class="s1">column.default </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._exec_default(column</span><span class="s5">, </span><span class="s1">column.default</span><span class="s5">, </span><span class="s1">column.type)</span>
+
+    <span class="s3">def </span><span class="s1">get_update_default(self</span><span class="s5">, </span><span class="s1">column):</span>
+        <span class="s3">if </span><span class="s1">column.onupdate </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self._exec_default(column</span><span class="s5">, </span><span class="s1">column.onupdate</span><span class="s5">, </span><span class="s1">column.type)</span>
+
+    <span class="s3">def </span><span class="s1">_process_execute_defaults(self):</span>
+        <span class="s1">compiled = cast(SQLCompiler</span><span class="s5">, </span><span class="s1">self.compiled)</span>
+
+        <span class="s1">key_getter = compiled._within_exec_param_key_getter</span>
+
+        <span class="s1">sentinel_counter = </span><span class="s6">0</span>
+
+        <span class="s3">if </span><span class="s1">compiled.insert_prefetch:</span>
+            <span class="s1">prefetch_recs = [</span>
+                <span class="s1">(</span>
+                    <span class="s1">c</span><span class="s5">,</span>
+                    <span class="s1">key_getter(c)</span><span class="s5">,</span>
+                    <span class="s1">c._default_description_tuple</span><span class="s5">,</span>
+                    <span class="s1">self.get_insert_default</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">compiled.insert_prefetch</span>
+            <span class="s1">]</span>
+        <span class="s3">elif </span><span class="s1">compiled.update_prefetch:</span>
+            <span class="s1">prefetch_recs = [</span>
+                <span class="s1">(</span>
+                    <span class="s1">c</span><span class="s5">,</span>
+                    <span class="s1">key_getter(c)</span><span class="s5">,</span>
+                    <span class="s1">c._onupdate_description_tuple</span><span class="s5">,</span>
+                    <span class="s1">self.get_update_default</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">compiled.update_prefetch</span>
+            <span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">prefetch_recs = []</span>
+
+        <span class="s3">for </span><span class="s1">param </span><span class="s3">in </span><span class="s1">self.compiled_parameters:</span>
+            <span class="s1">self.current_parameters = param</span>
+
+            <span class="s3">for </span><span class="s1">(</span>
+                <span class="s1">c</span><span class="s5">,</span>
+                <span class="s1">param_key</span><span class="s5">,</span>
+                <span class="s1">(arg</span><span class="s5">, </span><span class="s1">is_scalar</span><span class="s5">, </span><span class="s1">is_callable</span><span class="s5">, </span><span class="s1">is_sentinel)</span><span class="s5">,</span>
+                <span class="s1">fallback</span><span class="s5">,</span>
+            <span class="s1">) </span><span class="s3">in </span><span class="s1">prefetch_recs:</span>
+                <span class="s3">if </span><span class="s1">is_sentinel:</span>
+                    <span class="s1">param[param_key] = sentinel_counter</span>
+                    <span class="s1">sentinel_counter += </span><span class="s6">1</span>
+                <span class="s3">elif </span><span class="s1">is_scalar:</span>
+                    <span class="s1">param[param_key] = arg</span>
+                <span class="s3">elif </span><span class="s1">is_callable:</span>
+                    <span class="s1">self.current_column = c</span>
+                    <span class="s1">param[param_key] = arg(self)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">val = fallback(c)</span>
+                    <span class="s3">if </span><span class="s1">val </span><span class="s3">is not None</span><span class="s1">:</span>
+                        <span class="s1">param[param_key] = val</span>
+
+        <span class="s3">del </span><span class="s1">self.current_parameters</span>
+
+
+<span class="s1">DefaultDialect.execution_ctx_cls = DefaultExecutionContext</span>
+</pre>
+</body>
+</html>

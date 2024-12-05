@@ -1,0 +1,48 @@
+<html>
+<head>
+<title>gerenciamento.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+.s1 { color: #e8bf6a;}
+.s2 { color: #bababa;}
+.s3 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+gerenciamento.html</font>
+</center></td></tr></table>
+<pre><span class="s0">{% extends 'modelo_base2.html' %}</span>
+
+<span class="s0">{% block conteudo %}</span>
+<span class="s1">&lt;h1 </span><span class="s2">class</span><span class="s3">=&quot;TituloGerenciamento&quot;</span><span class="s1">&gt;</span><span class="s0">Gerenciamento</span><span class="s1">&lt;/h1&gt;</span>
+
+<span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;card-container&quot;</span><span class="s1">&gt;</span>
+    <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;card&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;h3&gt;</span><span class="s0">Gerenciar Funcionários</span><span class="s1">&lt;/h3&gt;</span>
+        <span class="s1">&lt;p&gt;</span><span class="s0">Visualize, adicione ou edite funcionários na plataforma.</span><span class="s1">&lt;/p&gt;</span>
+        <span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('gerenciar_funcionarios') }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn&quot;</span><span class="s1">&gt;</span><span class="s0">Ir para Funcionários</span><span class="s1">&lt;/a&gt;</span>
+    <span class="s1">&lt;/div&gt;</span>
+
+    <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;card&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;h3&gt;</span><span class="s0">Gerenciar Fornecedores</span><span class="s1">&lt;/h3&gt;</span>
+        <span class="s1">&lt;p&gt;</span><span class="s0">Gerencie seus fornecedores, mantendo o controle sobre todos os dados.</span><span class="s1">&lt;/p&gt;</span>
+        <span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('gerenciar_fornecedores') }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn&quot;</span><span class="s1">&gt;</span><span class="s0">Ir para Fornecedores</span><span class="s1">&lt;/a&gt;</span>
+    <span class="s1">&lt;/div&gt;</span>
+
+    <span class="s1">&lt;div </span><span class="s2">class</span><span class="s3">=&quot;card&quot;</span><span class="s1">&gt;</span>
+        <span class="s1">&lt;h3&gt;</span><span class="s0">Gerenciar Produtos</span><span class="s1">&lt;/h3&gt;</span>
+        <span class="s1">&lt;p&gt;</span><span class="s0">Adicione, edite ou visualize os produtos disponíveis em estoque.</span><span class="s1">&lt;/p&gt;</span>
+        <span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('gerenciar_produtos') }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn&quot;</span><span class="s1">&gt;</span><span class="s0">Ir para Produtos</span><span class="s1">&lt;/a&gt;</span>
+    <span class="s1">&lt;/div&gt;</span>
+<span class="s1">&lt;/div&gt;</span>
+
+<span class="s1">&lt;a </span><span class="s2">href</span><span class="s3">=&quot;{{ url_for('home') }}&quot; </span><span class="s2">class</span><span class="s3">=&quot;btn voltar&quot;</span><span class="s1">&gt;</span><span class="s0">Voltar</span><span class="s1">&lt;/a&gt;</span>
+
+<span class="s0">{% endblock %}</span>
+</pre>
+</body>
+</html>

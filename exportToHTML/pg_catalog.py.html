@@ -1,0 +1,322 @@
+<html>
+<head>
+<title>pg_catalog.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #bbb55b;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pg_catalog.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/pg_catalog.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">from </span><span class="s1">.array </span><span class="s2">import </span><span class="s1">ARRAY</span>
+<span class="s2">from </span><span class="s1">.types </span><span class="s2">import </span><span class="s1">OID</span>
+<span class="s2">from </span><span class="s1">.types </span><span class="s2">import </span><span class="s1">REGCLASS</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Column</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">func</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">MetaData</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">Table</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">BigInteger</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">Boolean</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">CHAR</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">Float</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">Integer</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">SmallInteger</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">String</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">Text</span>
+<span class="s2">from </span><span class="s1">...types </span><span class="s2">import </span><span class="s1">TypeDecorator</span>
+
+
+<span class="s0"># types</span>
+<span class="s2">class </span><span class="s1">NAME(TypeDecorator):</span>
+    <span class="s1">impl = String(</span><span class="s3">64</span><span class="s4">, </span><span class="s1">collation=</span><span class="s5">&quot;C&quot;</span><span class="s1">)</span>
+    <span class="s1">cache_ok = </span><span class="s2">True</span>
+
+
+<span class="s2">class </span><span class="s1">PG_NODE_TREE(TypeDecorator):</span>
+    <span class="s1">impl = Text(collation=</span><span class="s5">&quot;C&quot;</span><span class="s1">)</span>
+    <span class="s1">cache_ok = </span><span class="s2">True</span>
+
+
+<span class="s2">class </span><span class="s1">INT2VECTOR(TypeDecorator):</span>
+    <span class="s1">impl = ARRAY(SmallInteger)</span>
+    <span class="s1">cache_ok = </span><span class="s2">True</span>
+
+
+<span class="s2">class </span><span class="s1">OIDVECTOR(TypeDecorator):</span>
+    <span class="s1">impl = ARRAY(OID)</span>
+    <span class="s1">cache_ok = </span><span class="s2">True</span>
+
+
+<span class="s2">class </span><span class="s1">_SpaceVector:</span>
+    <span class="s2">def </span><span class="s1">result_processor(self</span><span class="s4">, </span><span class="s1">dialect</span><span class="s4">, </span><span class="s1">coltype):</span>
+        <span class="s2">def </span><span class="s1">process(value):</span>
+            <span class="s2">if </span><span class="s1">value </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">value</span>
+            <span class="s2">return </span><span class="s1">[int(p) </span><span class="s2">for </span><span class="s1">p </span><span class="s2">in </span><span class="s1">value.split(</span><span class="s5">&quot; &quot;</span><span class="s1">)]</span>
+
+        <span class="s2">return </span><span class="s1">process</span>
+
+
+<span class="s1">REGPROC = REGCLASS  </span><span class="s0"># seems an alias</span>
+
+<span class="s0"># functions</span>
+<span class="s1">_pg_cat = func.pg_catalog</span>
+<span class="s1">quote_ident = _pg_cat.quote_ident</span>
+<span class="s1">pg_table_is_visible = _pg_cat.pg_table_is_visible</span>
+<span class="s1">pg_type_is_visible = _pg_cat.pg_type_is_visible</span>
+<span class="s1">pg_get_viewdef = _pg_cat.pg_get_viewdef</span>
+<span class="s1">pg_get_serial_sequence = _pg_cat.pg_get_serial_sequence</span>
+<span class="s1">format_type = _pg_cat.format_type</span>
+<span class="s1">pg_get_expr = _pg_cat.pg_get_expr</span>
+<span class="s1">pg_get_constraintdef = _pg_cat.pg_get_constraintdef</span>
+<span class="s1">pg_get_indexdef = _pg_cat.pg_get_indexdef</span>
+
+<span class="s0"># constants</span>
+<span class="s1">RELKINDS_TABLE_NO_FOREIGN = (</span><span class="s5">&quot;r&quot;</span><span class="s4">, </span><span class="s5">&quot;p&quot;</span><span class="s1">)</span>
+<span class="s1">RELKINDS_TABLE = RELKINDS_TABLE_NO_FOREIGN + (</span><span class="s5">&quot;f&quot;</span><span class="s4">,</span><span class="s1">)</span>
+<span class="s1">RELKINDS_VIEW = (</span><span class="s5">&quot;v&quot;</span><span class="s4">,</span><span class="s1">)</span>
+<span class="s1">RELKINDS_MAT_VIEW = (</span><span class="s5">&quot;m&quot;</span><span class="s4">,</span><span class="s1">)</span>
+<span class="s1">RELKINDS_ALL_TABLE_LIKE = RELKINDS_TABLE + RELKINDS_VIEW + RELKINDS_MAT_VIEW</span>
+
+<span class="s0"># tables</span>
+<span class="s1">pg_catalog_meta = MetaData(schema=</span><span class="s5">&quot;pg_catalog&quot;</span><span class="s1">)</span>
+
+<span class="s1">pg_namespace = Table(</span>
+    <span class="s5">&quot;pg_namespace&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;oid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;nspname&quot;</span><span class="s4">, </span><span class="s1">NAME)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;nspowner&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_class = Table(</span>
+    <span class="s5">&quot;pg_class&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;oid&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">3</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relname&quot;</span><span class="s4">, </span><span class="s1">NAME)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relnamespace&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;reltype&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;reloftype&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relowner&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relam&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relfilenode&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;reltablespace&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relpages&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;reltuples&quot;</span><span class="s4">, </span><span class="s1">Float)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relallvisible&quot;</span><span class="s4">, </span><span class="s1">Integer</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">2</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;reltoastrelid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relhasindex&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relisshared&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relpersistence&quot;</span><span class="s4">, </span><span class="s1">CHAR</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">1</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relkind&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relnatts&quot;</span><span class="s4">, </span><span class="s1">SmallInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relchecks&quot;</span><span class="s4">, </span><span class="s1">SmallInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relhasrules&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relhastriggers&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relhassubclass&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relrowsecurity&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relforcerowsecurity&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">5</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relispopulated&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">3</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relreplident&quot;</span><span class="s4">, </span><span class="s1">CHAR</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">4</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relispartition&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">10</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;relrewrite&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">11</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;reloptions&quot;</span><span class="s4">, </span><span class="s1">ARRAY(Text))</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_type = Table(</span>
+    <span class="s5">&quot;pg_type&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;oid&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">3</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typname&quot;</span><span class="s4">, </span><span class="s1">NAME)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typnamespace&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typowner&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typlen&quot;</span><span class="s4">, </span><span class="s1">SmallInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typbyval&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typtype&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typcategory&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typispreferred&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typisdefined&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typdelim&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typrelid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typelem&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typarray&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typinput&quot;</span><span class="s4">, </span><span class="s1">REGPROC)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typoutput&quot;</span><span class="s4">, </span><span class="s1">REGPROC)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typreceive&quot;</span><span class="s4">, </span><span class="s1">REGPROC)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typsend&quot;</span><span class="s4">, </span><span class="s1">REGPROC)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typmodin&quot;</span><span class="s4">, </span><span class="s1">REGPROC)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typmodout&quot;</span><span class="s4">, </span><span class="s1">REGPROC)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typanalyze&quot;</span><span class="s4">, </span><span class="s1">REGPROC)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typalign&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typstorage&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typnotnull&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typbasetype&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typtypmod&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typndims&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typcollation&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">1</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;typdefault&quot;</span><span class="s4">, </span><span class="s1">Text)</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_index = Table(</span>
+    <span class="s5">&quot;pg_index&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indexrelid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indrelid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indnatts&quot;</span><span class="s4">, </span><span class="s1">SmallInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indnkeyatts&quot;</span><span class="s4">, </span><span class="s1">SmallInteger</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">11</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indisunique&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indnullsnotdistinct&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">15</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indisprimary&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indisexclusion&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">1</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indimmediate&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indisclustered&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indisvalid&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indcheckxmin&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indisready&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indislive&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">3</span><span class="s1">)})</span><span class="s4">,  </span><span class="s0"># 9.3</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indisreplident&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indkey&quot;</span><span class="s4">, </span><span class="s1">INT2VECTOR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indcollation&quot;</span><span class="s4">, </span><span class="s1">OIDVECTOR</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">1</span><span class="s1">)})</span><span class="s4">,  </span><span class="s0"># 9.1</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indclass&quot;</span><span class="s4">, </span><span class="s1">OIDVECTOR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indoption&quot;</span><span class="s4">, </span><span class="s1">INT2VECTOR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indexprs&quot;</span><span class="s4">, </span><span class="s1">PG_NODE_TREE)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;indpred&quot;</span><span class="s4">, </span><span class="s1">PG_NODE_TREE)</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_attribute = Table(</span>
+    <span class="s5">&quot;pg_attribute&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attrelid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attname&quot;</span><span class="s4">, </span><span class="s1">NAME)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;atttypid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attstattarget&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attlen&quot;</span><span class="s4">, </span><span class="s1">SmallInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attnum&quot;</span><span class="s4">, </span><span class="s1">SmallInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attndims&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attcacheoff&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;atttypmod&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attbyval&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attstorage&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attalign&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attnotnull&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;atthasdef&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;atthasmissing&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">11</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attidentity&quot;</span><span class="s4">, </span><span class="s1">CHAR</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">10</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attgenerated&quot;</span><span class="s4">, </span><span class="s1">CHAR</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">12</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attisdropped&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attislocal&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attinhcount&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;attcollation&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">1</span><span class="s1">)})</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_constraint = Table(</span>
+    <span class="s5">&quot;pg_constraint&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;oid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,  </span><span class="s0"># 9.3</span>
+    <span class="s1">Column(</span><span class="s5">&quot;conname&quot;</span><span class="s4">, </span><span class="s1">NAME)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;connamespace&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;contype&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;condeferrable&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;condeferred&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;convalidated&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">1</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;conrelid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;contypid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;conindid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;conparentid&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">11</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;confrelid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;confupdtype&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;confdeltype&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;confmatchtype&quot;</span><span class="s4">, </span><span class="s1">CHAR)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;conislocal&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;coninhcount&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;connoinherit&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">2</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;conkey&quot;</span><span class="s4">, </span><span class="s1">ARRAY(SmallInteger))</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;confkey&quot;</span><span class="s4">, </span><span class="s1">ARRAY(SmallInteger))</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_sequence = Table(</span>
+    <span class="s5">&quot;pg_sequence&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;seqrelid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;seqtypid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;seqstart&quot;</span><span class="s4">, </span><span class="s1">BigInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;seqincrement&quot;</span><span class="s4">, </span><span class="s1">BigInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;seqmax&quot;</span><span class="s4">, </span><span class="s1">BigInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;seqmin&quot;</span><span class="s4">, </span><span class="s1">BigInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;seqcache&quot;</span><span class="s4">, </span><span class="s1">BigInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;seqcycle&quot;</span><span class="s4">, </span><span class="s1">Boolean)</span><span class="s4">,</span>
+    <span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">10</span><span class="s4">,</span><span class="s1">)}</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_attrdef = Table(</span>
+    <span class="s5">&quot;pg_attrdef&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;oid&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">3</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;adrelid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;adnum&quot;</span><span class="s4">, </span><span class="s1">SmallInteger)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;adbin&quot;</span><span class="s4">, </span><span class="s1">PG_NODE_TREE)</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_description = Table(</span>
+    <span class="s5">&quot;pg_description&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;objoid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;classoid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;objsubid&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;description&quot;</span><span class="s4">, </span><span class="s1">Text(collation=</span><span class="s5">&quot;C&quot;</span><span class="s1">))</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_enum = Table(</span>
+    <span class="s5">&quot;pg_enum&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;oid&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">3</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;enumtypid&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;enumsortorder&quot;</span><span class="s4">, </span><span class="s1">Float()</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">1</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;enumlabel&quot;</span><span class="s4">, </span><span class="s1">NAME)</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_am = Table(</span>
+    <span class="s5">&quot;pg_am&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;oid&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">3</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;amname&quot;</span><span class="s4">, </span><span class="s1">NAME)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;amhandler&quot;</span><span class="s4">, </span><span class="s1">REGPROC</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">6</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;amtype&quot;</span><span class="s4">, </span><span class="s1">CHAR</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">6</span><span class="s1">)})</span><span class="s4">,</span>
+<span class="s1">)</span>
+
+<span class="s1">pg_collation = Table(</span>
+    <span class="s5">&quot;pg_collation&quot;</span><span class="s4">,</span>
+    <span class="s1">pg_catalog_meta</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;oid&quot;</span><span class="s4">, </span><span class="s1">OID</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">9</span><span class="s4">, </span><span class="s3">3</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collname&quot;</span><span class="s4">, </span><span class="s1">NAME)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collnamespace&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collowner&quot;</span><span class="s4">, </span><span class="s1">OID)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collprovider&quot;</span><span class="s4">, </span><span class="s1">CHAR</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">10</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collisdeterministic&quot;</span><span class="s4">, </span><span class="s1">Boolean</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">12</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collencoding&quot;</span><span class="s4">, </span><span class="s1">Integer)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collcollate&quot;</span><span class="s4">, </span><span class="s1">Text)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collctype&quot;</span><span class="s4">, </span><span class="s1">Text)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;colliculocale&quot;</span><span class="s4">, </span><span class="s1">Text)</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collicurules&quot;</span><span class="s4">, </span><span class="s1">Text</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">16</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+    <span class="s1">Column(</span><span class="s5">&quot;collversion&quot;</span><span class="s4">, </span><span class="s1">Text</span><span class="s4">, </span><span class="s1">info={</span><span class="s5">&quot;server_version&quot;</span><span class="s1">: (</span><span class="s3">10</span><span class="s4">,</span><span class="s1">)})</span><span class="s4">,</span>
+<span class="s1">)</span>
+</pre>
+</body>
+</html>

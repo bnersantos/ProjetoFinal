@@ -1,0 +1,159 @@
+<html>
+<head>
+<title>pymysql.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pymysql.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/mysql/pymysql.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">r&quot;&quot;&quot; 
+ 
+.. dialect:: mysql+pymysql 
+    :name: PyMySQL 
+    :dbapi: pymysql 
+    :connectstring: mysql+pymysql://&lt;username&gt;:&lt;password&gt;@&lt;host&gt;/&lt;dbname&gt;[?&lt;options&gt;] 
+    :url: https://pymysql.readthedocs.io/ 
+ 
+Unicode 
+------- 
+ 
+Please see :ref:`mysql_unicode` for current recommendations on unicode 
+handling. 
+ 
+.. _pymysql_ssl: 
+ 
+SSL Connections 
+------------------ 
+ 
+The PyMySQL DBAPI accepts the same SSL arguments as that of MySQLdb, 
+described at :ref:`mysqldb_ssl`.   See that section for additional examples. 
+ 
+If the server uses an automatically-generated certificate that is self-signed 
+or does not match the host name (as seen from the client), it may also be 
+necessary to indicate ``ssl_check_hostname=false`` in PyMySQL:: 
+ 
+    connection_uri = ( 
+        &quot;mysql+pymysql://scott:tiger@192.168.0.134/test&quot; 
+        &quot;?ssl_ca=/home/gord/client-ssl/ca.pem&quot; 
+        &quot;&amp;ssl_cert=/home/gord/client-ssl/client-cert.pem&quot; 
+        &quot;&amp;ssl_key=/home/gord/client-ssl/client-key.pem&quot; 
+        &quot;&amp;ssl_check_hostname=false&quot; 
+    ) 
+ 
+ 
+MySQL-Python Compatibility 
+-------------------------- 
+ 
+The pymysql DBAPI is a pure Python port of the MySQL-python (MySQLdb) driver, 
+and targets 100% compatibility.   Most behavioral notes for MySQL-python apply 
+to the pymysql driver as well. 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+
+<span class="s3">from </span><span class="s1">.mysqldb </span><span class="s3">import </span><span class="s1">MySQLDialect_mysqldb</span>
+<span class="s3">from </span><span class="s1">...util </span><span class="s3">import </span><span class="s1">langhelpers</span>
+
+
+<span class="s3">class </span><span class="s1">MySQLDialect_pymysql(MySQLDialect_mysqldb):</span>
+    <span class="s1">driver = </span><span class="s2">&quot;pymysql&quot;</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s1">description_encoding = </span><span class="s3">None</span>
+
+    <span class="s1">@langhelpers.memoized_property</span>
+    <span class="s3">def </span><span class="s1">supports_server_side_cursors(self):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">cursors = __import__(</span><span class="s2">&quot;pymysql.cursors&quot;</span><span class="s1">).cursors</span>
+            <span class="s1">self._sscursor = cursors.SSCursor</span>
+            <span class="s3">return True</span>
+        <span class="s3">except </span><span class="s1">(ImportError</span><span class="s4">, </span><span class="s1">AttributeError):</span>
+            <span class="s3">return False</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">return </span><span class="s1">__import__(</span><span class="s2">&quot;pymysql&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@langhelpers.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_send_false_to_ping(self):</span>
+        <span class="s2">&quot;&quot;&quot;determine if pymysql has deprecated, changed the default of, 
+        or removed the 'reconnect' argument of connection.ping(). 
+ 
+        See #10492 and 
+        https://github.com/PyMySQL/mysqlclient/discussions/651#discussioncomment-7308971 
+        for background. 
+ 
+        &quot;&quot;&quot;  </span><span class="s0"># noqa: E501</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">Connection = __import__(</span>
+                <span class="s2">&quot;pymysql.connections&quot;</span>
+            <span class="s1">).connections.Connection</span>
+        <span class="s3">except </span><span class="s1">(ImportError</span><span class="s4">, </span><span class="s1">AttributeError):</span>
+            <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">insp = langhelpers.get_callable_argspec(Connection.ping)</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">reconnect_arg = insp.args[</span><span class="s5">1</span><span class="s1">]</span>
+            <span class="s3">except </span><span class="s1">IndexError:</span>
+                <span class="s3">return False</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">reconnect_arg == </span><span class="s2">&quot;reconnect&quot; </span><span class="s3">and </span><span class="s1">(</span>
+                    <span class="s3">not </span><span class="s1">insp.defaults </span><span class="s3">or </span><span class="s1">insp.defaults[</span><span class="s5">0</span><span class="s1">] </span><span class="s3">is not False</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">do_ping(self</span><span class="s4">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s3">if </span><span class="s1">self._send_false_to_ping:</span>
+            <span class="s1">dbapi_connection.ping(</span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.ping()</span>
+
+        <span class="s3">return True</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s4">, </span><span class="s1">url</span><span class="s4">, </span><span class="s1">_translate_args=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">_translate_args </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">_translate_args = dict(username=</span><span class="s2">&quot;user&quot;</span><span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">super().create_connect_args(</span>
+            <span class="s1">url</span><span class="s4">, </span><span class="s1">_translate_args=_translate_args</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s4">, </span><span class="s1">e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+        <span class="s3">if </span><span class="s1">super().is_disconnect(e</span><span class="s4">, </span><span class="s1">connection</span><span class="s4">, </span><span class="s1">cursor):</span>
+            <span class="s3">return True</span>
+        <span class="s3">elif </span><span class="s1">isinstance(e</span><span class="s4">, </span><span class="s1">self.dbapi.Error):</span>
+            <span class="s1">str_e = str(e).lower()</span>
+            <span class="s3">return </span><span class="s1">(</span>
+                <span class="s2">&quot;already closed&quot; </span><span class="s3">in </span><span class="s1">str_e </span><span class="s3">or </span><span class="s2">&quot;connection was killed&quot; </span><span class="s3">in </span><span class="s1">str_e</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">_extract_error_code(self</span><span class="s4">, </span><span class="s1">exception):</span>
+        <span class="s3">if </span><span class="s1">isinstance(exception.args[</span><span class="s5">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">Exception):</span>
+            <span class="s1">exception = exception.args[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s3">return </span><span class="s1">exception.args[</span><span class="s5">0</span><span class="s1">]</span>
+
+
+<span class="s1">dialect = MySQLDialect_pymysql</span>
+</pre>
+</body>
+</html>

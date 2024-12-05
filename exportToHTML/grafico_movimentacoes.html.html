@@ -1,0 +1,94 @@
+<html>
+<head>
+<title>grafico_movimentacoes.html</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #d8d8d8;}
+.s1 { color: #e8bf6a;}
+.s2 { color: #bababa;}
+.s3 { color: #a5c261;}
+.s4 { color: #cc8b60;}
+.s5 { color: #cc7832;}
+.s6 { color: #5d69bb;}
+.s7 { color: #bbb55b;}
+.s8 { color: #96bf7d;}
+.s9 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+grafico_movimentacoes.html</font>
+</center></td></tr></table>
+<pre><span class="s0">{% extends 'modelo_base2.html' %}</span>
+
+<span class="s0">{% block conteudo %}</span>
+<span class="s1">&lt;h2&gt;</span><span class="s0">Gráfico de Movimentações por Produto</span><span class="s1">&lt;/h2&gt;</span>
+<span class="s1">&lt;canvas </span><span class="s2">id</span><span class="s3">=&quot;graficoMovimentacoes&quot;</span><span class="s1">&gt;&lt;/canvas&gt;</span>
+
+<span class="s1">&lt;script </span><span class="s2">src</span><span class="s3">=&quot;https://cdn.jsdelivr.net/npm/chart.js&quot;</span><span class="s1">&gt;&lt;/script&gt;</span>
+<span class="s1">&lt;script&gt;</span>
+    <span class="s4">const </span><span class="s0">data = {{ data | tojson }}</span><span class="s5">;</span>
+    <span class="s4">const </span><span class="s0">labels = Object.keys(data)</span><span class="s5">; </span><span class="s6">// Nomes dos produtos</span>
+    <span class="s4">const </span><span class="s0">entradaData = labels.map(produto =&gt; data[produto].entrada || </span><span class="s7">0</span><span class="s0">)</span><span class="s5">;</span>
+    <span class="s4">const </span><span class="s0">saidaData = labels.map(produto =&gt; data[produto].saida || </span><span class="s7">0</span><span class="s0">)</span><span class="s5">;</span>
+
+    <span class="s4">const </span><span class="s0">ctx = document.getElementById(</span><span class="s8">'graficoMovimentacoes'</span><span class="s0">).getContext(</span><span class="s8">'2d'</span><span class="s0">)</span><span class="s5">;</span>
+    <span class="s4">new </span><span class="s0">Chart(ctx</span><span class="s5">, </span><span class="s0">{</span>
+        <span class="s0">type: </span><span class="s8">'bar'</span><span class="s5">,</span>
+        <span class="s0">data: {</span>
+            <span class="s0">labels: labels</span><span class="s5">,</span>
+            <span class="s0">datasets: [</span>
+                <span class="s0">{</span>
+                    <span class="s0">label: </span><span class="s8">'Entrada'</span><span class="s5">,</span>
+                    <span class="s0">data: entradaData</span><span class="s5">,</span>
+                    <span class="s0">backgroundColor: </span><span class="s8">'#4CAF50'</span><span class="s5">,</span>
+                    <span class="s0">borderColor: </span><span class="s8">'#388E3C'</span><span class="s5">,</span>
+                    <span class="s0">borderWidth: </span><span class="s7">1</span>
+                <span class="s0">}</span><span class="s5">,</span>
+                <span class="s0">{</span>
+                    <span class="s0">label: </span><span class="s8">'Saída'</span><span class="s5">,</span>
+                    <span class="s0">data: saidaData</span><span class="s5">,</span>
+                    <span class="s0">backgroundColor: </span><span class="s8">'#FF5733'</span><span class="s5">,</span>
+                    <span class="s0">borderColor: </span><span class="s8">'#C70039'</span><span class="s5">,</span>
+                    <span class="s0">borderWidth: </span><span class="s7">1</span>
+                <span class="s0">}</span>
+            <span class="s0">]</span>
+        <span class="s0">}</span><span class="s5">,</span>
+        <span class="s0">options: {</span>
+            <span class="s0">plugins: {</span>
+                <span class="s0">tooltip: {</span>
+                    <span class="s0">callbacks: {</span>
+                        <span class="s0">afterLabel: </span><span class="s4">function</span><span class="s0">(tooltipItem) {</span>
+                            <span class="s4">const </span><span class="s0">produto = tooltipItem.label</span><span class="s5">;</span>
+                            <span class="s4">const </span><span class="s0">funcionario = data[produto].funcionario</span><span class="s5">;</span>
+                            <span class="s4">const </span><span class="s0">fornecedor = data[produto].fornecedor</span><span class="s5">;</span>
+                            <span class="s4">return </span><span class="s8">`Funcionário: </span><span class="s0">${funcionario}</span><span class="s9">\n</span><span class="s8">Fornecedor: </span><span class="s0">${fornecedor}</span><span class="s8">`</span><span class="s5">;</span>
+                        <span class="s0">}</span>
+                    <span class="s0">}</span>
+                <span class="s0">}</span>
+            <span class="s0">}</span><span class="s5">,</span>
+            <span class="s0">responsive: </span><span class="s4">true</span><span class="s5">,</span>
+            <span class="s0">scales: {</span>
+                <span class="s0">x: {</span>
+                    <span class="s0">title: {</span>
+                        <span class="s0">display: </span><span class="s4">true</span><span class="s5">,</span>
+                        <span class="s0">text: </span><span class="s8">'Produtos'</span>
+                    <span class="s0">}</span>
+                <span class="s0">}</span><span class="s5">,</span>
+                <span class="s0">y: {</span>
+                    <span class="s0">beginAtZero: </span><span class="s4">true</span><span class="s5">,</span>
+                    <span class="s0">title: {</span>
+                        <span class="s0">display: </span><span class="s4">true</span><span class="s5">,</span>
+                        <span class="s0">text: </span><span class="s8">'Quantidade'</span>
+                    <span class="s0">}</span>
+                <span class="s0">}</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+    <span class="s0">})</span><span class="s5">;</span>
+<span class="s1">&lt;/script&gt;</span>
+<span class="s0">{% endblock %}</span>
+</pre>
+</body>
+</html>

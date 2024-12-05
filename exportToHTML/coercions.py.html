@@ -1,0 +1,1429 @@
+<html>
+<head>
+<title>coercions.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+coercions.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/coercions.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">collections.abc </span><span class="s2">as </span><span class="s1">collections_abc</span>
+<span class="s2">import </span><span class="s1">numbers</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">cast</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterator</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">List</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">NoReturn</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">overload</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Sequence</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Tuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Type</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TypeVar</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">roles</span>
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">visitors</span>
+<span class="s2">from </span><span class="s1">._typing </span><span class="s2">import </span><span class="s1">is_from_clause</span>
+<span class="s2">from </span><span class="s1">.base </span><span class="s2">import </span><span class="s1">ExecutableOption</span>
+<span class="s2">from </span><span class="s1">.base </span><span class="s2">import </span><span class="s1">Options</span>
+<span class="s2">from </span><span class="s1">.cache_key </span><span class="s2">import </span><span class="s1">HasCacheKey</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">Visitable</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">exc</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">inspection</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Literal</span>
+
+<span class="s2">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s0"># elements lambdas schema selectable are set by __init__</span>
+    <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">elements</span>
+    <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">lambdas</span>
+    <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">schema</span>
+    <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">selectable</span>
+    <span class="s2">from </span><span class="s1">._typing </span><span class="s2">import </span><span class="s1">_ColumnExpressionArgument</span>
+    <span class="s2">from </span><span class="s1">._typing </span><span class="s2">import </span><span class="s1">_ColumnsClauseArgument</span>
+    <span class="s2">from </span><span class="s1">._typing </span><span class="s2">import </span><span class="s1">_DDLColumnArgument</span>
+    <span class="s2">from </span><span class="s1">._typing </span><span class="s2">import </span><span class="s1">_DMLTableArgument</span>
+    <span class="s2">from </span><span class="s1">._typing </span><span class="s2">import </span><span class="s1">_FromClauseArgument</span>
+    <span class="s2">from </span><span class="s1">.dml </span><span class="s2">import </span><span class="s1">_DMLTableElement</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">BindParameter</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">ClauseElement</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">ColumnClause</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">ColumnElement</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">DQLDMLClauseElement</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">NamedColumn</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">SQLCoreOperations</span>
+    <span class="s2">from </span><span class="s1">.schema </span><span class="s2">import </span><span class="s1">Column</span>
+    <span class="s2">from </span><span class="s1">.selectable </span><span class="s2">import </span><span class="s1">_ColumnsClauseElement</span>
+    <span class="s2">from </span><span class="s1">.selectable </span><span class="s2">import </span><span class="s1">_JoinTargetProtocol</span>
+    <span class="s2">from </span><span class="s1">.selectable </span><span class="s2">import </span><span class="s1">FromClause</span>
+    <span class="s2">from </span><span class="s1">.selectable </span><span class="s2">import </span><span class="s1">HasCTE</span>
+    <span class="s2">from </span><span class="s1">.selectable </span><span class="s2">import </span><span class="s1">SelectBase</span>
+    <span class="s2">from </span><span class="s1">.selectable </span><span class="s2">import </span><span class="s1">Subquery</span>
+    <span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">_TraverseCallableType</span>
+
+<span class="s1">_SR = TypeVar(</span><span class="s3">&quot;_SR&quot;</span><span class="s4">, </span><span class="s1">bound=roles.SQLRole)</span>
+<span class="s1">_F = TypeVar(</span><span class="s3">&quot;_F&quot;</span><span class="s4">, </span><span class="s1">bound=Callable[...</span><span class="s4">, </span><span class="s1">Any])</span>
+<span class="s1">_StringOnlyR = TypeVar(</span><span class="s3">&quot;_StringOnlyR&quot;</span><span class="s4">, </span><span class="s1">bound=roles.StringRole)</span>
+<span class="s1">_T = TypeVar(</span><span class="s3">&quot;_T&quot;</span><span class="s4">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s2">def </span><span class="s1">_is_literal(element):</span>
+    <span class="s5">&quot;&quot;&quot;Return whether or not the element is a &quot;literal&quot; in the context 
+    of a SQL expression construct. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">return not </span><span class="s1">isinstance(</span>
+        <span class="s1">element</span><span class="s4">,</span>
+        <span class="s1">(Visitable</span><span class="s4">, </span><span class="s1">schema.SchemaEventTarget)</span><span class="s4">,</span>
+    <span class="s1">) </span><span class="s2">and not </span><span class="s1">hasattr(element</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_deep_is_literal(element):</span>
+    <span class="s5">&quot;&quot;&quot;Return whether or not the element is a &quot;literal&quot; in the context 
+    of a SQL expression construct. 
+ 
+    does a deeper more esoteric check than _is_literal.   is used 
+    for lambda elements that have to distinguish values that would 
+    be bound vs. not without any context. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">collections_abc.Sequence) </span><span class="s2">and not </span><span class="s1">isinstance(</span>
+        <span class="s1">element</span><span class="s4">, </span><span class="s1">str</span>
+    <span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">element:</span>
+            <span class="s2">if not </span><span class="s1">_deep_is_literal(elem):</span>
+                <span class="s2">return False</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return True</span>
+
+    <span class="s2">return </span><span class="s1">(</span>
+        <span class="s2">not </span><span class="s1">isinstance(</span>
+            <span class="s1">element</span><span class="s4">,</span>
+            <span class="s1">(</span>
+                <span class="s1">Visitable</span><span class="s4">,</span>
+                <span class="s1">schema.SchemaEventTarget</span><span class="s4">,</span>
+                <span class="s1">HasCacheKey</span><span class="s4">,</span>
+                <span class="s1">Options</span><span class="s4">,</span>
+                <span class="s1">util.langhelpers.symbol</span><span class="s4">,</span>
+            <span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s2">and not </span><span class="s1">hasattr(element</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+        <span class="s2">and </span><span class="s1">(</span>
+            <span class="s2">not </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">type)</span>
+            <span class="s2">or not </span><span class="s1">issubclass(element</span><span class="s4">, </span><span class="s1">HasCacheKey)</span>
+        <span class="s1">)</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_document_text_coercion(</span>
+    <span class="s1">paramname: str</span><span class="s4">, </span><span class="s1">meth_rst: str</span><span class="s4">, </span><span class="s1">param_rst: str</span>
+<span class="s1">) -&gt; Callable[[_F]</span><span class="s4">, </span><span class="s1">_F]:</span>
+    <span class="s2">return </span><span class="s1">util.add_parameter_text(</span>
+        <span class="s1">paramname</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s3">&quot;.. warning:: &quot;</span>
+            <span class="s3">&quot;The %s argument to %s can be passed as a Python string argument, &quot;</span>
+            <span class="s3">&quot;which will be treated &quot;</span>
+            <span class="s3">&quot;as **trusted SQL text** and rendered as given.  **DO NOT PASS &quot;</span>
+            <span class="s3">&quot;UNTRUSTED INPUT TO THIS PARAMETER**.&quot;</span>
+        <span class="s1">)</span>
+        <span class="s1">% (param_rst</span><span class="s4">, </span><span class="s1">meth_rst)</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_expression_collection_was_a_list(</span>
+    <span class="s1">attrname: str</span><span class="s4">,</span>
+    <span class="s1">fnname: str</span><span class="s4">,</span>
+    <span class="s1">args: Union[Sequence[_T]</span><span class="s4">, </span><span class="s1">Sequence[Sequence[_T]]]</span><span class="s4">,</span>
+<span class="s1">) -&gt; Sequence[_T]:</span>
+    <span class="s2">if </span><span class="s1">args </span><span class="s2">and </span><span class="s1">isinstance(args[</span><span class="s6">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">(list</span><span class="s4">, </span><span class="s1">set</span><span class="s4">, </span><span class="s1">dict)) </span><span class="s2">and </span><span class="s1">len(args) == </span><span class="s6">1</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">isinstance(args[</span><span class="s6">0</span><span class="s1">]</span><span class="s4">, </span><span class="s1">list):</span>
+            <span class="s2">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s3">f'The &quot;</span><span class="s7">{</span><span class="s1">attrname</span><span class="s7">}</span><span class="s3">&quot; argument to </span><span class="s7">{</span><span class="s1">fnname</span><span class="s7">}</span><span class="s3">(), when '</span>
+                <span class="s3">&quot;referring to a sequence &quot;</span>
+                <span class="s3">&quot;of items, is now passed as a series of positional &quot;</span>
+                <span class="s3">&quot;elements, rather than as a list. &quot;</span>
+            <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">cast(</span><span class="s3">&quot;Sequence[_T]&quot;</span><span class="s4">, </span><span class="s1">args[</span><span class="s6">0</span><span class="s1">])</span>
+
+    <span class="s2">return </span><span class="s1">cast(</span><span class="s3">&quot;Sequence[_T]&quot;</span><span class="s4">, </span><span class="s1">args)</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.TruncatedLabelRole]</span><span class="s4">,</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; str: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.DMLColumnRole]</span><span class="s4">,</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">*</span><span class="s4">,</span>
+    <span class="s1">as_key: Literal[</span><span class="s2">True</span><span class="s1">] = ...</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; str: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.LiteralValueRole]</span><span class="s4">,</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; BindParameter[Any]: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.DDLReferredColumnRole]</span><span class="s4">,</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; Column[Any]: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.DDLConstraintColumnRole]</span><span class="s4">,</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; Union[Column[Any]</span><span class="s4">, </span><span class="s1">str]: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.StatementOptionRole]</span><span class="s4">,</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; DQLDMLClauseElement: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.LabeledColumnExprRole[Any]]</span><span class="s4">,</span>
+    <span class="s1">element: _ColumnExpressionArgument[_T]</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; NamedColumn[_T]: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Union[</span>
+        <span class="s1">Type[roles.ExpressionElementRole[Any]]</span><span class="s4">,</span>
+        <span class="s1">Type[roles.LimitOffsetRole]</span><span class="s4">,</span>
+        <span class="s1">Type[roles.WhereHavingRole]</span><span class="s4">,</span>
+    <span class="s1">]</span><span class="s4">,</span>
+    <span class="s1">element: _ColumnExpressionArgument[_T]</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; ColumnElement[_T]: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Union[</span>
+        <span class="s1">Type[roles.ExpressionElementRole[Any]]</span><span class="s4">,</span>
+        <span class="s1">Type[roles.LimitOffsetRole]</span><span class="s4">,</span>
+        <span class="s1">Type[roles.WhereHavingRole]</span><span class="s4">,</span>
+        <span class="s1">Type[roles.OnClauseRole]</span><span class="s4">,</span>
+        <span class="s1">Type[roles.ColumnArgumentRole]</span><span class="s4">,</span>
+    <span class="s1">]</span><span class="s4">,</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; ColumnElement[Any]: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.DMLTableRole]</span><span class="s4">,</span>
+    <span class="s1">element: _DMLTableArgument</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; _DMLTableElement: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.HasCTERole]</span><span class="s4">,</span>
+    <span class="s1">element: HasCTE</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; HasCTE: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.SelectStatementRole]</span><span class="s4">,</span>
+    <span class="s1">element: SelectBase</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; SelectBase: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.FromClauseRole]</span><span class="s4">,</span>
+    <span class="s1">element: _FromClauseArgument</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; FromClause: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.FromClauseRole]</span><span class="s4">,</span>
+    <span class="s1">element: SelectBase</span><span class="s4">,</span>
+    <span class="s1">*</span><span class="s4">,</span>
+    <span class="s1">explicit_subquery: Literal[</span><span class="s2">True</span><span class="s1">] = ...</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; Subquery: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.ColumnsClauseRole]</span><span class="s4">,</span>
+    <span class="s1">element: _ColumnsClauseArgument[Any]</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; _ColumnsClauseElement: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[roles.JoinTargetRole]</span><span class="s4">,</span>
+    <span class="s1">element: _JoinTargetProtocol</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; _JoinTargetProtocol: ...</span>
+
+
+<span class="s0"># catchall for not-yet-implemented overloads</span>
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[_SR]</span><span class="s4">,</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; Any: ...</span>
+
+
+<span class="s2">def </span><span class="s1">expect(</span>
+    <span class="s1">role: Type[_SR]</span><span class="s4">,</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">*</span><span class="s4">,</span>
+    <span class="s1">apply_propagate_attrs: Optional[ClauseElement] = </span><span class="s2">None</span><span class="s4">,</span>
+    <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+    <span class="s1">post_inspect: bool = </span><span class="s2">False</span><span class="s4">,</span>
+    <span class="s1">disable_inspection: bool = </span><span class="s2">False</span><span class="s4">,</span>
+    <span class="s1">**kw: Any</span><span class="s4">,</span>
+<span class="s1">) -&gt; Any:</span>
+    <span class="s2">if </span><span class="s1">(</span>
+        <span class="s1">role.allows_lambda</span>
+        <span class="s0"># note callable() will not invoke a __getattr__() method, whereas</span>
+        <span class="s0"># hasattr(obj, &quot;__call__&quot;) will. by keeping the callable() check here</span>
+        <span class="s0"># we prevent most needless calls to hasattr()  and therefore</span>
+        <span class="s0"># __getattr__(), which is present on ColumnElement.</span>
+        <span class="s2">and </span><span class="s1">callable(element)</span>
+        <span class="s2">and </span><span class="s1">hasattr(element</span><span class="s4">, </span><span class="s3">&quot;__code__&quot;</span><span class="s1">)</span>
+    <span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">lambdas.LambdaElement(</span>
+            <span class="s1">element</span><span class="s4">,</span>
+            <span class="s1">role</span><span class="s4">,</span>
+            <span class="s1">lambdas.LambdaOptions(**kw)</span><span class="s4">,</span>
+            <span class="s1">apply_propagate_attrs=apply_propagate_attrs</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s0"># major case is that we are given a ClauseElement already, skip more</span>
+    <span class="s0"># elaborate logic up front if possible</span>
+    <span class="s1">impl = _impl_lookup[role]</span>
+
+    <span class="s1">original_element = element</span>
+
+    <span class="s2">if not </span><span class="s1">isinstance(</span>
+        <span class="s1">element</span><span class="s4">,</span>
+        <span class="s1">(</span>
+            <span class="s1">elements.CompilerElement</span><span class="s4">,</span>
+            <span class="s1">schema.SchemaItem</span><span class="s4">,</span>
+            <span class="s1">schema.FetchedValue</span><span class="s4">,</span>
+            <span class="s1">lambdas.PyWrapper</span><span class="s4">,</span>
+        <span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s1">resolved = </span><span class="s2">None</span>
+
+        <span class="s2">if </span><span class="s1">impl._resolve_literal_only:</span>
+            <span class="s1">resolved = impl._literal_coercion(element</span><span class="s4">, </span><span class="s1">**kw)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">original_element = element</span>
+
+            <span class="s1">is_clause_element = </span><span class="s2">False</span>
+
+            <span class="s0"># this is a special performance optimization for ORM</span>
+            <span class="s0"># joins used by JoinTargetImpl that we don't go through the</span>
+            <span class="s0"># work of creating __clause_element__() when we only need the</span>
+            <span class="s0"># original QueryableAttribute, as the former will do clause</span>
+            <span class="s0"># adaption and all that which is just thrown away here.</span>
+            <span class="s2">if </span><span class="s1">(</span>
+                <span class="s1">impl._skip_clauseelement_for_target_match</span>
+                <span class="s2">and </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">role)</span>
+                <span class="s2">and </span><span class="s1">hasattr(element</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+            <span class="s1">):</span>
+                <span class="s1">is_clause_element = </span><span class="s2">True</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">while </span><span class="s1">hasattr(element</span><span class="s4">, </span><span class="s3">&quot;__clause_element__&quot;</span><span class="s1">):</span>
+                    <span class="s1">is_clause_element = </span><span class="s2">True</span>
+
+                    <span class="s2">if not </span><span class="s1">getattr(element</span><span class="s4">, </span><span class="s3">&quot;is_clause_element&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">):</span>
+                        <span class="s1">element = element.__clause_element__()</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s2">break</span>
+
+            <span class="s2">if not </span><span class="s1">is_clause_element:</span>
+                <span class="s2">if </span><span class="s1">impl._use_inspection </span><span class="s2">and not </span><span class="s1">disable_inspection:</span>
+                    <span class="s1">insp = inspection.inspect(element</span><span class="s4">, </span><span class="s1">raiseerr=</span><span class="s2">False</span><span class="s1">)</span>
+                    <span class="s2">if </span><span class="s1">insp </span><span class="s2">is not None</span><span class="s1">:</span>
+                        <span class="s2">if </span><span class="s1">post_inspect:</span>
+                            <span class="s1">insp._post_inspect</span>
+                        <span class="s2">try</span><span class="s1">:</span>
+                            <span class="s1">resolved = insp.__clause_element__()</span>
+                        <span class="s2">except </span><span class="s1">AttributeError:</span>
+                            <span class="s1">impl._raise_for_expected(original_element</span><span class="s4">, </span><span class="s1">argname)</span>
+
+                <span class="s2">if </span><span class="s1">resolved </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s1">resolved = impl._literal_coercion(</span>
+                        <span class="s1">element</span><span class="s4">, </span><span class="s1">argname=argname</span><span class="s4">, </span><span class="s1">**kw</span>
+                    <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">resolved = element</span>
+    <span class="s2">elif </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">lambdas.PyWrapper):</span>
+        <span class="s1">resolved = element._sa__py_wrapper_literal(**kw)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">resolved = element</span>
+
+    <span class="s2">if </span><span class="s1">apply_propagate_attrs </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+            <span class="s2">assert </span><span class="s1">isinstance(resolved</span><span class="s4">, </span><span class="s1">(SQLCoreOperations</span><span class="s4">, </span><span class="s1">ClauseElement))</span>
+
+        <span class="s2">if not </span><span class="s1">apply_propagate_attrs._propagate_attrs </span><span class="s2">and </span><span class="s1">getattr(</span>
+            <span class="s1">resolved</span><span class="s4">, </span><span class="s3">&quot;_propagate_attrs&quot;</span><span class="s4">, </span><span class="s2">None</span>
+        <span class="s1">):</span>
+            <span class="s1">apply_propagate_attrs._propagate_attrs = resolved._propagate_attrs</span>
+
+    <span class="s2">if </span><span class="s1">impl._role_class </span><span class="s2">in </span><span class="s1">resolved.__class__.__mro__:</span>
+        <span class="s2">if </span><span class="s1">impl._post_coercion:</span>
+            <span class="s1">resolved = impl._post_coercion(</span>
+                <span class="s1">resolved</span><span class="s4">,</span>
+                <span class="s1">argname=argname</span><span class="s4">,</span>
+                <span class="s1">original_element=original_element</span><span class="s4">,</span>
+                <span class="s1">**kw</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">resolved</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">impl._implicit_coercions(</span>
+            <span class="s1">original_element</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">argname=argname</span><span class="s4">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">expect_as_key(</span>
+    <span class="s1">role: Type[roles.DMLColumnRole]</span><span class="s4">, </span><span class="s1">element: Any</span><span class="s4">, </span><span class="s1">**kw: Any</span>
+<span class="s1">) -&gt; str:</span>
+    <span class="s1">kw.pop(</span><span class="s3">&quot;as_key&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">expect(role</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">as_key=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+
+<span class="s2">def </span><span class="s1">expect_col_expression_collection(</span>
+    <span class="s1">role: Type[roles.DDLConstraintColumnRole]</span><span class="s4">,</span>
+    <span class="s1">expressions: Iterable[_DDLColumnArgument]</span><span class="s4">,</span>
+<span class="s1">) -&gt; Iterator[</span>
+    <span class="s1">Tuple[</span>
+        <span class="s1">Union[str</span><span class="s4">, </span><span class="s1">Column[Any]]</span><span class="s4">,</span>
+        <span class="s1">Optional[ColumnClause[Any]]</span><span class="s4">,</span>
+        <span class="s1">Optional[str]</span><span class="s4">,</span>
+        <span class="s1">Optional[Union[Column[Any]</span><span class="s4">, </span><span class="s1">str]]</span><span class="s4">,</span>
+    <span class="s1">]</span>
+<span class="s1">]:</span>
+    <span class="s2">for </span><span class="s1">expr </span><span class="s2">in </span><span class="s1">expressions:</span>
+        <span class="s1">strname = </span><span class="s2">None</span>
+        <span class="s1">column = </span><span class="s2">None</span>
+
+        <span class="s1">resolved: Union[Column[Any]</span><span class="s4">, </span><span class="s1">str] = expect(role</span><span class="s4">, </span><span class="s1">expr)</span>
+        <span class="s2">if </span><span class="s1">isinstance(resolved</span><span class="s4">, </span><span class="s1">str):</span>
+            <span class="s2">assert </span><span class="s1">isinstance(expr</span><span class="s4">, </span><span class="s1">str)</span>
+            <span class="s1">strname = resolved = expr</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">cols: List[Column[Any]] = []</span>
+            <span class="s1">col_append: _TraverseCallableType[Column[Any]] = cols.append</span>
+            <span class="s1">visitors.traverse(resolved</span><span class="s4">, </span><span class="s1">{}</span><span class="s4">, </span><span class="s1">{</span><span class="s3">&quot;column&quot;</span><span class="s1">: col_append})</span>
+            <span class="s2">if </span><span class="s1">cols:</span>
+                <span class="s1">column = cols[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s1">add_element = column </span><span class="s2">if </span><span class="s1">column </span><span class="s2">is not None else </span><span class="s1">strname</span>
+
+        <span class="s2">yield </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">column</span><span class="s4">, </span><span class="s1">strname</span><span class="s4">, </span><span class="s1">add_element</span>
+
+
+<span class="s2">class </span><span class="s1">RoleImpl:</span>
+    <span class="s1">__slots__ = (</span><span class="s3">&quot;_role_class&quot;</span><span class="s4">, </span><span class="s3">&quot;name&quot;</span><span class="s4">, </span><span class="s3">&quot;_use_inspection&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">_post_coercion: Any = </span><span class="s2">None</span>
+    <span class="s1">_resolve_literal_only = </span><span class="s2">False</span>
+    <span class="s1">_skip_clauseelement_for_target_match = </span><span class="s2">False</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">role_class):</span>
+        <span class="s1">self._role_class = role_class</span>
+        <span class="s1">self.name = role_class._role_name</span>
+        <span class="s1">self._use_inspection = issubclass(role_class</span><span class="s4">, </span><span class="s1">roles.UsesInspection)</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+    <span class="s2">def </span><span class="s1">_raise_for_expected(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">resolved: Optional[Any] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">advice: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">code: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">err: Optional[Exception] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; NoReturn:</span>
+        <span class="s2">if </span><span class="s1">resolved </span><span class="s2">is not None and </span><span class="s1">resolved </span><span class="s2">is not </span><span class="s1">element:</span>
+            <span class="s1">got = </span><span class="s3">&quot;%r object resolved from %r object&quot; </span><span class="s1">% (resolved</span><span class="s4">, </span><span class="s1">element)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">got = repr(element)</span>
+
+        <span class="s2">if </span><span class="s1">argname:</span>
+            <span class="s1">msg = </span><span class="s3">&quot;%s expected for argument %r; got %s.&quot; </span><span class="s1">% (</span>
+                <span class="s1">self.name</span><span class="s4">,</span>
+                <span class="s1">argname</span><span class="s4">,</span>
+                <span class="s1">got</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">msg = </span><span class="s3">&quot;%s expected, got %s.&quot; </span><span class="s1">% (self.name</span><span class="s4">, </span><span class="s1">got)</span>
+
+        <span class="s2">if </span><span class="s1">advice:</span>
+            <span class="s1">msg += </span><span class="s3">&quot; &quot; </span><span class="s1">+ advice</span>
+
+        <span class="s2">raise </span><span class="s1">exc.ArgumentError(msg</span><span class="s4">, </span><span class="s1">code=code) </span><span class="s2">from </span><span class="s1">err</span>
+
+
+<span class="s2">class </span><span class="s1">_Deannotate:</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(self</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">from </span><span class="s1">.util </span><span class="s2">import </span><span class="s1">_deep_deannotate</span>
+
+        <span class="s2">return </span><span class="s1">_deep_deannotate(resolved)</span>
+
+
+<span class="s2">class </span><span class="s1">_StringOnly:</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_resolve_literal_only = </span><span class="s2">True</span>
+
+
+<span class="s2">class </span><span class="s1">_ReturnsStringKey(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">str):</span>
+            <span class="s2">return </span><span class="s1">element</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s2">class </span><span class="s1">_ColumnCoercions(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_warn_for_scalar_subquery_coercion(self):</span>
+        <span class="s1">util.warn(</span>
+            <span class="s3">&quot;implicitly coercing SELECT object to scalar subquery; &quot;</span>
+            <span class="s3">&quot;please use the .scalar_subquery() method to produce a scalar &quot;</span>
+            <span class="s3">&quot;subquery.&quot;</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">original_element = element</span>
+        <span class="s2">if not </span><span class="s1">getattr(resolved</span><span class="s4">, </span><span class="s3">&quot;is_clause_element&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">):</span>
+            <span class="s1">self._raise_for_expected(original_element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+        <span class="s2">elif </span><span class="s1">resolved._is_select_base:</span>
+            <span class="s1">self._warn_for_scalar_subquery_coercion()</span>
+            <span class="s2">return </span><span class="s1">resolved.scalar_subquery()</span>
+        <span class="s2">elif </span><span class="s1">resolved._is_from_clause </span><span class="s2">and </span><span class="s1">isinstance(</span>
+            <span class="s1">resolved</span><span class="s4">, </span><span class="s1">selectable.Subquery</span>
+        <span class="s1">):</span>
+            <span class="s1">self._warn_for_scalar_subquery_coercion()</span>
+            <span class="s2">return </span><span class="s1">resolved.element.scalar_subquery()</span>
+        <span class="s2">elif </span><span class="s1">self._role_class.allows_lambda </span><span class="s2">and </span><span class="s1">resolved._is_lambda_element:</span>
+            <span class="s2">return </span><span class="s1">resolved</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(original_element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+
+<span class="s2">def </span><span class="s1">_no_text_coercion(</span>
+    <span class="s1">element: Any</span><span class="s4">,</span>
+    <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+    <span class="s1">exc_cls: Type[exc.SQLAlchemyError] = exc.ArgumentError</span><span class="s4">,</span>
+    <span class="s1">extra: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+    <span class="s1">err: Optional[Exception] = </span><span class="s2">None</span><span class="s4">,</span>
+<span class="s1">) -&gt; NoReturn:</span>
+    <span class="s2">raise </span><span class="s1">exc_cls(</span>
+        <span class="s3">&quot;%(extra)sTextual SQL expression %(expr)r %(argname)sshould be &quot;</span>
+        <span class="s3">&quot;explicitly declared as text(%(expr)r)&quot;</span>
+        <span class="s1">% {</span>
+            <span class="s3">&quot;expr&quot;</span><span class="s1">: util.ellipses_string(element)</span><span class="s4">,</span>
+            <span class="s3">&quot;argname&quot;</span><span class="s1">: </span><span class="s3">&quot;for argument %s&quot; </span><span class="s1">% (argname</span><span class="s4">,</span><span class="s1">) </span><span class="s2">if </span><span class="s1">argname </span><span class="s2">else </span><span class="s3">&quot;&quot;</span><span class="s4">,</span>
+            <span class="s3">&quot;extra&quot;</span><span class="s1">: </span><span class="s3">&quot;%s &quot; </span><span class="s1">% extra </span><span class="s2">if </span><span class="s1">extra </span><span class="s2">else </span><span class="s3">&quot;&quot;</span><span class="s4">,</span>
+        <span class="s1">}</span>
+    <span class="s1">) </span><span class="s2">from </span><span class="s1">err</span>
+
+
+<span class="s2">class </span><span class="s1">_NoTextCoercion(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">str) </span><span class="s2">and </span><span class="s1">issubclass(</span>
+            <span class="s1">elements.TextClause</span><span class="s4">, </span><span class="s1">self._role_class</span>
+        <span class="s1">):</span>
+            <span class="s1">_no_text_coercion(element</span><span class="s4">, </span><span class="s1">argname)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname)</span>
+
+
+<span class="s2">class </span><span class="s1">_CoerceLiterals(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_coerce_consts = </span><span class="s2">False</span>
+    <span class="s1">_coerce_star = </span><span class="s2">False</span>
+    <span class="s1">_coerce_numerics = </span><span class="s2">False</span>
+
+    <span class="s2">def </span><span class="s1">_text_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">_no_text_coercion(element</span><span class="s4">, </span><span class="s1">argname)</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">str):</span>
+            <span class="s2">if </span><span class="s1">self._coerce_star </span><span class="s2">and </span><span class="s1">element == </span><span class="s3">&quot;*&quot;</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">elements.ColumnClause(</span><span class="s3">&quot;*&quot;</span><span class="s4">, </span><span class="s1">is_literal=</span><span class="s2">True</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">self._text_coercion(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+        <span class="s2">if </span><span class="s1">self._coerce_consts:</span>
+            <span class="s2">if </span><span class="s1">element </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">elements.Null()</span>
+            <span class="s2">elif </span><span class="s1">element </span><span class="s2">is False</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">elements.False_()</span>
+            <span class="s2">elif </span><span class="s1">element </span><span class="s2">is True</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">elements.True_()</span>
+
+        <span class="s2">if </span><span class="s1">self._coerce_numerics </span><span class="s2">and </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">(numbers.Number)):</span>
+            <span class="s2">return </span><span class="s1">elements.ColumnClause(str(element)</span><span class="s4">, </span><span class="s1">is_literal=</span><span class="s2">True</span><span class="s1">)</span>
+
+        <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname)</span>
+
+
+<span class="s2">class </span><span class="s1">LiteralValueImpl(RoleImpl):</span>
+    <span class="s1">_resolve_literal_only = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element</span><span class="s4">,</span>
+        <span class="s1">resolved</span><span class="s4">,</span>
+        <span class="s1">argname=</span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">type_=</span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">literal_execute=</span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">**kw</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s2">if not </span><span class="s1">_is_literal(resolved):</span>
+            <span class="s1">self._raise_for_expected(</span>
+                <span class="s1">element</span><span class="s4">, </span><span class="s1">resolved=resolved</span><span class="s4">, </span><span class="s1">argname=argname</span><span class="s4">, </span><span class="s1">**kw</span>
+            <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">elements.BindParameter(</span>
+            <span class="s2">None</span><span class="s4">,</span>
+            <span class="s1">element</span><span class="s4">,</span>
+            <span class="s1">type_=type_</span><span class="s4">,</span>
+            <span class="s1">unique=</span><span class="s2">True</span><span class="s4">,</span>
+            <span class="s1">literal_execute=literal_execute</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s2">class </span><span class="s1">_SelectIsNotFrom(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_raise_for_expected(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">resolved: Optional[Any] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">advice: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">code: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">err: Optional[Exception] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; NoReturn:</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s2">not </span><span class="s1">advice</span>
+            <span class="s2">and </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">roles.SelectStatementRole)</span>
+            <span class="s2">or </span><span class="s1">isinstance(resolved</span><span class="s4">, </span><span class="s1">roles.SelectStatementRole)</span>
+        <span class="s1">):</span>
+            <span class="s1">advice = (</span>
+                <span class="s3">&quot;To create a &quot;</span>
+                <span class="s3">&quot;FROM clause from a %s object, use the .subquery() method.&quot;</span>
+                <span class="s1">% (resolved.__class__ </span><span class="s2">if </span><span class="s1">resolved </span><span class="s2">is not None else </span><span class="s1">element</span><span class="s4">,</span><span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">code = </span><span class="s3">&quot;89ve&quot;</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">code = </span><span class="s2">None</span>
+
+        <span class="s1">super()._raise_for_expected(</span>
+            <span class="s1">element</span><span class="s4">,</span>
+            <span class="s1">argname=argname</span><span class="s4">,</span>
+            <span class="s1">resolved=resolved</span><span class="s4">,</span>
+            <span class="s1">advice=advice</span><span class="s4">,</span>
+            <span class="s1">code=code</span><span class="s4">,</span>
+            <span class="s1">err=err</span><span class="s4">,</span>
+            <span class="s1">**kw</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s0"># never reached</span>
+        <span class="s2">assert False</span>
+
+
+<span class="s2">class </span><span class="s1">HasCacheKeyImpl(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">HasCacheKey):</span>
+            <span class="s2">return </span><span class="s1">element</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s2">class </span><span class="s1">ExecutableOptionImpl(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">ExecutableOption):</span>
+            <span class="s2">return </span><span class="s1">element</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s2">class </span><span class="s1">ExpressionElementImpl(_ColumnCoercions</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">name=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">type_=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">is_crud=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">element </span><span class="s2">is None</span>
+            <span class="s2">and not </span><span class="s1">is_crud</span>
+            <span class="s2">and </span><span class="s1">(type_ </span><span class="s2">is None or not </span><span class="s1">type_.should_evaluate_none)</span>
+        <span class="s1">):</span>
+            <span class="s0"># TODO: there's no test coverage now for the</span>
+            <span class="s0"># &quot;should_evaluate_none&quot; part of this, as outside of &quot;crud&quot; this</span>
+            <span class="s0"># codepath is not normally used except in some special cases</span>
+            <span class="s2">return </span><span class="s1">elements.Null()</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">elements.BindParameter(</span>
+                    <span class="s1">name</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">type_</span><span class="s4">, </span><span class="s1">unique=</span><span class="s2">True</span><span class="s4">, </span><span class="s1">_is_crud=is_crud</span>
+                <span class="s1">)</span>
+            <span class="s2">except </span><span class="s1">exc.ArgumentError </span><span class="s2">as </span><span class="s1">err:</span>
+                <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">err=err)</span>
+
+    <span class="s2">def </span><span class="s1">_raise_for_expected(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">resolved=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s0"># select uses implicit coercion with warning instead of raising</span>
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">selectable.Values):</span>
+            <span class="s1">advice = (</span>
+                <span class="s3">&quot;To create a column expression from a VALUES clause, &quot;</span>
+                <span class="s3">&quot;use the .scalar_values() method.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s2">elif </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">roles.AnonymizedFromClauseRole):</span>
+            <span class="s1">advice = (</span>
+                <span class="s3">&quot;To create a column expression from a FROM clause row &quot;</span>
+                <span class="s3">&quot;as a whole, use the .table_valued() method.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">advice = </span><span class="s2">None</span>
+
+        <span class="s2">return </span><span class="s1">super()._raise_for_expected(</span>
+            <span class="s1">element</span><span class="s4">, </span><span class="s1">argname=argname</span><span class="s4">, </span><span class="s1">resolved=resolved</span><span class="s4">, </span><span class="s1">advice=advice</span><span class="s4">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">BinaryElementImpl(ExpressionElementImpl</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(  </span><span class="s0"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">expr</span><span class="s4">,</span>
+        <span class="s1">operator</span><span class="s4">,</span>
+        <span class="s1">bindparam_type=</span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">argname=</span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">expr._bind_param(operator</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">type_=bindparam_type)</span>
+        <span class="s2">except </span><span class="s1">exc.ArgumentError </span><span class="s2">as </span><span class="s1">err:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">err=err)</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(self</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">expr</span><span class="s4">, </span><span class="s1">bindparam_type=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">resolved.type._isnull </span><span class="s2">and not </span><span class="s1">expr.type._isnull:</span>
+            <span class="s1">resolved = resolved._with_binary_element_type(</span>
+                <span class="s1">bindparam_type </span><span class="s2">if </span><span class="s1">bindparam_type </span><span class="s2">is not None else </span><span class="s1">expr.type</span>
+            <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">resolved</span>
+
+
+<span class="s2">class </span><span class="s1">InElementImpl(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">resolved._is_from_clause:</span>
+            <span class="s2">if </span><span class="s1">(</span>
+                <span class="s1">isinstance(resolved</span><span class="s4">, </span><span class="s1">selectable.Alias)</span>
+                <span class="s2">and </span><span class="s1">resolved.element._is_select_base</span>
+            <span class="s1">):</span>
+                <span class="s1">self._warn_for_implicit_coercion(resolved)</span>
+                <span class="s2">return </span><span class="s1">self._post_coercion(resolved.element</span><span class="s4">, </span><span class="s1">**kw)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self._warn_for_implicit_coercion(resolved)</span>
+                <span class="s2">return </span><span class="s1">self._post_coercion(resolved.select()</span><span class="s4">, </span><span class="s1">**kw)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+    <span class="s2">def </span><span class="s1">_warn_for_implicit_coercion(self</span><span class="s4">, </span><span class="s1">elem):</span>
+        <span class="s1">util.warn(</span>
+            <span class="s3">&quot;Coercing %s object into a select() for use in IN(); &quot;</span>
+            <span class="s3">&quot;please pass a select() construct explicitly&quot;</span>
+            <span class="s1">% (elem.__class__.__name__)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s3">&quot;sqlalchemy.sql.elements&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">expr</span><span class="s4">, </span><span class="s1">operator</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">util.is_non_string_iterable(element):</span>
+            <span class="s1">non_literal_expressions: Dict[</span>
+                <span class="s1">Optional[ColumnElement[Any]]</span><span class="s4">,</span>
+                <span class="s1">ColumnElement[Any]</span><span class="s4">,</span>
+            <span class="s1">] = {}</span>
+            <span class="s1">element = list(element)</span>
+            <span class="s2">for </span><span class="s1">o </span><span class="s2">in </span><span class="s1">element:</span>
+                <span class="s2">if not </span><span class="s1">_is_literal(o):</span>
+                    <span class="s2">if not </span><span class="s1">isinstance(</span>
+                        <span class="s1">o</span><span class="s4">, </span><span class="s1">util.preloaded.sql_elements.ColumnElement</span>
+                    <span class="s1">):</span>
+                        <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">non_literal_expressions[o] = o</span>
+                <span class="s2">elif </span><span class="s1">o </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s1">non_literal_expressions[o] = elements.Null()</span>
+
+            <span class="s2">if </span><span class="s1">non_literal_expressions:</span>
+                <span class="s2">return </span><span class="s1">elements.ClauseList(</span>
+                    <span class="s1">*[</span>
+                        <span class="s1">(</span>
+                            <span class="s1">non_literal_expressions[o]</span>
+                            <span class="s2">if </span><span class="s1">o </span><span class="s2">in </span><span class="s1">non_literal_expressions</span>
+                            <span class="s2">else </span><span class="s1">expr._bind_param(operator</span><span class="s4">, </span><span class="s1">o)</span>
+                        <span class="s1">)</span>
+                        <span class="s2">for </span><span class="s1">o </span><span class="s2">in </span><span class="s1">element</span>
+                    <span class="s1">]</span>
+                <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">expr._bind_param(operator</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">expanding=</span><span class="s2">True</span><span class="s1">)</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">expr</span><span class="s4">, </span><span class="s1">operator</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">element._is_select_base:</span>
+            <span class="s0"># for IN, we are doing scalar_subquery() coercion without</span>
+            <span class="s0"># a warning</span>
+            <span class="s2">return </span><span class="s1">element.scalar_subquery()</span>
+        <span class="s2">elif </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">elements.ClauseList):</span>
+            <span class="s2">assert not </span><span class="s1">len(element.clauses) == </span><span class="s6">0</span>
+            <span class="s2">return </span><span class="s1">element.self_group(against=operator)</span>
+
+        <span class="s2">elif </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">elements.BindParameter):</span>
+            <span class="s1">element = element._clone(maintain_key=</span><span class="s2">True</span><span class="s1">)</span>
+            <span class="s1">element.expanding = </span><span class="s2">True</span>
+            <span class="s1">element.expand_op = operator</span>
+
+            <span class="s2">return </span><span class="s1">element</span>
+        <span class="s2">elif </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">selectable.Values):</span>
+            <span class="s2">return </span><span class="s1">element.scalar_values()</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s2">class </span><span class="s1">OnClauseImpl(_ColumnCoercions</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_coerce_consts = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">self._raise_for_expected(element)</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(self</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">original_element=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s0"># this is a hack right now as we want to use coercion on an</span>
+        <span class="s0"># ORM InstrumentedAttribute, but we want to return the object</span>
+        <span class="s0"># itself if it is one, not its clause element.</span>
+        <span class="s0"># ORM context _join and _legacy_join() would need to be improved</span>
+        <span class="s0"># to look for annotations in a clause element form.</span>
+        <span class="s2">if </span><span class="s1">isinstance(original_element</span><span class="s4">, </span><span class="s1">roles.JoinTargetRole):</span>
+            <span class="s2">return </span><span class="s1">original_element</span>
+        <span class="s2">return </span><span class="s1">resolved</span>
+
+
+<span class="s2">class </span><span class="s1">WhereHavingImpl(_CoerceLiterals</span><span class="s4">, </span><span class="s1">_ColumnCoercions</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_coerce_consts = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_text_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">_no_text_coercion(element</span><span class="s4">, </span><span class="s1">argname)</span>
+
+
+<span class="s2">class </span><span class="s1">StatementOptionImpl(_CoerceLiterals</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_coerce_consts = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_text_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">elements.TextClause(element)</span>
+
+
+<span class="s2">class </span><span class="s1">ColumnArgumentImpl(_NoTextCoercion</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">ColumnArgumentOrKeyImpl(_ReturnsStringKey</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">StrAsPlainColumnImpl(_CoerceLiterals</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_text_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">elements.ColumnClause(element)</span>
+
+
+<span class="s2">class </span><span class="s1">ByOfImpl(_CoerceLiterals</span><span class="s4">, </span><span class="s1">_ColumnCoercions</span><span class="s4">, </span><span class="s1">RoleImpl</span><span class="s4">, </span><span class="s1">roles.ByOfRole):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_coerce_consts = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_text_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">return </span><span class="s1">elements._textual_label_reference(element)</span>
+
+
+<span class="s2">class </span><span class="s1">OrderByImpl(ByOfImpl</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(self</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">isinstance(resolved</span><span class="s4">, </span><span class="s1">self._role_class)</span>
+            <span class="s2">and </span><span class="s1">resolved._order_by_label_element </span><span class="s2">is not None</span>
+        <span class="s1">):</span>
+            <span class="s2">return </span><span class="s1">elements._label_reference(resolved)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">resolved</span>
+
+
+<span class="s2">class </span><span class="s1">GroupByImpl(ByOfImpl</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">is_from_clause(resolved):</span>
+            <span class="s2">return </span><span class="s1">elements.ClauseList(*resolved.c)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">resolved</span>
+
+
+<span class="s2">class </span><span class="s1">DMLColumnImpl(_ReturnsStringKey</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">as_key=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">as_key:</span>
+            <span class="s2">return </span><span class="s1">element.key</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s2">class </span><span class="s1">ConstExprImpl(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">element </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">elements.Null()</span>
+        <span class="s2">elif </span><span class="s1">element </span><span class="s2">is False</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">elements.False_()</span>
+        <span class="s2">elif </span><span class="s1">element </span><span class="s2">is True</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">elements.True_()</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname)</span>
+
+
+<span class="s2">class </span><span class="s1">TruncatedLabelImpl(_StringOnly</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">str):</span>
+            <span class="s2">return </span><span class="s1">resolved</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s5">&quot;&quot;&quot;coerce the given value to :class:`._truncated_label`. 
+ 
+        Existing :class:`._truncated_label` and 
+        :class:`._anonymous_label` objects are passed 
+        unchanged. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">elements._truncated_label):</span>
+            <span class="s2">return </span><span class="s1">element</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">elements._truncated_label(element)</span>
+
+
+<span class="s2">class </span><span class="s1">DDLExpressionImpl(_Deannotate</span><span class="s4">, </span><span class="s1">_CoerceLiterals</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_coerce_consts = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_text_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s0"># see #5754 for why we can't easily deprecate this coercion.</span>
+        <span class="s0"># essentially expressions like postgresql_where would have to be</span>
+        <span class="s0"># text() as they come back from reflection and we don't want to</span>
+        <span class="s0"># have text() elements wired into the inspection dictionaries.</span>
+        <span class="s2">return </span><span class="s1">elements.TextClause(element)</span>
+
+
+<span class="s2">class </span><span class="s1">DDLConstraintColumnImpl(_Deannotate</span><span class="s4">, </span><span class="s1">_ReturnsStringKey</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">DDLReferredColumnImpl(DDLConstraintColumnImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">LimitOffsetImpl(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">resolved </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(  </span><span class="s0"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">type_</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">element </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">value = util.asint(element)</span>
+            <span class="s2">return </span><span class="s1">selectable._OffsetLimitParam(</span>
+                <span class="s1">name</span><span class="s4">, </span><span class="s1">value</span><span class="s4">, </span><span class="s1">type_=type_</span><span class="s4">, </span><span class="s1">unique=</span><span class="s2">True</span>
+            <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">LabeledColumnExprImpl(ExpressionElementImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">isinstance(resolved</span><span class="s4">, </span><span class="s1">roles.ExpressionElementRole):</span>
+            <span class="s2">return </span><span class="s1">resolved.label(</span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">new = super()._implicit_coercions(</span>
+                <span class="s1">element</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">argname=argname</span><span class="s4">, </span><span class="s1">**kw</span>
+            <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">isinstance(new</span><span class="s4">, </span><span class="s1">roles.ExpressionElementRole):</span>
+                <span class="s2">return </span><span class="s1">new.label(</span><span class="s2">None</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+
+<span class="s2">class </span><span class="s1">ColumnsClauseImpl(_SelectIsNotFrom</span><span class="s4">, </span><span class="s1">_CoerceLiterals</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_coerce_consts = </span><span class="s2">True</span>
+    <span class="s1">_coerce_numerics = </span><span class="s2">True</span>
+    <span class="s1">_coerce_star = </span><span class="s2">True</span>
+
+    <span class="s1">_guess_straight_column = re.compile(</span><span class="s3">r&quot;^\w\S*$&quot;</span><span class="s4">, </span><span class="s1">re.I)</span>
+
+    <span class="s2">def </span><span class="s1">_raise_for_expected(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">resolved=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">advice=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">if not </span><span class="s1">advice </span><span class="s2">and </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">list):</span>
+            <span class="s1">advice = (</span>
+                <span class="s3">f&quot;Did you mean to say select(&quot;</span>
+                <span class="s3">f&quot;</span><span class="s7">{</span><span class="s3">', '</span><span class="s1">.join(repr(e) </span><span class="s2">for </span><span class="s1">e </span><span class="s2">in </span><span class="s1">element)</span><span class="s7">}</span><span class="s3">)?&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">super()._raise_for_expected(</span>
+            <span class="s1">element</span><span class="s4">, </span><span class="s1">argname=argname</span><span class="s4">, </span><span class="s1">resolved=resolved</span><span class="s4">, </span><span class="s1">advice=advice</span><span class="s4">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_text_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">element = str(element)</span>
+
+        <span class="s1">guess_is_literal = </span><span class="s2">not </span><span class="s1">self._guess_straight_column.match(element)</span>
+        <span class="s2">raise </span><span class="s1">exc.ArgumentError(</span>
+            <span class="s3">&quot;Textual column expression %(column)r %(argname)sshould be &quot;</span>
+            <span class="s3">&quot;explicitly declared with text(%(column)r), &quot;</span>
+            <span class="s3">&quot;or use %(literal_column)s(%(column)r) &quot;</span>
+            <span class="s3">&quot;for more specificity&quot;</span>
+            <span class="s1">% {</span>
+                <span class="s3">&quot;column&quot;</span><span class="s1">: util.ellipses_string(element)</span><span class="s4">,</span>
+                <span class="s3">&quot;argname&quot;</span><span class="s1">: </span><span class="s3">&quot;for argument %s&quot; </span><span class="s1">% (argname</span><span class="s4">,</span><span class="s1">) </span><span class="s2">if </span><span class="s1">argname </span><span class="s2">else </span><span class="s3">&quot;&quot;</span><span class="s4">,</span>
+                <span class="s3">&quot;literal_column&quot;</span><span class="s1">: (</span>
+                    <span class="s3">&quot;literal_column&quot; </span><span class="s2">if </span><span class="s1">guess_is_literal </span><span class="s2">else </span><span class="s3">&quot;column&quot;</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">}</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">ReturnsRowsImpl(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">StatementImpl(_CoerceLiterals</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">original_element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">resolved </span><span class="s2">is not </span><span class="s1">original_element </span><span class="s2">and not </span><span class="s1">isinstance(</span>
+            <span class="s1">original_element</span><span class="s4">, </span><span class="s1">str</span>
+        <span class="s1">):</span>
+            <span class="s0"># use same method as Connection uses; this will later raise</span>
+            <span class="s0"># ObjectNotExecutableError</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">original_element._execute_on_connection</span>
+            <span class="s2">except </span><span class="s1">AttributeError:</span>
+                <span class="s1">util.warn_deprecated(</span>
+                    <span class="s3">&quot;Object %r should not be used directly in a SQL statement &quot;</span>
+                    <span class="s3">&quot;context, such as passing to methods such as &quot;</span>
+                    <span class="s3">&quot;session.execute().  This usage will be disallowed in a &quot;</span>
+                    <span class="s3">&quot;future release.  &quot;</span>
+                    <span class="s3">&quot;Please use Core select() / update() / delete() etc. &quot;</span>
+                    <span class="s3">&quot;with Session.execute() and other statement execution &quot;</span>
+                    <span class="s3">&quot;methods.&quot; </span><span class="s1">% original_element</span><span class="s4">,</span>
+                    <span class="s3">&quot;1.4&quot;</span><span class="s4">,</span>
+                <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">resolved</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">resolved._is_lambda_element:</span>
+            <span class="s2">return </span><span class="s1">resolved</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">super()._implicit_coercions(</span>
+                <span class="s1">element</span><span class="s4">, </span><span class="s1">resolved</span><span class="s4">, </span><span class="s1">argname=argname</span><span class="s4">, </span><span class="s1">**kw</span>
+            <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">SelectStatementImpl(_NoTextCoercion</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">resolved._is_text_clause:</span>
+            <span class="s2">return </span><span class="s1">resolved.columns()</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+
+<span class="s2">class </span><span class="s1">HasCTEImpl(ReturnsRowsImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">IsCTEImpl(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s2">class </span><span class="s1">JoinTargetImpl(RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_skip_clauseelement_for_target_match = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_literal_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname)</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">legacy: bool = </span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">roles.JoinTargetRole):</span>
+            <span class="s0"># note that this codepath no longer occurs as of</span>
+            <span class="s0"># #6550, unless JoinTargetImpl._skip_clauseelement_for_target_match</span>
+            <span class="s0"># were set to False.</span>
+            <span class="s2">return </span><span class="s1">element</span>
+        <span class="s2">elif </span><span class="s1">legacy </span><span class="s2">and </span><span class="s1">resolved._is_select_base:</span>
+            <span class="s1">util.warn_deprecated(</span>
+                <span class="s3">&quot;Implicit coercion of SELECT and textual SELECT &quot;</span>
+                <span class="s3">&quot;constructs into FROM clauses is deprecated; please call &quot;</span>
+                <span class="s3">&quot;.subquery() on any Core select or ORM Query object in &quot;</span>
+                <span class="s3">&quot;order to produce a subquery object.&quot;</span><span class="s4">,</span>
+                <span class="s1">version=</span><span class="s3">&quot;1.4&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s0"># TODO: doing _implicit_subquery here causes tests to fail,</span>
+            <span class="s0"># how was this working before?  probably that ORM</span>
+            <span class="s0"># join logic treated it as a select and subquery would happen</span>
+            <span class="s0"># in _ORMJoin-&gt;Join</span>
+            <span class="s2">return </span><span class="s1">resolved</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+
+<span class="s2">class </span><span class="s1">FromClauseImpl(_SelectIsNotFrom</span><span class="s4">, </span><span class="s1">_NoTextCoercion</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">explicit_subquery: bool = </span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">allow_select: bool = </span><span class="s2">True</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">resolved._is_select_base:</span>
+            <span class="s2">if </span><span class="s1">explicit_subquery:</span>
+                <span class="s2">return </span><span class="s1">resolved.subquery()</span>
+            <span class="s2">elif </span><span class="s1">allow_select:</span>
+                <span class="s1">util.warn_deprecated(</span>
+                    <span class="s3">&quot;Implicit coercion of SELECT and textual SELECT &quot;</span>
+                    <span class="s3">&quot;constructs into FROM clauses is deprecated; please call &quot;</span>
+                    <span class="s3">&quot;.subquery() on any Core select or ORM Query object in &quot;</span>
+                    <span class="s3">&quot;order to produce a subquery object.&quot;</span><span class="s4">,</span>
+                    <span class="s1">version=</span><span class="s3">&quot;1.4&quot;</span><span class="s4">,</span>
+                <span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">resolved._implicit_subquery</span>
+        <span class="s2">elif </span><span class="s1">resolved._is_text_clause:</span>
+            <span class="s2">return </span><span class="s1">resolved</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">deannotate=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">deannotate:</span>
+            <span class="s2">return </span><span class="s1">element._deannotate()</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s2">class </span><span class="s1">StrictFromClauseImpl(FromClauseImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">*</span><span class="s4">,</span>
+        <span class="s1">allow_select: bool = </span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">resolved._is_select_base </span><span class="s2">and </span><span class="s1">allow_select:</span>
+            <span class="s1">util.warn_deprecated(</span>
+                <span class="s3">&quot;Implicit coercion of SELECT and textual SELECT constructs &quot;</span>
+                <span class="s3">&quot;into FROM clauses is deprecated; please call .subquery() &quot;</span>
+                <span class="s3">&quot;on any Core select or ORM Query object in order to produce a &quot;</span>
+                <span class="s3">&quot;subquery object.&quot;</span><span class="s4">,</span>
+                <span class="s1">version=</span><span class="s3">&quot;1.4&quot;</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s2">return </span><span class="s1">resolved._implicit_subquery</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+
+<span class="s2">class </span><span class="s1">AnonymizedFromClauseImpl(StrictFromClauseImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">*</span><span class="s4">, </span><span class="s1">flat=</span><span class="s2">False</span><span class="s4">, </span><span class="s1">name=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">assert </span><span class="s1">name </span><span class="s2">is None</span>
+
+        <span class="s2">return </span><span class="s1">element._anonymous_fromclause(flat=flat)</span>
+
+
+<span class="s2">class </span><span class="s1">DMLTableImpl(_SelectIsNotFrom</span><span class="s4">, </span><span class="s1">_NoTextCoercion</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_post_coercion(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s3">&quot;dml_table&quot; </span><span class="s2">in </span><span class="s1">element._annotations:</span>
+            <span class="s2">return </span><span class="s1">element._annotations[</span><span class="s3">&quot;dml_table&quot;</span><span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">element</span>
+
+
+<span class="s2">class </span><span class="s1">DMLSelectImpl(_NoTextCoercion</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_implicit_coercions(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">element: Any</span><span class="s4">,</span>
+        <span class="s1">resolved: Any</span><span class="s4">,</span>
+        <span class="s1">argname: Optional[str] = </span><span class="s2">None</span><span class="s4">,</span>
+        <span class="s1">**kw: Any</span><span class="s4">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s2">if </span><span class="s1">resolved._is_from_clause:</span>
+            <span class="s2">if </span><span class="s1">(</span>
+                <span class="s1">isinstance(resolved</span><span class="s4">, </span><span class="s1">selectable.Alias)</span>
+                <span class="s2">and </span><span class="s1">resolved.element._is_select_base</span>
+            <span class="s1">):</span>
+                <span class="s2">return </span><span class="s1">resolved.element</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">resolved.select()</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_expected(element</span><span class="s4">, </span><span class="s1">argname</span><span class="s4">, </span><span class="s1">resolved)</span>
+
+
+<span class="s2">class </span><span class="s1">CompoundElementImpl(_NoTextCoercion</span><span class="s4">, </span><span class="s1">RoleImpl):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_raise_for_expected(self</span><span class="s4">, </span><span class="s1">element</span><span class="s4">, </span><span class="s1">argname=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">resolved=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">if </span><span class="s1">isinstance(element</span><span class="s4">, </span><span class="s1">roles.FromClauseRole):</span>
+            <span class="s2">if </span><span class="s1">element._is_subquery:</span>
+                <span class="s1">advice = (</span>
+                    <span class="s3">&quot;Use the plain select() object without &quot;</span>
+                    <span class="s3">&quot;calling .subquery() or .alias().&quot;</span>
+                <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">advice = (</span>
+                    <span class="s3">&quot;To SELECT from any FROM clause, use the .select() method.&quot;</span>
+                <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">advice = </span><span class="s2">None</span>
+        <span class="s2">return </span><span class="s1">super()._raise_for_expected(</span>
+            <span class="s1">element</span><span class="s4">, </span><span class="s1">argname=argname</span><span class="s4">, </span><span class="s1">resolved=resolved</span><span class="s4">, </span><span class="s1">advice=advice</span><span class="s4">, </span><span class="s1">**kw</span>
+        <span class="s1">)</span>
+
+
+<span class="s1">_impl_lookup = {}</span>
+
+
+<span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">dir(roles):</span>
+    <span class="s1">cls = getattr(roles</span><span class="s4">, </span><span class="s1">name)</span>
+    <span class="s2">if </span><span class="s1">name.endswith(</span><span class="s3">&quot;Role&quot;</span><span class="s1">):</span>
+        <span class="s1">name = name.replace(</span><span class="s3">&quot;Role&quot;</span><span class="s4">, </span><span class="s3">&quot;Impl&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">name </span><span class="s2">in </span><span class="s1">globals():</span>
+            <span class="s1">impl = globals()[name](cls)</span>
+            <span class="s1">_impl_lookup[cls] = impl</span>
+
+<span class="s2">if not </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s1">ee_impl = _impl_lookup[roles.ExpressionElementRole]</span>
+
+    <span class="s2">for </span><span class="s1">py_type </span><span class="s2">in </span><span class="s1">(int</span><span class="s4">, </span><span class="s1">bool</span><span class="s4">, </span><span class="s1">str</span><span class="s4">, </span><span class="s1">float):</span>
+        <span class="s1">_impl_lookup[roles.ExpressionElementRole[py_type]] = ee_impl</span>
+</pre>
+</body>
+</html>

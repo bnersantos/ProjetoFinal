@@ -1,0 +1,2147 @@
+<html>
+<head>
+<title>bulk_persistence.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+bulk_persistence.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/bulk_persistence.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">&quot;&quot;&quot;additional ORM persistence classes related to &quot;bulk&quot; operations, 
+specifically outside of the flush() process. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">context</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">evaluator</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">orm_exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">loading</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">persistence</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">NO_VALUE</span>
+<span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">AbstractORMCompileState</span>
+<span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">FromStatement</span>
+<span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">ORMFromStatementCompileState</span>
+<span class="s3">from </span><span class="s1">.context </span><span class="s3">import </span><span class="s1">QueryContext</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">sa_exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..engine </span><span class="s3">import </span><span class="s1">Dialect</span>
+<span class="s3">from </span><span class="s1">..engine </span><span class="s3">import </span><span class="s1">result </span><span class="s3">as </span><span class="s1">_result</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">coercions</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">dml</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">expression</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">roles</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">select</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">sqltypes</span>
+<span class="s3">from </span><span class="s1">..sql.base </span><span class="s3">import </span><span class="s1">_entity_namespace_key</span>
+<span class="s3">from </span><span class="s1">..sql.base </span><span class="s3">import </span><span class="s1">CompileState</span>
+<span class="s3">from </span><span class="s1">..sql.base </span><span class="s3">import </span><span class="s1">Options</span>
+<span class="s3">from </span><span class="s1">..sql.dml </span><span class="s3">import </span><span class="s1">DeleteDMLState</span>
+<span class="s3">from </span><span class="s1">..sql.dml </span><span class="s3">import </span><span class="s1">InsertDMLState</span>
+<span class="s3">from </span><span class="s1">..sql.dml </span><span class="s3">import </span><span class="s1">UpdateDMLState</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">EMPTY_DICT</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">DMLStrategyArgument</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">OrmExecuteOptionsParameter</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">SynchronizeSessionArgument</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">_BindArguments</span>
+    <span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">ORMExecuteState</span>
+    <span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">Session</span>
+    <span class="s3">from </span><span class="s1">.session </span><span class="s3">import </span><span class="s1">SessionTransaction</span>
+    <span class="s3">from </span><span class="s1">.state </span><span class="s3">import </span><span class="s1">InstanceState</span>
+    <span class="s3">from </span><span class="s1">..engine </span><span class="s3">import </span><span class="s1">Connection</span>
+    <span class="s3">from </span><span class="s1">..engine </span><span class="s3">import </span><span class="s1">cursor</span>
+    <span class="s3">from </span><span class="s1">..engine.interfaces </span><span class="s3">import </span><span class="s1">_CoreAnyExecuteParams</span>
+
+<span class="s1">_O = TypeVar(</span><span class="s4">&quot;_O&quot;</span><span class="s5">, </span><span class="s1">bound=object)</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_bulk_insert(</span>
+    <span class="s1">mapper: Mapper[_O]</span><span class="s5">,</span>
+    <span class="s1">mappings: Union[Iterable[InstanceState[_O]]</span><span class="s5">, </span><span class="s1">Iterable[Dict[str</span><span class="s5">, </span><span class="s1">Any]]]</span><span class="s5">,</span>
+    <span class="s1">session_transaction: SessionTransaction</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">isstates: bool</span><span class="s5">,</span>
+    <span class="s1">return_defaults: bool</span><span class="s5">,</span>
+    <span class="s1">render_nulls: bool</span><span class="s5">,</span>
+    <span class="s1">use_orm_insert_stmt: Literal[</span><span class="s3">None</span><span class="s1">] = ...</span><span class="s5">,</span>
+    <span class="s1">execution_options: Optional[OrmExecuteOptionsParameter] = ...</span><span class="s5">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_bulk_insert(</span>
+    <span class="s1">mapper: Mapper[_O]</span><span class="s5">,</span>
+    <span class="s1">mappings: Union[Iterable[InstanceState[_O]]</span><span class="s5">, </span><span class="s1">Iterable[Dict[str</span><span class="s5">, </span><span class="s1">Any]]]</span><span class="s5">,</span>
+    <span class="s1">session_transaction: SessionTransaction</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">isstates: bool</span><span class="s5">,</span>
+    <span class="s1">return_defaults: bool</span><span class="s5">,</span>
+    <span class="s1">render_nulls: bool</span><span class="s5">,</span>
+    <span class="s1">use_orm_insert_stmt: Optional[dml.Insert] = ...</span><span class="s5">,</span>
+    <span class="s1">execution_options: Optional[OrmExecuteOptionsParameter] = ...</span><span class="s5">,</span>
+<span class="s1">) -&gt; cursor.CursorResult[Any]: ...</span>
+
+
+<span class="s3">def </span><span class="s1">_bulk_insert(</span>
+    <span class="s1">mapper: Mapper[_O]</span><span class="s5">,</span>
+    <span class="s1">mappings: Union[Iterable[InstanceState[_O]]</span><span class="s5">, </span><span class="s1">Iterable[Dict[str</span><span class="s5">, </span><span class="s1">Any]]]</span><span class="s5">,</span>
+    <span class="s1">session_transaction: SessionTransaction</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">isstates: bool</span><span class="s5">,</span>
+    <span class="s1">return_defaults: bool</span><span class="s5">,</span>
+    <span class="s1">render_nulls: bool</span><span class="s5">,</span>
+    <span class="s1">use_orm_insert_stmt: Optional[dml.Insert] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">execution_options: Optional[OrmExecuteOptionsParameter] = </span><span class="s3">None</span><span class="s5">,</span>
+<span class="s1">) -&gt; Optional[cursor.CursorResult[Any]]:</span>
+    <span class="s1">base_mapper = mapper.base_mapper</span>
+
+    <span class="s3">if </span><span class="s1">session_transaction.session.connection_callable:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+            <span class="s4">&quot;connection_callable / per-instance sharding &quot;</span>
+            <span class="s4">&quot;not supported in bulk_insert()&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">isstates:</span>
+        <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+            <span class="s1">mappings = cast(Iterable[InstanceState[_O]]</span><span class="s5">, </span><span class="s1">mappings)</span>
+
+        <span class="s3">if </span><span class="s1">return_defaults:</span>
+            <span class="s0"># list of states allows us to attach .key for return_defaults case</span>
+            <span class="s1">states = [(state</span><span class="s5">, </span><span class="s1">state.dict) </span><span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">mappings]</span>
+            <span class="s1">mappings = [dict_ </span><span class="s3">for </span><span class="s1">(state</span><span class="s5">, </span><span class="s1">dict_) </span><span class="s3">in </span><span class="s1">states]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">mappings = [state.dict </span><span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">mappings]</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+            <span class="s1">mappings = cast(Iterable[Dict[str</span><span class="s5">, </span><span class="s1">Any]]</span><span class="s5">, </span><span class="s1">mappings)</span>
+
+        <span class="s3">if </span><span class="s1">return_defaults:</span>
+            <span class="s0"># use dictionaries given, so that newly populated defaults</span>
+            <span class="s0"># can be delivered back to the caller (see #11661). This is **not**</span>
+            <span class="s0"># compatible with other use cases such as a session-executed</span>
+            <span class="s0"># insert() construct, as this will confuse the case of</span>
+            <span class="s0"># insert-per-subclass for joined inheritance cases (see</span>
+            <span class="s0"># test_bulk_statements.py::BulkDMLReturningJoinedInhTest).</span>
+            <span class="s0">#</span>
+            <span class="s0"># So in this conditional, we have **only** called</span>
+            <span class="s0"># session.bulk_insert_mappings() which does not have this</span>
+            <span class="s0"># requirement</span>
+            <span class="s1">mappings = list(mappings)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># for all other cases we need to establish a local dictionary</span>
+            <span class="s0"># so that the incoming dictionaries aren't mutated</span>
+            <span class="s1">mappings = [dict(m) </span><span class="s3">for </span><span class="s1">m </span><span class="s3">in </span><span class="s1">mappings]</span>
+        <span class="s1">_expand_composites(mapper</span><span class="s5">, </span><span class="s1">mappings)</span>
+
+    <span class="s1">connection = session_transaction.connection(base_mapper)</span>
+
+    <span class="s1">return_result: Optional[cursor.CursorResult[Any]] = </span><span class="s3">None</span>
+
+    <span class="s1">mappers_to_run = [</span>
+        <span class="s1">(table</span><span class="s5">, </span><span class="s1">mp)</span>
+        <span class="s3">for </span><span class="s1">table</span><span class="s5">, </span><span class="s1">mp </span><span class="s3">in </span><span class="s1">base_mapper._sorted_tables.items()</span>
+        <span class="s3">if </span><span class="s1">table </span><span class="s3">in </span><span class="s1">mapper._pks_by_table</span>
+    <span class="s1">]</span>
+
+    <span class="s3">if </span><span class="s1">return_defaults:</span>
+        <span class="s0"># not used by new-style bulk inserts, only used for legacy</span>
+        <span class="s1">bookkeeping = </span><span class="s3">True</span>
+    <span class="s3">elif </span><span class="s1">len(mappers_to_run) &gt; </span><span class="s6">1</span><span class="s1">:</span>
+        <span class="s0"># if we have more than one table, mapper to run where we will be</span>
+        <span class="s0"># either horizontally splicing, or copying values between tables,</span>
+        <span class="s0"># we need the &quot;bookkeeping&quot; / deterministic returning order</span>
+        <span class="s1">bookkeeping = </span><span class="s3">True</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">bookkeeping = </span><span class="s3">False</span>
+
+    <span class="s3">for </span><span class="s1">table</span><span class="s5">, </span><span class="s1">super_mapper </span><span class="s3">in </span><span class="s1">mappers_to_run:</span>
+        <span class="s0"># find bindparams in the statement. For bulk, we don't really know if</span>
+        <span class="s0"># a key in the params applies to a different table since we are</span>
+        <span class="s0"># potentially inserting for multiple tables here; looking at the</span>
+        <span class="s0"># bindparam() is a lot more direct.   in most cases this will</span>
+        <span class="s0"># use _generate_cache_key() which is memoized, although in practice</span>
+        <span class="s0"># the ultimate statement that's executed is probably not the same</span>
+        <span class="s0"># object so that memoization might not matter much.</span>
+        <span class="s1">extra_bp_names = (</span>
+            <span class="s1">[</span>
+                <span class="s1">b.key</span>
+                <span class="s3">for </span><span class="s1">b </span><span class="s3">in </span><span class="s1">use_orm_insert_stmt._get_embedded_bindparams()</span>
+                <span class="s3">if </span><span class="s1">b.key </span><span class="s3">in </span><span class="s1">mappings[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s1">]</span>
+            <span class="s3">if </span><span class="s1">use_orm_insert_stmt </span><span class="s3">is not None</span>
+            <span class="s3">else </span><span class="s1">()</span>
+        <span class="s1">)</span>
+
+        <span class="s1">records = (</span>
+            <span class="s1">(</span>
+                <span class="s3">None</span><span class="s5">,</span>
+                <span class="s1">state_dict</span><span class="s5">,</span>
+                <span class="s1">params</span><span class="s5">,</span>
+                <span class="s1">mapper</span><span class="s5">,</span>
+                <span class="s1">connection</span><span class="s5">,</span>
+                <span class="s1">value_params</span><span class="s5">,</span>
+                <span class="s1">has_all_pks</span><span class="s5">,</span>
+                <span class="s1">has_all_defaults</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">for </span><span class="s1">(</span>
+                <span class="s1">state</span><span class="s5">,</span>
+                <span class="s1">state_dict</span><span class="s5">,</span>
+                <span class="s1">params</span><span class="s5">,</span>
+                <span class="s1">mp</span><span class="s5">,</span>
+                <span class="s1">conn</span><span class="s5">,</span>
+                <span class="s1">value_params</span><span class="s5">,</span>
+                <span class="s1">has_all_pks</span><span class="s5">,</span>
+                <span class="s1">has_all_defaults</span><span class="s5">,</span>
+            <span class="s1">) </span><span class="s3">in </span><span class="s1">persistence._collect_insert_commands(</span>
+                <span class="s1">table</span><span class="s5">,</span>
+                <span class="s1">((</span><span class="s3">None</span><span class="s5">, </span><span class="s1">mapping</span><span class="s5">, </span><span class="s1">mapper</span><span class="s5">, </span><span class="s1">connection) </span><span class="s3">for </span><span class="s1">mapping </span><span class="s3">in </span><span class="s1">mappings)</span><span class="s5">,</span>
+                <span class="s1">bulk=</span><span class="s3">True</span><span class="s5">,</span>
+                <span class="s1">return_defaults=bookkeeping</span><span class="s5">,</span>
+                <span class="s1">render_nulls=render_nulls</span><span class="s5">,</span>
+                <span class="s1">include_bulk_keys=extra_bp_names</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s1">result = persistence._emit_insert_statements(</span>
+            <span class="s1">base_mapper</span><span class="s5">,</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">super_mapper</span><span class="s5">,</span>
+            <span class="s1">table</span><span class="s5">,</span>
+            <span class="s1">records</span><span class="s5">,</span>
+            <span class="s1">bookkeeping=bookkeeping</span><span class="s5">,</span>
+            <span class="s1">use_orm_insert_stmt=use_orm_insert_stmt</span><span class="s5">,</span>
+            <span class="s1">execution_options=execution_options</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">use_orm_insert_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">if not </span><span class="s1">use_orm_insert_stmt._returning </span><span class="s3">or </span><span class="s1">return_result </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">return_result = result</span>
+            <span class="s3">elif </span><span class="s1">result.returns_rows:</span>
+                <span class="s3">assert </span><span class="s1">bookkeeping</span>
+                <span class="s1">return_result = return_result.splice_horizontally(result)</span>
+
+    <span class="s3">if </span><span class="s1">return_defaults </span><span class="s3">and </span><span class="s1">isstates:</span>
+        <span class="s1">identity_cls = mapper._identity_class</span>
+        <span class="s1">identity_props = [p.key </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">mapper._identity_key_props]</span>
+        <span class="s3">for </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_ </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s1">state.key = (</span>
+                <span class="s1">identity_cls</span><span class="s5">,</span>
+                <span class="s1">tuple([dict_[key] </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">identity_props])</span><span class="s5">,</span>
+                <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">use_orm_insert_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s3">assert </span><span class="s1">return_result </span><span class="s3">is not None</span>
+        <span class="s3">return </span><span class="s1">return_result</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_bulk_update(</span>
+    <span class="s1">mapper: Mapper[Any]</span><span class="s5">,</span>
+    <span class="s1">mappings: Union[Iterable[InstanceState[_O]]</span><span class="s5">, </span><span class="s1">Iterable[Dict[str</span><span class="s5">, </span><span class="s1">Any]]]</span><span class="s5">,</span>
+    <span class="s1">session_transaction: SessionTransaction</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">isstates: bool</span><span class="s5">,</span>
+    <span class="s1">update_changed_only: bool</span><span class="s5">,</span>
+    <span class="s1">use_orm_update_stmt: Literal[</span><span class="s3">None</span><span class="s1">] = ...</span><span class="s5">,</span>
+    <span class="s1">enable_check_rowcount: bool = </span><span class="s3">True</span><span class="s5">,</span>
+<span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">: ...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s3">def </span><span class="s1">_bulk_update(</span>
+    <span class="s1">mapper: Mapper[Any]</span><span class="s5">,</span>
+    <span class="s1">mappings: Union[Iterable[InstanceState[_O]]</span><span class="s5">, </span><span class="s1">Iterable[Dict[str</span><span class="s5">, </span><span class="s1">Any]]]</span><span class="s5">,</span>
+    <span class="s1">session_transaction: SessionTransaction</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">isstates: bool</span><span class="s5">,</span>
+    <span class="s1">update_changed_only: bool</span><span class="s5">,</span>
+    <span class="s1">use_orm_update_stmt: Optional[dml.Update] = ...</span><span class="s5">,</span>
+    <span class="s1">enable_check_rowcount: bool = </span><span class="s3">True</span><span class="s5">,</span>
+<span class="s1">) -&gt; _result.Result[Any]: ...</span>
+
+
+<span class="s3">def </span><span class="s1">_bulk_update(</span>
+    <span class="s1">mapper: Mapper[Any]</span><span class="s5">,</span>
+    <span class="s1">mappings: Union[Iterable[InstanceState[_O]]</span><span class="s5">, </span><span class="s1">Iterable[Dict[str</span><span class="s5">, </span><span class="s1">Any]]]</span><span class="s5">,</span>
+    <span class="s1">session_transaction: SessionTransaction</span><span class="s5">,</span>
+    <span class="s1">*</span><span class="s5">,</span>
+    <span class="s1">isstates: bool</span><span class="s5">,</span>
+    <span class="s1">update_changed_only: bool</span><span class="s5">,</span>
+    <span class="s1">use_orm_update_stmt: Optional[dml.Update] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">enable_check_rowcount: bool = </span><span class="s3">True</span><span class="s5">,</span>
+<span class="s1">) -&gt; Optional[_result.Result[Any]]:</span>
+    <span class="s1">base_mapper = mapper.base_mapper</span>
+
+    <span class="s1">search_keys = mapper._primary_key_propkeys</span>
+    <span class="s3">if </span><span class="s1">mapper._version_id_prop:</span>
+        <span class="s1">search_keys = {mapper._version_id_prop.key}.union(search_keys)</span>
+
+    <span class="s3">def </span><span class="s1">_changed_dict(mapper</span><span class="s5">, </span><span class="s1">state):</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s1">k: v</span>
+            <span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">state.dict.items()</span>
+            <span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">state.committed_state </span><span class="s3">or </span><span class="s1">k </span><span class="s3">in </span><span class="s1">search_keys</span>
+        <span class="s1">}</span>
+
+    <span class="s3">if </span><span class="s1">isstates:</span>
+        <span class="s3">if </span><span class="s1">update_changed_only:</span>
+            <span class="s1">mappings = [_changed_dict(mapper</span><span class="s5">, </span><span class="s1">state) </span><span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">mappings]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">mappings = [state.dict </span><span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">mappings]</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s1">mappings = [dict(m) </span><span class="s3">for </span><span class="s1">m </span><span class="s3">in </span><span class="s1">mappings]</span>
+        <span class="s1">_expand_composites(mapper</span><span class="s5">, </span><span class="s1">mappings)</span>
+
+    <span class="s3">if </span><span class="s1">session_transaction.session.connection_callable:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+            <span class="s4">&quot;connection_callable / per-instance sharding &quot;</span>
+            <span class="s4">&quot;not supported in bulk_update()&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">connection = session_transaction.connection(base_mapper)</span>
+
+    <span class="s0"># find bindparams in the statement. see _bulk_insert for similar</span>
+    <span class="s0"># notes for the insert case</span>
+    <span class="s1">extra_bp_names = (</span>
+        <span class="s1">[</span>
+            <span class="s1">b.key</span>
+            <span class="s3">for </span><span class="s1">b </span><span class="s3">in </span><span class="s1">use_orm_update_stmt._get_embedded_bindparams()</span>
+            <span class="s3">if </span><span class="s1">b.key </span><span class="s3">in </span><span class="s1">mappings[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s1">]</span>
+        <span class="s3">if </span><span class="s1">use_orm_update_stmt </span><span class="s3">is not None</span>
+        <span class="s3">else </span><span class="s1">()</span>
+    <span class="s1">)</span>
+
+    <span class="s3">for </span><span class="s1">table</span><span class="s5">, </span><span class="s1">super_mapper </span><span class="s3">in </span><span class="s1">base_mapper._sorted_tables.items():</span>
+        <span class="s3">if not </span><span class="s1">mapper.isa(super_mapper) </span><span class="s3">or </span><span class="s1">table </span><span class="s3">not in </span><span class="s1">mapper._pks_by_table:</span>
+            <span class="s3">continue</span>
+
+        <span class="s1">records = persistence._collect_update_commands(</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">table</span><span class="s5">,</span>
+            <span class="s1">(</span>
+                <span class="s1">(</span>
+                    <span class="s3">None</span><span class="s5">,</span>
+                    <span class="s1">mapping</span><span class="s5">,</span>
+                    <span class="s1">mapper</span><span class="s5">,</span>
+                    <span class="s1">connection</span><span class="s5">,</span>
+                    <span class="s1">(</span>
+                        <span class="s1">mapping[mapper._version_id_prop.key]</span>
+                        <span class="s3">if </span><span class="s1">mapper._version_id_prop</span>
+                        <span class="s3">else None</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">mapping </span><span class="s3">in </span><span class="s1">mappings</span>
+            <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">bulk=</span><span class="s3">True</span><span class="s5">,</span>
+            <span class="s1">use_orm_update_stmt=use_orm_update_stmt</span><span class="s5">,</span>
+            <span class="s1">include_bulk_keys=extra_bp_names</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">persistence._emit_update_statements(</span>
+            <span class="s1">base_mapper</span><span class="s5">,</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">super_mapper</span><span class="s5">,</span>
+            <span class="s1">table</span><span class="s5">,</span>
+            <span class="s1">records</span><span class="s5">,</span>
+            <span class="s1">bookkeeping=</span><span class="s3">False</span><span class="s5">,</span>
+            <span class="s1">use_orm_update_stmt=use_orm_update_stmt</span><span class="s5">,</span>
+            <span class="s1">enable_check_rowcount=enable_check_rowcount</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">if </span><span class="s1">use_orm_update_stmt </span><span class="s3">is not None</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">_result.null_result()</span>
+
+
+<span class="s3">def </span><span class="s1">_expand_composites(mapper</span><span class="s5">, </span><span class="s1">mappings):</span>
+    <span class="s1">composite_attrs = mapper.composites</span>
+    <span class="s3">if not </span><span class="s1">composite_attrs:</span>
+        <span class="s3">return</span>
+
+    <span class="s1">composite_keys = set(composite_attrs.keys())</span>
+    <span class="s1">populators = {</span>
+        <span class="s1">key: composite_attrs[key]._populate_composite_bulk_save_mappings_fn()</span>
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">composite_keys</span>
+    <span class="s1">}</span>
+    <span class="s3">for </span><span class="s1">mapping </span><span class="s3">in </span><span class="s1">mappings:</span>
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">composite_keys.intersection(mapping):</span>
+            <span class="s1">populators[key](mapping)</span>
+
+
+<span class="s3">class </span><span class="s1">ORMDMLState(AbstractORMCompileState):</span>
+    <span class="s1">is_dml_returning = </span><span class="s3">True</span>
+    <span class="s1">from_statement_ctx: Optional[ORMFromStatementCompileState] = </span><span class="s3">None</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_get_orm_crud_kv_pairs(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">mapper</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">kv_iterator</span><span class="s5">, </span><span class="s1">needs_to_be_cacheable</span>
+    <span class="s1">):</span>
+        <span class="s1">core_get_crud_kv_pairs = UpdateDMLState._get_crud_kv_pairs</span>
+
+        <span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">kv_iterator:</span>
+            <span class="s1">k = coercions.expect(roles.DMLColumnRole</span><span class="s5">, </span><span class="s1">k)</span>
+
+            <span class="s3">if </span><span class="s1">isinstance(k</span><span class="s5">, </span><span class="s1">str):</span>
+                <span class="s1">desc = _entity_namespace_key(mapper</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">default=NO_VALUE)</span>
+                <span class="s3">if </span><span class="s1">desc </span><span class="s3">is </span><span class="s1">NO_VALUE:</span>
+                    <span class="s3">yield </span><span class="s1">(</span>
+                        <span class="s1">coercions.expect(roles.DMLColumnRole</span><span class="s5">, </span><span class="s1">k)</span><span class="s5">,</span>
+                        <span class="s1">(</span>
+                            <span class="s1">coercions.expect(</span>
+                                <span class="s1">roles.ExpressionElementRole</span><span class="s5">,</span>
+                                <span class="s1">v</span><span class="s5">,</span>
+                                <span class="s1">type_=sqltypes.NullType()</span><span class="s5">,</span>
+                                <span class="s1">is_crud=</span><span class="s3">True</span><span class="s5">,</span>
+                            <span class="s1">)</span>
+                            <span class="s3">if </span><span class="s1">needs_to_be_cacheable</span>
+                            <span class="s3">else </span><span class="s1">v</span>
+                        <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">yield from </span><span class="s1">core_get_crud_kv_pairs(</span>
+                        <span class="s1">statement</span><span class="s5">,</span>
+                        <span class="s1">desc._bulk_update_tuples(v)</span><span class="s5">,</span>
+                        <span class="s1">needs_to_be_cacheable</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s4">&quot;entity_namespace&quot; </span><span class="s3">in </span><span class="s1">k._annotations:</span>
+                <span class="s1">k_anno = k._annotations</span>
+                <span class="s1">attr = _entity_namespace_key(</span>
+                    <span class="s1">k_anno[</span><span class="s4">&quot;entity_namespace&quot;</span><span class="s1">]</span><span class="s5">, </span><span class="s1">k_anno[</span><span class="s4">&quot;proxy_key&quot;</span><span class="s1">]</span>
+                <span class="s1">)</span>
+                <span class="s3">yield from </span><span class="s1">core_get_crud_kv_pairs(</span>
+                    <span class="s1">statement</span><span class="s5">,</span>
+                    <span class="s1">attr._bulk_update_tuples(v)</span><span class="s5">,</span>
+                    <span class="s1">needs_to_be_cacheable</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">yield </span><span class="s1">(</span>
+                    <span class="s1">k</span><span class="s5">,</span>
+                    <span class="s1">(</span>
+                        <span class="s1">v</span>
+                        <span class="s3">if not </span><span class="s1">needs_to_be_cacheable</span>
+                        <span class="s3">else </span><span class="s1">coercions.expect(</span>
+                            <span class="s1">roles.ExpressionElementRole</span><span class="s5">,</span>
+                            <span class="s1">v</span><span class="s5">,</span>
+                            <span class="s1">type_=sqltypes.NullType()</span><span class="s5">,</span>
+                            <span class="s1">is_crud=</span><span class="s3">True</span><span class="s5">,</span>
+                        <span class="s1">)</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_get_multi_crud_kv_pairs(cls</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">kv_iterator):</span>
+        <span class="s1">plugin_subject = statement._propagate_attrs[</span><span class="s4">&quot;plugin_subject&quot;</span><span class="s1">]</span>
+
+        <span class="s3">if not </span><span class="s1">plugin_subject </span><span class="s3">or not </span><span class="s1">plugin_subject.mapper:</span>
+            <span class="s3">return </span><span class="s1">UpdateDMLState._get_multi_crud_kv_pairs(</span>
+                <span class="s1">statement</span><span class="s5">, </span><span class="s1">kv_iterator</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">[</span>
+            <span class="s1">dict(</span>
+                <span class="s1">cls._get_orm_crud_kv_pairs(</span>
+                    <span class="s1">plugin_subject.mapper</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">value_dict.items()</span><span class="s5">, </span><span class="s3">False</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s3">for </span><span class="s1">value_dict </span><span class="s3">in </span><span class="s1">kv_iterator</span>
+        <span class="s1">]</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_get_crud_kv_pairs(cls</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">kv_iterator</span><span class="s5">, </span><span class="s1">needs_to_be_cacheable):</span>
+        <span class="s3">assert </span><span class="s1">(</span>
+            <span class="s1">needs_to_be_cacheable</span>
+        <span class="s1">)</span><span class="s5">, </span><span class="s4">&quot;no test coverage for needs_to_be_cacheable=False&quot;</span>
+
+        <span class="s1">plugin_subject = statement._propagate_attrs[</span><span class="s4">&quot;plugin_subject&quot;</span><span class="s1">]</span>
+
+        <span class="s3">if not </span><span class="s1">plugin_subject </span><span class="s3">or not </span><span class="s1">plugin_subject.mapper:</span>
+            <span class="s3">return </span><span class="s1">UpdateDMLState._get_crud_kv_pairs(</span>
+                <span class="s1">statement</span><span class="s5">, </span><span class="s1">kv_iterator</span><span class="s5">, </span><span class="s1">needs_to_be_cacheable</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">list(</span>
+            <span class="s1">cls._get_orm_crud_kv_pairs(</span>
+                <span class="s1">plugin_subject.mapper</span><span class="s5">,</span>
+                <span class="s1">statement</span><span class="s5">,</span>
+                <span class="s1">kv_iterator</span><span class="s5">,</span>
+                <span class="s1">needs_to_be_cacheable</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_entity_description(cls</span><span class="s5">, </span><span class="s1">statement):</span>
+        <span class="s1">ext_info = statement.table._annotations[</span><span class="s4">&quot;parententity&quot;</span><span class="s1">]</span>
+        <span class="s1">mapper = ext_info.mapper</span>
+        <span class="s3">if </span><span class="s1">ext_info.is_aliased_class:</span>
+            <span class="s1">_label_name = ext_info.name</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">_label_name = mapper.class_.__name__</span>
+
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s4">&quot;name&quot;</span><span class="s1">: _label_name</span><span class="s5">,</span>
+            <span class="s4">&quot;type&quot;</span><span class="s1">: mapper.class_</span><span class="s5">,</span>
+            <span class="s4">&quot;expr&quot;</span><span class="s1">: ext_info.entity</span><span class="s5">,</span>
+            <span class="s4">&quot;entity&quot;</span><span class="s1">: ext_info.entity</span><span class="s5">,</span>
+            <span class="s4">&quot;table&quot;</span><span class="s1">: mapper.local_table</span><span class="s5">,</span>
+        <span class="s1">}</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">get_returning_column_descriptions(cls</span><span class="s5">, </span><span class="s1">statement):</span>
+        <span class="s3">def </span><span class="s1">_ent_for_col(c):</span>
+            <span class="s3">return </span><span class="s1">c._annotations.get(</span><span class="s4">&quot;parententity&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+        <span class="s3">def </span><span class="s1">_attr_for_col(c</span><span class="s5">, </span><span class="s1">ent):</span>
+            <span class="s3">if </span><span class="s1">ent </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">c</span>
+            <span class="s1">proxy_key = c._annotations.get(</span><span class="s4">&quot;proxy_key&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+            <span class="s3">if not </span><span class="s1">proxy_key:</span>
+                <span class="s3">return </span><span class="s1">c</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">getattr(ent.entity</span><span class="s5">, </span><span class="s1">proxy_key</span><span class="s5">, </span><span class="s1">c)</span>
+
+        <span class="s3">return </span><span class="s1">[</span>
+            <span class="s1">{</span>
+                <span class="s4">&quot;name&quot;</span><span class="s1">: c.key</span><span class="s5">,</span>
+                <span class="s4">&quot;type&quot;</span><span class="s1">: c.type</span><span class="s5">,</span>
+                <span class="s4">&quot;expr&quot;</span><span class="s1">: _attr_for_col(c</span><span class="s5">, </span><span class="s1">ent)</span><span class="s5">,</span>
+                <span class="s4">&quot;aliased&quot;</span><span class="s1">: ent.is_aliased_class</span><span class="s5">,</span>
+                <span class="s4">&quot;entity&quot;</span><span class="s1">: ent.entity</span><span class="s5">,</span>
+            <span class="s1">}</span>
+            <span class="s3">for </span><span class="s1">c</span><span class="s5">, </span><span class="s1">ent </span><span class="s3">in </span><span class="s1">[</span>
+                <span class="s1">(c</span><span class="s5">, </span><span class="s1">_ent_for_col(c)) </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">statement._all_selected_columns</span>
+            <span class="s1">]</span>
+        <span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">_setup_orm_returning(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">compiler</span><span class="s5">,</span>
+        <span class="s1">orm_level_statement</span><span class="s5">,</span>
+        <span class="s1">dml_level_statement</span><span class="s5">,</span>
+        <span class="s1">dml_mapper</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">use_supplemental_cols=</span><span class="s3">True</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;establish ORM column handlers for an INSERT, UPDATE, or DELETE 
+        which uses explicit returning(). 
+ 
+        called within compilation level create_for_statement. 
+ 
+        The _return_orm_returning() method then receives the Result 
+        after the statement was executed, and applies ORM loading to the 
+        state that we first established here. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">orm_level_statement._returning:</span>
+            <span class="s1">fs = FromStatement(</span>
+                <span class="s1">orm_level_statement._returning</span><span class="s5">,</span>
+                <span class="s1">dml_level_statement</span><span class="s5">,</span>
+                <span class="s1">_adapt_on_names=</span><span class="s3">False</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s1">fs = fs.execution_options(**orm_level_statement._execution_options)</span>
+            <span class="s1">fs = fs.options(*orm_level_statement._with_options)</span>
+            <span class="s1">self.select_statement = fs</span>
+            <span class="s1">self.from_statement_ctx = fsc = (</span>
+                <span class="s1">ORMFromStatementCompileState.create_for_statement(fs</span><span class="s5">, </span><span class="s1">compiler)</span>
+            <span class="s1">)</span>
+            <span class="s1">fsc.setup_dml_returning_compile_state(dml_mapper)</span>
+
+            <span class="s1">dml_level_statement = dml_level_statement._generate()</span>
+            <span class="s1">dml_level_statement._returning = ()</span>
+
+            <span class="s1">cols_to_return = [c </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">fsc.primary_columns </span><span class="s3">if </span><span class="s1">c </span><span class="s3">is not None</span><span class="s1">]</span>
+
+            <span class="s0"># since we are splicing result sets together, make sure there</span>
+            <span class="s0"># are columns of some kind returned in each result set</span>
+            <span class="s3">if not </span><span class="s1">cols_to_return:</span>
+                <span class="s1">cols_to_return.extend(dml_mapper.primary_key)</span>
+
+            <span class="s3">if </span><span class="s1">use_supplemental_cols:</span>
+                <span class="s1">dml_level_statement = dml_level_statement.return_defaults(</span>
+                    <span class="s0"># this is a little weird looking, but by passing</span>
+                    <span class="s0"># primary key as the main list of cols, this tells</span>
+                    <span class="s0"># return_defaults to omit server-default cols (and</span>
+                    <span class="s0"># actually all cols, due to some weird thing we should</span>
+                    <span class="s0"># clean up in crud.py).</span>
+                    <span class="s0"># Since we have cols_to_return, just return what we asked</span>
+                    <span class="s0"># for (plus primary key, which ORM persistence needs since</span>
+                    <span class="s0"># we likely set bookkeeping=True here, which is another</span>
+                    <span class="s0"># whole thing...).   We dont want to clutter the</span>
+                    <span class="s0"># statement up with lots of other cols the user didn't</span>
+                    <span class="s0"># ask for.  see #9685</span>
+                    <span class="s1">*dml_mapper.primary_key</span><span class="s5">,</span>
+                    <span class="s1">supplemental_cols=cols_to_return</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">dml_level_statement = dml_level_statement.returning(</span>
+                    <span class="s1">*cols_to_return</span>
+                <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">dml_level_statement</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_return_orm_returning(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">params</span><span class="s5">,</span>
+        <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">bind_arguments</span><span class="s5">,</span>
+        <span class="s1">result</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">execution_context = result.context</span>
+        <span class="s1">compile_state = execution_context.compiled.compile_state</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">compile_state.from_statement_ctx</span>
+            <span class="s3">and not </span><span class="s1">compile_state.from_statement_ctx.compile_options._is_star</span>
+        <span class="s1">):</span>
+            <span class="s1">load_options = execution_options.get(</span>
+                <span class="s4">&quot;_sa_orm_load_options&quot;</span><span class="s5">, </span><span class="s1">QueryContext.default_load_options</span>
+            <span class="s1">)</span>
+
+            <span class="s1">querycontext = QueryContext(</span>
+                <span class="s1">compile_state.from_statement_ctx</span><span class="s5">,</span>
+                <span class="s1">compile_state.select_statement</span><span class="s5">,</span>
+                <span class="s1">statement</span><span class="s5">,</span>
+                <span class="s1">params</span><span class="s5">,</span>
+                <span class="s1">session</span><span class="s5">,</span>
+                <span class="s1">load_options</span><span class="s5">,</span>
+                <span class="s1">execution_options</span><span class="s5">,</span>
+                <span class="s1">bind_arguments</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">loading.instances(result</span><span class="s5">, </span><span class="s1">querycontext)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+
+<span class="s3">class </span><span class="s1">BulkUDCompileState(ORMDMLState):</span>
+    <span class="s3">class </span><span class="s1">default_update_options(Options):</span>
+        <span class="s1">_dml_strategy: DMLStrategyArgument = </span><span class="s4">&quot;auto&quot;</span>
+        <span class="s1">_synchronize_session: SynchronizeSessionArgument = </span><span class="s4">&quot;auto&quot;</span>
+        <span class="s1">_can_use_returning: bool = </span><span class="s3">False</span>
+        <span class="s1">_is_delete_using: bool = </span><span class="s3">False</span>
+        <span class="s1">_is_update_from: bool = </span><span class="s3">False</span>
+        <span class="s1">_autoflush: bool = </span><span class="s3">True</span>
+        <span class="s1">_subject_mapper: Optional[Mapper[Any]] = </span><span class="s3">None</span>
+        <span class="s1">_resolved_values = EMPTY_DICT</span>
+        <span class="s1">_eval_condition = </span><span class="s3">None</span>
+        <span class="s1">_matched_rows = </span><span class="s3">None</span>
+        <span class="s1">_identity_token = </span><span class="s3">None</span>
+        <span class="s1">_populate_existing: bool = </span><span class="s3">False</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">can_use_returning(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">dialect: Dialect</span><span class="s5">,</span>
+        <span class="s1">mapper: Mapper[Any]</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">is_multitable: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">is_update_from: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">is_delete_using: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">is_executemany: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">orm_pre_session_exec(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">params</span><span class="s5">,</span>
+        <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">bind_arguments</span><span class="s5">,</span>
+        <span class="s1">is_pre_event</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">(</span>
+            <span class="s1">update_options</span><span class="s5">,</span>
+            <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">) = BulkUDCompileState.default_update_options.from_execution_options(</span>
+            <span class="s4">&quot;_sa_orm_update_options&quot;</span><span class="s5">,</span>
+            <span class="s1">{</span>
+                <span class="s4">&quot;synchronize_session&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;autoflush&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;populate_existing&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;identity_token&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;is_delete_using&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;is_update_from&quot;</span><span class="s5">,</span>
+                <span class="s4">&quot;dml_strategy&quot;</span><span class="s5">,</span>
+            <span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">execution_options</span><span class="s5">,</span>
+            <span class="s1">statement._execution_options</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">bind_arguments[</span><span class="s4">&quot;clause&quot;</span><span class="s1">] = statement</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">plugin_subject = statement._propagate_attrs[</span><span class="s4">&quot;plugin_subject&quot;</span><span class="s1">]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s3">assert False</span><span class="s5">, </span><span class="s4">&quot;statement had 'orm' plugin but no plugin_subject&quot;</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">plugin_subject:</span>
+                <span class="s1">bind_arguments[</span><span class="s4">&quot;mapper&quot;</span><span class="s1">] = plugin_subject.mapper</span>
+                <span class="s1">update_options += {</span><span class="s4">&quot;_subject_mapper&quot;</span><span class="s1">: plugin_subject.mapper}</span>
+
+        <span class="s3">if </span><span class="s4">&quot;parententity&quot; </span><span class="s3">not in </span><span class="s1">statement.table._annotations:</span>
+            <span class="s1">update_options += {</span><span class="s4">&quot;_dml_strategy&quot;</span><span class="s1">: </span><span class="s4">&quot;core_only&quot;</span><span class="s1">}</span>
+        <span class="s3">elif not </span><span class="s1">isinstance(params</span><span class="s5">, </span><span class="s1">list):</span>
+            <span class="s3">if </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;auto&quot;</span><span class="s1">:</span>
+                <span class="s1">update_options += {</span><span class="s4">&quot;_dml_strategy&quot;</span><span class="s1">: </span><span class="s4">&quot;orm&quot;</span><span class="s1">}</span>
+            <span class="s3">elif </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;bulk&quot;</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">'Can</span><span class="s7">\'</span><span class="s4">t use &quot;bulk&quot; ORM insert strategy without '</span>
+                    <span class="s4">&quot;passing separate parameters&quot;</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;auto&quot;</span><span class="s1">:</span>
+                <span class="s1">update_options += {</span><span class="s4">&quot;_dml_strategy&quot;</span><span class="s1">: </span><span class="s4">&quot;bulk&quot;</span><span class="s1">}</span>
+
+        <span class="s1">sync = update_options._synchronize_session</span>
+        <span class="s3">if </span><span class="s1">sync </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">sync </span><span class="s3">not in </span><span class="s1">(</span><span class="s4">&quot;auto&quot;</span><span class="s5">, </span><span class="s4">&quot;evaluate&quot;</span><span class="s5">, </span><span class="s4">&quot;fetch&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                    <span class="s4">&quot;Valid strategies for session synchronization &quot;</span>
+                    <span class="s4">&quot;are 'auto', 'evaluate', 'fetch', False&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;bulk&quot; </span><span class="s3">and </span><span class="s1">sync == </span><span class="s4">&quot;fetch&quot;</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;The 'fetch' synchronization strategy is not available &quot;</span>
+                    <span class="s4">&quot;for 'bulk' ORM updates (i.e. multiple parameter sets)&quot;</span>
+                <span class="s1">)</span>
+
+        <span class="s3">if not </span><span class="s1">is_pre_event:</span>
+            <span class="s3">if </span><span class="s1">update_options._autoflush:</span>
+                <span class="s1">session._autoflush()</span>
+
+            <span class="s3">if </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;orm&quot;</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">update_options._synchronize_session == </span><span class="s4">&quot;auto&quot;</span><span class="s1">:</span>
+                    <span class="s1">update_options = cls._do_pre_synchronize_auto(</span>
+                        <span class="s1">session</span><span class="s5">,</span>
+                        <span class="s1">statement</span><span class="s5">,</span>
+                        <span class="s1">params</span><span class="s5">,</span>
+                        <span class="s1">execution_options</span><span class="s5">,</span>
+                        <span class="s1">bind_arguments</span><span class="s5">,</span>
+                        <span class="s1">update_options</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">update_options._synchronize_session == </span><span class="s4">&quot;evaluate&quot;</span><span class="s1">:</span>
+                    <span class="s1">update_options = cls._do_pre_synchronize_evaluate(</span>
+                        <span class="s1">session</span><span class="s5">,</span>
+                        <span class="s1">statement</span><span class="s5">,</span>
+                        <span class="s1">params</span><span class="s5">,</span>
+                        <span class="s1">execution_options</span><span class="s5">,</span>
+                        <span class="s1">bind_arguments</span><span class="s5">,</span>
+                        <span class="s1">update_options</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">update_options._synchronize_session == </span><span class="s4">&quot;fetch&quot;</span><span class="s1">:</span>
+                    <span class="s1">update_options = cls._do_pre_synchronize_fetch(</span>
+                        <span class="s1">session</span><span class="s5">,</span>
+                        <span class="s1">statement</span><span class="s5">,</span>
+                        <span class="s1">params</span><span class="s5">,</span>
+                        <span class="s1">execution_options</span><span class="s5">,</span>
+                        <span class="s1">bind_arguments</span><span class="s5">,</span>
+                        <span class="s1">update_options</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;bulk&quot;</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">update_options._synchronize_session == </span><span class="s4">&quot;auto&quot;</span><span class="s1">:</span>
+                    <span class="s1">update_options += {</span><span class="s4">&quot;_synchronize_session&quot;</span><span class="s1">: </span><span class="s4">&quot;evaluate&quot;</span><span class="s1">}</span>
+
+            <span class="s0"># indicators from the &quot;pre exec&quot; step that are then</span>
+            <span class="s0"># added to the DML statement, which will also be part of the cache</span>
+            <span class="s0"># key.  The compile level create_for_statement() method will then</span>
+            <span class="s0"># consume these at compiler time.</span>
+            <span class="s1">statement = statement._annotate(</span>
+                <span class="s1">{</span>
+                    <span class="s4">&quot;synchronize_session&quot;</span><span class="s1">: update_options._synchronize_session</span><span class="s5">,</span>
+                    <span class="s4">&quot;is_delete_using&quot;</span><span class="s1">: update_options._is_delete_using</span><span class="s5">,</span>
+                    <span class="s4">&quot;is_update_from&quot;</span><span class="s1">: update_options._is_update_from</span><span class="s5">,</span>
+                    <span class="s4">&quot;dml_strategy&quot;</span><span class="s1">: update_options._dml_strategy</span><span class="s5">,</span>
+                    <span class="s4">&quot;can_use_returning&quot;</span><span class="s1">: update_options._can_use_returning</span><span class="s5">,</span>
+                <span class="s1">}</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">util.immutabledict(execution_options).union(</span>
+                <span class="s1">{</span><span class="s4">&quot;_sa_orm_update_options&quot;</span><span class="s1">: update_options}</span>
+            <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">orm_setup_cursor_result(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">params</span><span class="s5">,</span>
+        <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">bind_arguments</span><span class="s5">,</span>
+        <span class="s1">result</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s0"># this stage of the execution is called after the</span>
+        <span class="s0"># do_orm_execute event hook.  meaning for an extension like</span>
+        <span class="s0"># horizontal sharding, this step happens *within* the horizontal</span>
+        <span class="s0"># sharding event handler which calls session.execute() re-entrantly</span>
+        <span class="s0"># and will occur for each backend individually.</span>
+        <span class="s0"># the sharding extension then returns its own merged result from the</span>
+        <span class="s0"># individual ones we return here.</span>
+
+        <span class="s1">update_options = execution_options[</span><span class="s4">&quot;_sa_orm_update_options&quot;</span><span class="s1">]</span>
+        <span class="s3">if </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;orm&quot;</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">update_options._synchronize_session == </span><span class="s4">&quot;evaluate&quot;</span><span class="s1">:</span>
+                <span class="s1">cls._do_post_synchronize_evaluate(</span>
+                    <span class="s1">session</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">update_options</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">update_options._synchronize_session == </span><span class="s4">&quot;fetch&quot;</span><span class="s1">:</span>
+                <span class="s1">cls._do_post_synchronize_fetch(</span>
+                    <span class="s1">session</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">update_options</span>
+                <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;bulk&quot;</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">update_options._synchronize_session == </span><span class="s4">&quot;evaluate&quot;</span><span class="s1">:</span>
+                <span class="s1">cls._do_post_synchronize_bulk_evaluate(</span>
+                    <span class="s1">session</span><span class="s5">, </span><span class="s1">params</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">update_options</span>
+                <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+        <span class="s3">return </span><span class="s1">cls._return_orm_returning(</span>
+            <span class="s1">session</span><span class="s5">,</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">params</span><span class="s5">,</span>
+            <span class="s1">execution_options</span><span class="s5">,</span>
+            <span class="s1">bind_arguments</span><span class="s5">,</span>
+            <span class="s1">result</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_adjust_for_extra_criteria(cls</span><span class="s5">, </span><span class="s1">global_attributes</span><span class="s5">, </span><span class="s1">ext_info):</span>
+        <span class="s2">&quot;&quot;&quot;Apply extra criteria filtering. 
+ 
+        For all distinct single-table-inheritance mappers represented in the 
+        table being updated or deleted, produce additional WHERE criteria such 
+        that only the appropriate subtypes are selected from the total results. 
+ 
+        Additionally, add WHERE criteria originating from LoaderCriteriaOptions 
+        collected from the statement. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">return_crit = ()</span>
+
+        <span class="s1">adapter = ext_info._adapter </span><span class="s3">if </span><span class="s1">ext_info.is_aliased_class </span><span class="s3">else None</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s4">&quot;additional_entity_criteria&quot;</span><span class="s5">,</span>
+            <span class="s1">ext_info.mapper</span><span class="s5">,</span>
+        <span class="s1">) </span><span class="s3">in </span><span class="s1">global_attributes:</span>
+            <span class="s1">return_crit += tuple(</span>
+                <span class="s1">ae._resolve_where_criteria(ext_info)</span>
+                <span class="s3">for </span><span class="s1">ae </span><span class="s3">in </span><span class="s1">global_attributes[</span>
+                    <span class="s1">(</span><span class="s4">&quot;additional_entity_criteria&quot;</span><span class="s5">, </span><span class="s1">ext_info.mapper)</span>
+                <span class="s1">]</span>
+                <span class="s3">if </span><span class="s1">ae.include_aliases </span><span class="s3">or </span><span class="s1">ae.entity </span><span class="s3">is </span><span class="s1">ext_info</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">ext_info.mapper._single_table_criterion </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">return_crit += (ext_info.mapper._single_table_criterion</span><span class="s5">,</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">adapter:</span>
+            <span class="s1">return_crit = tuple(adapter.traverse(crit) </span><span class="s3">for </span><span class="s1">crit </span><span class="s3">in </span><span class="s1">return_crit)</span>
+
+        <span class="s3">return </span><span class="s1">return_crit</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_interpret_returning_rows(cls</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">mapper</span><span class="s5">, </span><span class="s1">rows):</span>
+        <span class="s2">&quot;&quot;&quot;return rows that indicate PK cols in mapper.primary_key position 
+        for RETURNING rows. 
+ 
+        Prior to 2.0.36, this method seemed to be written for some kind of 
+        inheritance scenario but the scenario was unused for actual joined 
+        inheritance, and the function instead seemed to perform some kind of 
+        partial translation that would remove non-PK cols if the PK cols 
+        happened to be first in the row, but not otherwise.  The joined 
+        inheritance walk feature here seems to have never been used as it was 
+        always skipped by the &quot;local_table&quot; check. 
+ 
+        As of 2.0.36 the function strips away non-PK cols and provides the 
+        PK cols for the table in mapper PK order. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">mapper.local_table </span><span class="s3">is not </span><span class="s1">mapper.base_mapper.local_table:</span>
+                <span class="s0"># TODO: dive more into how a local table PK is used for fetch</span>
+                <span class="s0"># sync, not clear if this is correct as it depends on the</span>
+                <span class="s0"># downstream routine to fetch rows using</span>
+                <span class="s0"># local_table.primary_key order</span>
+                <span class="s1">pk_keys = result._tuple_getter(mapper.local_table.primary_key)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">pk_keys = result._tuple_getter(mapper.primary_key)</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s0"># can't use these rows, they don't have PK cols in them</span>
+            <span class="s0"># this is an unusual case where the user would have used</span>
+            <span class="s0"># .return_defaults()</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+        <span class="s3">return </span><span class="s1">[pk_keys(row) </span><span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">rows]</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_get_matched_objects_on_criteria(cls</span><span class="s5">, </span><span class="s1">update_options</span><span class="s5">, </span><span class="s1">states):</span>
+        <span class="s1">mapper = update_options._subject_mapper</span>
+        <span class="s1">eval_condition = update_options._eval_condition</span>
+
+        <span class="s1">raw_data = [</span>
+            <span class="s1">(state.obj()</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">state.dict)</span>
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states</span>
+            <span class="s3">if </span><span class="s1">state.mapper.isa(mapper) </span><span class="s3">and not </span><span class="s1">state.expired</span>
+        <span class="s1">]</span>
+
+        <span class="s1">identity_token = update_options._identity_token</span>
+        <span class="s3">if </span><span class="s1">identity_token </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">raw_data = [</span>
+                <span class="s1">(obj</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_)</span>
+                <span class="s3">for </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_ </span><span class="s3">in </span><span class="s1">raw_data</span>
+                <span class="s3">if </span><span class="s1">state.identity_token == identity_token</span>
+            <span class="s1">]</span>
+
+        <span class="s1">result = []</span>
+        <span class="s3">for </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_ </span><span class="s3">in </span><span class="s1">raw_data:</span>
+            <span class="s1">evaled_condition = eval_condition(obj)</span>
+
+            <span class="s0"># caution: don't use &quot;in ()&quot; or == here, _EXPIRE_OBJECT</span>
+            <span class="s0"># evaluates as True for all comparisons</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">evaled_condition </span><span class="s3">is True</span>
+                <span class="s3">or </span><span class="s1">evaled_condition </span><span class="s3">is </span><span class="s1">evaluator._EXPIRED_OBJECT</span>
+            <span class="s1">):</span>
+                <span class="s1">result.append(</span>
+                    <span class="s1">(</span>
+                        <span class="s1">obj</span><span class="s5">,</span>
+                        <span class="s1">state</span><span class="s5">,</span>
+                        <span class="s1">dict_</span><span class="s5">,</span>
+                        <span class="s1">evaled_condition </span><span class="s3">is </span><span class="s1">evaluator._EXPIRED_OBJECT</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_eval_condition_from_statement(cls</span><span class="s5">, </span><span class="s1">update_options</span><span class="s5">, </span><span class="s1">statement):</span>
+        <span class="s1">mapper = update_options._subject_mapper</span>
+        <span class="s1">target_cls = mapper.class_</span>
+
+        <span class="s1">evaluator_compiler = evaluator._EvaluatorCompiler(target_cls)</span>
+        <span class="s1">crit = ()</span>
+        <span class="s3">if </span><span class="s1">statement._where_criteria:</span>
+            <span class="s1">crit += statement._where_criteria</span>
+
+        <span class="s1">global_attributes = {}</span>
+        <span class="s3">for </span><span class="s1">opt </span><span class="s3">in </span><span class="s1">statement._with_options:</span>
+            <span class="s3">if </span><span class="s1">opt._is_criteria_option:</span>
+                <span class="s1">opt.get_global_criteria(global_attributes)</span>
+
+        <span class="s3">if </span><span class="s1">global_attributes:</span>
+            <span class="s1">crit += cls._adjust_for_extra_criteria(global_attributes</span><span class="s5">, </span><span class="s1">mapper)</span>
+
+        <span class="s3">if </span><span class="s1">crit:</span>
+            <span class="s1">eval_condition = evaluator_compiler.process(*crit)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># workaround for mypy https://github.com/python/mypy/issues/14027</span>
+            <span class="s3">def </span><span class="s1">_eval_condition(obj):</span>
+                <span class="s3">return True</span>
+
+            <span class="s1">eval_condition = _eval_condition</span>
+
+        <span class="s3">return </span><span class="s1">eval_condition</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_do_pre_synchronize_auto(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">params</span><span class="s5">,</span>
+        <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">bind_arguments</span><span class="s5">,</span>
+        <span class="s1">update_options</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;setup auto sync strategy 
+ 
+ 
+        &quot;auto&quot; checks if we can use &quot;evaluate&quot; first, then falls back 
+        to &quot;fetch&quot; 
+ 
+        evaluate is vastly more efficient for the common case 
+        where session is empty, only has a few objects, and the UPDATE 
+        statement can potentially match thousands/millions of rows. 
+ 
+        OTOH more complex criteria that fails to work with &quot;evaluate&quot; 
+        we would hope usually correlates with fewer net rows. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">eval_condition = cls._eval_condition_from_statement(</span>
+                <span class="s1">update_options</span><span class="s5">, </span><span class="s1">statement</span>
+            <span class="s1">)</span>
+
+        <span class="s3">except </span><span class="s1">evaluator.UnevaluatableError:</span>
+            <span class="s3">pass</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">update_options + {</span>
+                <span class="s4">&quot;_eval_condition&quot;</span><span class="s1">: eval_condition</span><span class="s5">,</span>
+                <span class="s4">&quot;_synchronize_session&quot;</span><span class="s1">: </span><span class="s4">&quot;evaluate&quot;</span><span class="s5">,</span>
+            <span class="s1">}</span>
+
+        <span class="s1">update_options += {</span><span class="s4">&quot;_synchronize_session&quot;</span><span class="s1">: </span><span class="s4">&quot;fetch&quot;</span><span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">cls._do_pre_synchronize_fetch(</span>
+            <span class="s1">session</span><span class="s5">,</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">params</span><span class="s5">,</span>
+            <span class="s1">execution_options</span><span class="s5">,</span>
+            <span class="s1">bind_arguments</span><span class="s5">,</span>
+            <span class="s1">update_options</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_do_pre_synchronize_evaluate(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">params</span><span class="s5">,</span>
+        <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">bind_arguments</span><span class="s5">,</span>
+        <span class="s1">update_options</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">eval_condition = cls._eval_condition_from_statement(</span>
+                <span class="s1">update_options</span><span class="s5">, </span><span class="s1">statement</span>
+            <span class="s1">)</span>
+
+        <span class="s3">except </span><span class="s1">evaluator.UnevaluatableError </span><span class="s3">as </span><span class="s1">err:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                <span class="s4">'Could not evaluate current criteria in Python: &quot;%s&quot;. '</span>
+                <span class="s4">&quot;Specify 'fetch' or False for the &quot;</span>
+                <span class="s4">&quot;synchronize_session execution option.&quot; </span><span class="s1">% err</span>
+            <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+
+        <span class="s3">return </span><span class="s1">update_options + {</span>
+            <span class="s4">&quot;_eval_condition&quot;</span><span class="s1">: eval_condition</span><span class="s5">,</span>
+        <span class="s1">}</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_get_resolved_values(cls</span><span class="s5">, </span><span class="s1">mapper</span><span class="s5">, </span><span class="s1">statement):</span>
+        <span class="s3">if </span><span class="s1">statement._multi_values:</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+        <span class="s3">elif </span><span class="s1">statement._ordered_values:</span>
+            <span class="s3">return </span><span class="s1">list(statement._ordered_values)</span>
+        <span class="s3">elif </span><span class="s1">statement._values:</span>
+            <span class="s3">return </span><span class="s1">list(statement._values.items())</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">[]</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_resolved_keys_as_propnames(cls</span><span class="s5">, </span><span class="s1">mapper</span><span class="s5">, </span><span class="s1">resolved_values):</span>
+        <span class="s1">values = []</span>
+        <span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">resolved_values:</span>
+            <span class="s3">if </span><span class="s1">mapper </span><span class="s3">and </span><span class="s1">isinstance(k</span><span class="s5">, </span><span class="s1">expression.ColumnElement):</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">attr = mapper._columntoproperty[k]</span>
+                <span class="s3">except </span><span class="s1">orm_exc.UnmappedColumnError:</span>
+                    <span class="s3">pass</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">values.append((attr.key</span><span class="s5">, </span><span class="s1">v))</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;Attribute name not found, can't be &quot;</span>
+                    <span class="s4">&quot;synchronized back to objects: %r&quot; </span><span class="s1">% k</span>
+                <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">values</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_do_pre_synchronize_fetch(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">params</span><span class="s5">,</span>
+        <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">bind_arguments</span><span class="s5">,</span>
+        <span class="s1">update_options</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">mapper = update_options._subject_mapper</span>
+
+        <span class="s1">select_stmt = (</span>
+            <span class="s1">select(*(mapper.primary_key + (mapper.select_identity_token</span><span class="s5">,</span><span class="s1">)))</span>
+            <span class="s1">.select_from(mapper)</span>
+            <span class="s1">.options(*statement._with_options)</span>
+        <span class="s1">)</span>
+        <span class="s1">select_stmt._where_criteria = statement._where_criteria</span>
+
+        <span class="s0"># conditionally run the SELECT statement for pre-fetch, testing the</span>
+        <span class="s0"># &quot;bind&quot; for if we can use RETURNING or not using the do_orm_execute</span>
+        <span class="s0"># event.  If RETURNING is available, the do_orm_execute event</span>
+        <span class="s0"># will cancel the SELECT from being actually run.</span>
+        <span class="s0">#</span>
+        <span class="s0"># The way this is organized seems strange, why don't we just</span>
+        <span class="s0"># call can_use_returning() before invoking the statement and get</span>
+        <span class="s0"># answer?, why does this go through the whole execute phase using an</span>
+        <span class="s0"># event?  Answer: because we are integrating with extensions such</span>
+        <span class="s0"># as the horizontal sharding extention that &quot;multiplexes&quot; an individual</span>
+        <span class="s0"># statement run through multiple engines, and it uses</span>
+        <span class="s0"># do_orm_execute() to do that.</span>
+
+        <span class="s1">can_use_returning = </span><span class="s3">None</span>
+
+        <span class="s3">def </span><span class="s1">skip_for_returning(orm_context: ORMExecuteState) -&gt; Any:</span>
+            <span class="s1">bind = orm_context.session.get_bind(**orm_context.bind_arguments)</span>
+            <span class="s3">nonlocal </span><span class="s1">can_use_returning</span>
+
+            <span class="s1">per_bind_result = cls.can_use_returning(</span>
+                <span class="s1">bind.dialect</span><span class="s5">,</span>
+                <span class="s1">mapper</span><span class="s5">,</span>
+                <span class="s1">is_update_from=update_options._is_update_from</span><span class="s5">,</span>
+                <span class="s1">is_delete_using=update_options._is_delete_using</span><span class="s5">,</span>
+                <span class="s1">is_executemany=orm_context.is_executemany</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">can_use_returning </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">can_use_returning != per_bind_result:</span>
+                    <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                        <span class="s4">&quot;For synchronize_session='fetch', can't mix multiple &quot;</span>
+                        <span class="s4">&quot;backends where some support RETURNING and others &quot;</span>
+                        <span class="s4">&quot;don't&quot;</span>
+                    <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">orm_context.is_executemany </span><span class="s3">and not </span><span class="s1">per_bind_result:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;For synchronize_session='fetch', can't use multiple &quot;</span>
+                    <span class="s4">&quot;parameter sets in ORM mode, which this backend does not &quot;</span>
+                    <span class="s4">&quot;support with RETURNING&quot;</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">can_use_returning = per_bind_result</span>
+
+            <span class="s3">if </span><span class="s1">per_bind_result:</span>
+                <span class="s3">return </span><span class="s1">_result.null_result()</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+
+        <span class="s1">result = session.execute(</span>
+            <span class="s1">select_stmt</span><span class="s5">,</span>
+            <span class="s1">params</span><span class="s5">,</span>
+            <span class="s1">execution_options=execution_options</span><span class="s5">,</span>
+            <span class="s1">bind_arguments=bind_arguments</span><span class="s5">,</span>
+            <span class="s1">_add_event=skip_for_returning</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">matched_rows = result.fetchall()</span>
+
+        <span class="s3">return </span><span class="s1">update_options + {</span>
+            <span class="s4">&quot;_matched_rows&quot;</span><span class="s1">: matched_rows</span><span class="s5">,</span>
+            <span class="s4">&quot;_can_use_returning&quot;</span><span class="s1">: can_use_returning</span><span class="s5">,</span>
+        <span class="s1">}</span>
+
+
+<span class="s1">@CompileState.plugin_for(</span><span class="s4">&quot;orm&quot;</span><span class="s5">, </span><span class="s4">&quot;insert&quot;</span><span class="s1">)</span>
+<span class="s3">class </span><span class="s1">BulkORMInsert(ORMDMLState</span><span class="s5">, </span><span class="s1">InsertDMLState):</span>
+    <span class="s3">class </span><span class="s1">default_insert_options(Options):</span>
+        <span class="s1">_dml_strategy: DMLStrategyArgument = </span><span class="s4">&quot;auto&quot;</span>
+        <span class="s1">_render_nulls: bool = </span><span class="s3">False</span>
+        <span class="s1">_return_defaults: bool = </span><span class="s3">False</span>
+        <span class="s1">_subject_mapper: Optional[Mapper[Any]] = </span><span class="s3">None</span>
+        <span class="s1">_autoflush: bool = </span><span class="s3">True</span>
+        <span class="s1">_populate_existing: bool = </span><span class="s3">False</span>
+
+    <span class="s1">select_statement: Optional[FromStatement] = </span><span class="s3">None</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">orm_pre_session_exec(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">params</span><span class="s5">,</span>
+        <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">bind_arguments</span><span class="s5">,</span>
+        <span class="s1">is_pre_event</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">(</span>
+            <span class="s1">insert_options</span><span class="s5">,</span>
+            <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">) = BulkORMInsert.default_insert_options.from_execution_options(</span>
+            <span class="s4">&quot;_sa_orm_insert_options&quot;</span><span class="s5">,</span>
+            <span class="s1">{</span><span class="s4">&quot;dml_strategy&quot;</span><span class="s5">, </span><span class="s4">&quot;autoflush&quot;</span><span class="s5">, </span><span class="s4">&quot;populate_existing&quot;</span><span class="s5">, </span><span class="s4">&quot;render_nulls&quot;</span><span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">execution_options</span><span class="s5">,</span>
+            <span class="s1">statement._execution_options</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">bind_arguments[</span><span class="s4">&quot;clause&quot;</span><span class="s1">] = statement</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">plugin_subject = statement._propagate_attrs[</span><span class="s4">&quot;plugin_subject&quot;</span><span class="s1">]</span>
+        <span class="s3">except </span><span class="s1">KeyError:</span>
+            <span class="s3">assert False</span><span class="s5">, </span><span class="s4">&quot;statement had 'orm' plugin but no plugin_subject&quot;</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">plugin_subject:</span>
+                <span class="s1">bind_arguments[</span><span class="s4">&quot;mapper&quot;</span><span class="s1">] = plugin_subject.mapper</span>
+                <span class="s1">insert_options += {</span><span class="s4">&quot;_subject_mapper&quot;</span><span class="s1">: plugin_subject.mapper}</span>
+
+        <span class="s3">if not </span><span class="s1">params:</span>
+            <span class="s3">if </span><span class="s1">insert_options._dml_strategy == </span><span class="s4">&quot;auto&quot;</span><span class="s1">:</span>
+                <span class="s1">insert_options += {</span><span class="s4">&quot;_dml_strategy&quot;</span><span class="s1">: </span><span class="s4">&quot;orm&quot;</span><span class="s1">}</span>
+            <span class="s3">elif </span><span class="s1">insert_options._dml_strategy == </span><span class="s4">&quot;bulk&quot;</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">'Can</span><span class="s7">\'</span><span class="s4">t use &quot;bulk&quot; ORM insert strategy without '</span>
+                    <span class="s4">&quot;passing separate parameters&quot;</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">insert_options._dml_strategy == </span><span class="s4">&quot;auto&quot;</span><span class="s1">:</span>
+                <span class="s1">insert_options += {</span><span class="s4">&quot;_dml_strategy&quot;</span><span class="s1">: </span><span class="s4">&quot;bulk&quot;</span><span class="s1">}</span>
+
+        <span class="s3">if </span><span class="s1">insert_options._dml_strategy != </span><span class="s4">&quot;raw&quot;</span><span class="s1">:</span>
+            <span class="s0"># for ORM object loading, like ORMContext, we have to disable</span>
+            <span class="s0"># result set adapt_to_context, because we will be generating a</span>
+            <span class="s0"># new statement with specific columns that's cached inside of</span>
+            <span class="s0"># an ORMFromStatementCompileState, which we will re-use for</span>
+            <span class="s0"># each result.</span>
+            <span class="s3">if not </span><span class="s1">execution_options:</span>
+                <span class="s1">execution_options = context._orm_load_exec_options</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">execution_options = execution_options.union(</span>
+                    <span class="s1">context._orm_load_exec_options</span>
+                <span class="s1">)</span>
+
+        <span class="s3">if not </span><span class="s1">is_pre_event </span><span class="s3">and </span><span class="s1">insert_options._autoflush:</span>
+            <span class="s1">session._autoflush()</span>
+
+        <span class="s1">statement = statement._annotate(</span>
+            <span class="s1">{</span><span class="s4">&quot;dml_strategy&quot;</span><span class="s1">: insert_options._dml_strategy}</span>
+        <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">util.immutabledict(execution_options).union(</span>
+                <span class="s1">{</span><span class="s4">&quot;_sa_orm_insert_options&quot;</span><span class="s1">: insert_options}</span>
+            <span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">orm_execute_statement(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session: Session</span><span class="s5">,</span>
+        <span class="s1">statement: dml.Insert</span><span class="s5">,</span>
+        <span class="s1">params: _CoreAnyExecuteParams</span><span class="s5">,</span>
+        <span class="s1">execution_options: OrmExecuteOptionsParameter</span><span class="s5">,</span>
+        <span class="s1">bind_arguments: _BindArguments</span><span class="s5">,</span>
+        <span class="s1">conn: Connection</span><span class="s5">,</span>
+    <span class="s1">) -&gt; _result.Result:</span>
+        <span class="s1">insert_options = execution_options.get(</span>
+            <span class="s4">&quot;_sa_orm_insert_options&quot;</span><span class="s5">, </span><span class="s1">cls.default_insert_options</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">insert_options._dml_strategy </span><span class="s3">not in </span><span class="s1">(</span>
+            <span class="s4">&quot;raw&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;bulk&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;orm&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;auto&quot;</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s4">&quot;Valid strategies for ORM insert strategy &quot;</span>
+                <span class="s4">&quot;are 'raw', 'orm', 'bulk', 'auto&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">result: _result.Result[Any]</span>
+
+        <span class="s3">if </span><span class="s1">insert_options._dml_strategy == </span><span class="s4">&quot;raw&quot;</span><span class="s1">:</span>
+            <span class="s1">result = conn.execute(</span>
+                <span class="s1">statement</span><span class="s5">, </span><span class="s1">params </span><span class="s3">or </span><span class="s1">{}</span><span class="s5">, </span><span class="s1">execution_options=execution_options</span>
+            <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+        <span class="s3">if </span><span class="s1">insert_options._dml_strategy == </span><span class="s4">&quot;bulk&quot;</span><span class="s1">:</span>
+            <span class="s1">mapper = insert_options._subject_mapper</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">statement._post_values_clause </span><span class="s3">is not None</span>
+                <span class="s3">and </span><span class="s1">mapper._multiple_persistence_tables</span>
+            <span class="s1">):</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;bulk INSERT with a 'post values' clause &quot;</span>
+                    <span class="s4">&quot;(typically upsert) not supported for multi-table &quot;</span>
+                    <span class="s4">f&quot;mapper </span><span class="s7">{</span><span class="s1">mapper</span><span class="s7">}</span><span class="s4">&quot;</span>
+                <span class="s1">)</span>
+
+            <span class="s3">assert </span><span class="s1">mapper </span><span class="s3">is not None</span>
+            <span class="s3">assert </span><span class="s1">session._transaction </span><span class="s3">is not None</span>
+            <span class="s1">result = _bulk_insert(</span>
+                <span class="s1">mapper</span><span class="s5">,</span>
+                <span class="s1">cast(</span>
+                    <span class="s4">&quot;Iterable[Dict[str, Any]]&quot;</span><span class="s5">,</span>
+                    <span class="s1">[params] </span><span class="s3">if </span><span class="s1">isinstance(params</span><span class="s5">, </span><span class="s1">dict) </span><span class="s3">else </span><span class="s1">params</span><span class="s5">,</span>
+                <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">session._transaction</span><span class="s5">,</span>
+                <span class="s1">isstates=</span><span class="s3">False</span><span class="s5">,</span>
+                <span class="s1">return_defaults=insert_options._return_defaults</span><span class="s5">,</span>
+                <span class="s1">render_nulls=insert_options._render_nulls</span><span class="s5">,</span>
+                <span class="s1">use_orm_insert_stmt=statement</span><span class="s5">,</span>
+                <span class="s1">execution_options=execution_options</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">insert_options._dml_strategy == </span><span class="s4">&quot;orm&quot;</span><span class="s1">:</span>
+            <span class="s1">result = conn.execute(</span>
+                <span class="s1">statement</span><span class="s5">, </span><span class="s1">params </span><span class="s3">or </span><span class="s1">{}</span><span class="s5">, </span><span class="s1">execution_options=execution_options</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">AssertionError()</span>
+
+        <span class="s3">if not </span><span class="s1">bool(statement._returning):</span>
+            <span class="s3">return </span><span class="s1">result</span>
+
+        <span class="s3">if </span><span class="s1">insert_options._populate_existing:</span>
+            <span class="s1">load_options = execution_options.get(</span>
+                <span class="s4">&quot;_sa_orm_load_options&quot;</span><span class="s5">, </span><span class="s1">QueryContext.default_load_options</span>
+            <span class="s1">)</span>
+            <span class="s1">load_options += {</span><span class="s4">&quot;_populate_existing&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span>
+            <span class="s1">execution_options = execution_options.union(</span>
+                <span class="s1">{</span><span class="s4">&quot;_sa_orm_load_options&quot;</span><span class="s1">: load_options}</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">cls._return_orm_returning(</span>
+            <span class="s1">session</span><span class="s5">,</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">params</span><span class="s5">,</span>
+            <span class="s1">execution_options</span><span class="s5">,</span>
+            <span class="s1">bind_arguments</span><span class="s5">,</span>
+            <span class="s1">result</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">create_for_statement(cls</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw) -&gt; BulkORMInsert:</span>
+        <span class="s1">self = cast(</span>
+            <span class="s1">BulkORMInsert</span><span class="s5">,</span>
+            <span class="s1">super().create_for_statement(statement</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">compiler </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">toplevel = </span><span class="s3">not </span><span class="s1">compiler.stack</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">toplevel = </span><span class="s3">True</span>
+        <span class="s3">if not </span><span class="s1">toplevel:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+
+        <span class="s1">mapper = statement._propagate_attrs[</span><span class="s4">&quot;plugin_subject&quot;</span><span class="s1">]</span>
+        <span class="s1">dml_strategy = statement._annotations.get(</span><span class="s4">&quot;dml_strategy&quot;</span><span class="s5">, </span><span class="s4">&quot;raw&quot;</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">dml_strategy == </span><span class="s4">&quot;bulk&quot;</span><span class="s1">:</span>
+            <span class="s1">self._setup_for_bulk_insert(compiler)</span>
+        <span class="s3">elif </span><span class="s1">dml_strategy == </span><span class="s4">&quot;orm&quot;</span><span class="s1">:</span>
+            <span class="s1">self._setup_for_orm_insert(compiler</span><span class="s5">, </span><span class="s1">mapper)</span>
+
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_resolved_keys_as_col_keys(cls</span><span class="s5">, </span><span class="s1">mapper</span><span class="s5">, </span><span class="s1">resolved_value_dict):</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s1">col.key </span><span class="s3">if </span><span class="s1">col </span><span class="s3">is not None else </span><span class="s1">k: v</span>
+            <span class="s3">for </span><span class="s1">col</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s1">(mapper.c.get(k)</span><span class="s5">, </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v) </span><span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">resolved_value_dict.items()</span>
+            <span class="s1">)</span>
+        <span class="s1">}</span>
+
+    <span class="s3">def </span><span class="s1">_setup_for_orm_insert(self</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">mapper):</span>
+        <span class="s1">statement = orm_level_statement = cast(dml.Insert</span><span class="s5">, </span><span class="s1">self.statement)</span>
+
+        <span class="s1">statement = self._setup_orm_returning(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">orm_level_statement</span><span class="s5">,</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">dml_mapper=mapper</span><span class="s5">,</span>
+            <span class="s1">use_supplemental_cols=</span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self.statement = statement</span>
+
+    <span class="s3">def </span><span class="s1">_setup_for_bulk_insert(self</span><span class="s5">, </span><span class="s1">compiler):</span>
+        <span class="s2">&quot;&quot;&quot;establish an INSERT statement within the context of 
+        bulk insert. 
+ 
+        This method will be within the &quot;conn.execute()&quot; call that is invoked 
+        by persistence._emit_insert_statement(). 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">statement = orm_level_statement = cast(dml.Insert</span><span class="s5">, </span><span class="s1">self.statement)</span>
+        <span class="s1">an = statement._annotations</span>
+
+        <span class="s1">emit_insert_table</span><span class="s5">, </span><span class="s1">emit_insert_mapper = (</span>
+            <span class="s1">an[</span><span class="s4">&quot;_emit_insert_table&quot;</span><span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">an[</span><span class="s4">&quot;_emit_insert_mapper&quot;</span><span class="s1">]</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">statement = statement._clone()</span>
+
+        <span class="s1">statement.table = emit_insert_table</span>
+        <span class="s3">if </span><span class="s1">self._dict_parameters:</span>
+            <span class="s1">self._dict_parameters = {</span>
+                <span class="s1">col: val</span>
+                <span class="s3">for </span><span class="s1">col</span><span class="s5">, </span><span class="s1">val </span><span class="s3">in </span><span class="s1">self._dict_parameters.items()</span>
+                <span class="s3">if </span><span class="s1">col.table </span><span class="s3">is </span><span class="s1">emit_insert_table</span>
+            <span class="s1">}</span>
+
+        <span class="s1">statement = self._setup_orm_returning(</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">orm_level_statement</span><span class="s5">,</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">dml_mapper=emit_insert_mapper</span><span class="s5">,</span>
+            <span class="s1">use_supplemental_cols=</span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">self.from_statement_ctx </span><span class="s3">is not None</span>
+            <span class="s3">and </span><span class="s1">self.from_statement_ctx.compile_options._is_star</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.CompileError(</span>
+                <span class="s4">&quot;Can't use RETURNING * with bulk ORM INSERT.  &quot;</span>
+                <span class="s4">&quot;Please use a different INSERT form, such as INSERT..VALUES &quot;</span>
+                <span class="s4">&quot;or INSERT with a Core Connection&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">self.statement = statement</span>
+
+
+<span class="s1">@CompileState.plugin_for(</span><span class="s4">&quot;orm&quot;</span><span class="s5">, </span><span class="s4">&quot;update&quot;</span><span class="s1">)</span>
+<span class="s3">class </span><span class="s1">BulkORMUpdate(BulkUDCompileState</span><span class="s5">, </span><span class="s1">UpdateDMLState):</span>
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">create_for_statement(cls</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s1">self = cls.__new__(cls)</span>
+
+        <span class="s1">dml_strategy = statement._annotations.get(</span>
+            <span class="s4">&quot;dml_strategy&quot;</span><span class="s5">, </span><span class="s4">&quot;unspecified&quot;</span>
+        <span class="s1">)</span>
+
+        <span class="s1">toplevel = </span><span class="s3">not </span><span class="s1">compiler.stack</span>
+
+        <span class="s3">if </span><span class="s1">toplevel </span><span class="s3">and </span><span class="s1">dml_strategy == </span><span class="s4">&quot;bulk&quot;</span><span class="s1">:</span>
+            <span class="s1">self._setup_for_bulk_update(statement</span><span class="s5">, </span><span class="s1">compiler)</span>
+        <span class="s3">elif </span><span class="s1">(</span>
+            <span class="s1">dml_strategy == </span><span class="s4">&quot;core_only&quot;</span>
+            <span class="s3">or </span><span class="s1">dml_strategy == </span><span class="s4">&quot;unspecified&quot;</span>
+            <span class="s3">and </span><span class="s4">&quot;parententity&quot; </span><span class="s3">not in </span><span class="s1">statement.table._annotations</span>
+        <span class="s1">):</span>
+            <span class="s1">UpdateDMLState.__init__(self</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw)</span>
+        <span class="s3">elif not </span><span class="s1">toplevel </span><span class="s3">or </span><span class="s1">dml_strategy </span><span class="s3">in </span><span class="s1">(</span><span class="s4">&quot;orm&quot;</span><span class="s5">, </span><span class="s4">&quot;unspecified&quot;</span><span class="s1">):</span>
+            <span class="s1">self._setup_for_orm_update(statement</span><span class="s5">, </span><span class="s1">compiler)</span>
+
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">_setup_for_orm_update(self</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s1">orm_level_statement = statement</span>
+
+        <span class="s1">toplevel = </span><span class="s3">not </span><span class="s1">compiler.stack</span>
+
+        <span class="s1">ext_info = statement.table._annotations[</span><span class="s4">&quot;parententity&quot;</span><span class="s1">]</span>
+
+        <span class="s1">self.mapper = mapper = ext_info.mapper</span>
+
+        <span class="s1">self._resolved_values = self._get_resolved_values(mapper</span><span class="s5">, </span><span class="s1">statement)</span>
+
+        <span class="s1">self._init_global_attributes(</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">toplevel=toplevel</span><span class="s5">,</span>
+            <span class="s1">process_criteria_for_toplevel=toplevel</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">statement._values:</span>
+            <span class="s1">self._resolved_values = dict(self._resolved_values)</span>
+
+        <span class="s1">new_stmt = statement._clone()</span>
+
+        <span class="s3">if </span><span class="s1">new_stmt.table._annotations[</span><span class="s4">&quot;parententity&quot;</span><span class="s1">] </span><span class="s3">is </span><span class="s1">mapper:</span>
+            <span class="s1">new_stmt.table = mapper.local_table</span>
+
+        <span class="s0"># note if the statement has _multi_values, these</span>
+        <span class="s0"># are passed through to the new statement, which will then raise</span>
+        <span class="s0"># InvalidRequestError because UPDATE doesn't support multi_values</span>
+        <span class="s0"># right now.</span>
+        <span class="s3">if </span><span class="s1">statement._ordered_values:</span>
+            <span class="s1">new_stmt._ordered_values = self._resolved_values</span>
+        <span class="s3">elif </span><span class="s1">statement._values:</span>
+            <span class="s1">new_stmt._values = self._resolved_values</span>
+
+        <span class="s1">new_crit = self._adjust_for_extra_criteria(</span>
+            <span class="s1">self.global_attributes</span><span class="s5">, </span><span class="s1">mapper</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">new_crit:</span>
+            <span class="s1">new_stmt = new_stmt.where(*new_crit)</span>
+
+        <span class="s0"># if we are against a lambda statement we might not be the</span>
+        <span class="s0"># topmost object that received per-execute annotations</span>
+
+        <span class="s0"># do this first as we need to determine if there is</span>
+        <span class="s0"># UPDATE..FROM</span>
+
+        <span class="s1">UpdateDMLState.__init__(self</span><span class="s5">, </span><span class="s1">new_stmt</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+        <span class="s1">use_supplemental_cols = </span><span class="s3">False</span>
+
+        <span class="s3">if not </span><span class="s1">toplevel:</span>
+            <span class="s1">synchronize_session = </span><span class="s3">None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">synchronize_session = compiler._annotations.get(</span>
+                <span class="s4">&quot;synchronize_session&quot;</span><span class="s5">, </span><span class="s3">None</span>
+            <span class="s1">)</span>
+        <span class="s1">can_use_returning = compiler._annotations.get(</span>
+            <span class="s4">&quot;can_use_returning&quot;</span><span class="s5">, </span><span class="s3">None</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">can_use_returning </span><span class="s3">is not False</span><span class="s1">:</span>
+            <span class="s0"># even though pre_exec has determined basic</span>
+            <span class="s0"># can_use_returning for the dialect, if we are to use</span>
+            <span class="s0"># RETURNING we need to run can_use_returning() at this level</span>
+            <span class="s0"># unconditionally because is_delete_using was not known</span>
+            <span class="s0"># at the pre_exec level</span>
+            <span class="s1">can_use_returning = (</span>
+                <span class="s1">synchronize_session == </span><span class="s4">&quot;fetch&quot;</span>
+                <span class="s3">and </span><span class="s1">self.can_use_returning(</span>
+                    <span class="s1">compiler.dialect</span><span class="s5">, </span><span class="s1">mapper</span><span class="s5">, </span><span class="s1">is_multitable=self.is_multitable</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">synchronize_session == </span><span class="s4">&quot;fetch&quot; </span><span class="s3">and </span><span class="s1">can_use_returning:</span>
+            <span class="s1">use_supplemental_cols = </span><span class="s3">True</span>
+
+            <span class="s0"># NOTE: we might want to RETURNING the actual columns to be</span>
+            <span class="s0"># synchronized also.  however this is complicated and difficult</span>
+            <span class="s0"># to align against the behavior of &quot;evaluate&quot;.  Additionally,</span>
+            <span class="s0"># in a large number (if not the majority) of cases, we have the</span>
+            <span class="s0"># &quot;evaluate&quot; answer, usually a fixed value, in memory already and</span>
+            <span class="s0"># there's no need to re-fetch the same value</span>
+            <span class="s0"># over and over again.   so perhaps if it could be RETURNING just</span>
+            <span class="s0"># the elements that were based on a SQL expression and not</span>
+            <span class="s0"># a constant.   For now it doesn't quite seem worth it</span>
+            <span class="s1">new_stmt = new_stmt.return_defaults(*new_stmt.table.primary_key)</span>
+
+        <span class="s3">if </span><span class="s1">toplevel:</span>
+            <span class="s1">new_stmt = self._setup_orm_returning(</span>
+                <span class="s1">compiler</span><span class="s5">,</span>
+                <span class="s1">orm_level_statement</span><span class="s5">,</span>
+                <span class="s1">new_stmt</span><span class="s5">,</span>
+                <span class="s1">dml_mapper=mapper</span><span class="s5">,</span>
+                <span class="s1">use_supplemental_cols=use_supplemental_cols</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+        <span class="s1">self.statement = new_stmt</span>
+
+    <span class="s3">def </span><span class="s1">_setup_for_bulk_update(self</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s2">&quot;&quot;&quot;establish an UPDATE statement within the context of 
+        bulk insert. 
+ 
+        This method will be within the &quot;conn.execute()&quot; call that is invoked 
+        by persistence._emit_update_statement(). 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">statement = cast(dml.Update</span><span class="s5">, </span><span class="s1">statement)</span>
+        <span class="s1">an = statement._annotations</span>
+
+        <span class="s1">emit_update_table</span><span class="s5">, </span><span class="s1">_ = (</span>
+            <span class="s1">an[</span><span class="s4">&quot;_emit_update_table&quot;</span><span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">an[</span><span class="s4">&quot;_emit_update_mapper&quot;</span><span class="s1">]</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">statement = statement._clone()</span>
+        <span class="s1">statement.table = emit_update_table</span>
+
+        <span class="s1">UpdateDMLState.__init__(self</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+        <span class="s3">if </span><span class="s1">self._ordered_values:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                <span class="s4">&quot;bulk ORM UPDATE does not support ordered_values() for &quot;</span>
+                <span class="s4">&quot;custom UPDATE statements with bulk parameter sets.  Use a &quot;</span>
+                <span class="s4">&quot;non-bulk UPDATE statement or use values().&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self._dict_parameters:</span>
+            <span class="s1">self._dict_parameters = {</span>
+                <span class="s1">col: val</span>
+                <span class="s3">for </span><span class="s1">col</span><span class="s5">, </span><span class="s1">val </span><span class="s3">in </span><span class="s1">self._dict_parameters.items()</span>
+                <span class="s3">if </span><span class="s1">col.table </span><span class="s3">is </span><span class="s1">emit_update_table</span>
+            <span class="s1">}</span>
+        <span class="s1">self.statement = statement</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">orm_execute_statement(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session: Session</span><span class="s5">,</span>
+        <span class="s1">statement: dml.Update</span><span class="s5">,</span>
+        <span class="s1">params: _CoreAnyExecuteParams</span><span class="s5">,</span>
+        <span class="s1">execution_options: OrmExecuteOptionsParameter</span><span class="s5">,</span>
+        <span class="s1">bind_arguments: _BindArguments</span><span class="s5">,</span>
+        <span class="s1">conn: Connection</span><span class="s5">,</span>
+    <span class="s1">) -&gt; _result.Result:</span>
+
+        <span class="s1">update_options = execution_options.get(</span>
+            <span class="s4">&quot;_sa_orm_update_options&quot;</span><span class="s5">, </span><span class="s1">cls.default_update_options</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">update_options._populate_existing:</span>
+            <span class="s1">load_options = execution_options.get(</span>
+                <span class="s4">&quot;_sa_orm_load_options&quot;</span><span class="s5">, </span><span class="s1">QueryContext.default_load_options</span>
+            <span class="s1">)</span>
+            <span class="s1">load_options += {</span><span class="s4">&quot;_populate_existing&quot;</span><span class="s1">: </span><span class="s3">True</span><span class="s1">}</span>
+            <span class="s1">execution_options = execution_options.union(</span>
+                <span class="s1">{</span><span class="s4">&quot;_sa_orm_load_options&quot;</span><span class="s1">: load_options}</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">update_options._dml_strategy </span><span class="s3">not in </span><span class="s1">(</span>
+            <span class="s4">&quot;orm&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;auto&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;bulk&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;core_only&quot;</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s4">&quot;Valid strategies for ORM UPDATE strategy &quot;</span>
+                <span class="s4">&quot;are 'orm', 'auto', 'bulk', 'core_only'&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">result: _result.Result[Any]</span>
+
+        <span class="s3">if </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;bulk&quot;</span><span class="s1">:</span>
+            <span class="s1">enable_check_rowcount = </span><span class="s3">not </span><span class="s1">statement._where_criteria</span>
+
+            <span class="s3">assert </span><span class="s1">update_options._synchronize_session != </span><span class="s4">&quot;fetch&quot;</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">statement._where_criteria</span>
+                <span class="s3">and </span><span class="s1">update_options._synchronize_session == </span><span class="s4">&quot;evaluate&quot;</span>
+            <span class="s1">):</span>
+                <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                    <span class="s4">&quot;bulk synchronize of persistent objects not supported &quot;</span>
+                    <span class="s4">&quot;when using bulk update with additional WHERE &quot;</span>
+                    <span class="s4">&quot;criteria right now.  add synchronize_session=None &quot;</span>
+                    <span class="s4">&quot;execution option to bypass synchronize of persistent &quot;</span>
+                    <span class="s4">&quot;objects.&quot;</span>
+                <span class="s1">)</span>
+            <span class="s1">mapper = update_options._subject_mapper</span>
+            <span class="s3">assert </span><span class="s1">mapper </span><span class="s3">is not None</span>
+            <span class="s3">assert </span><span class="s1">session._transaction </span><span class="s3">is not None</span>
+            <span class="s1">result = _bulk_update(</span>
+                <span class="s1">mapper</span><span class="s5">,</span>
+                <span class="s1">cast(</span>
+                    <span class="s4">&quot;Iterable[Dict[str, Any]]&quot;</span><span class="s5">,</span>
+                    <span class="s1">[params] </span><span class="s3">if </span><span class="s1">isinstance(params</span><span class="s5">, </span><span class="s1">dict) </span><span class="s3">else </span><span class="s1">params</span><span class="s5">,</span>
+                <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">session._transaction</span><span class="s5">,</span>
+                <span class="s1">isstates=</span><span class="s3">False</span><span class="s5">,</span>
+                <span class="s1">update_changed_only=</span><span class="s3">False</span><span class="s5">,</span>
+                <span class="s1">use_orm_update_stmt=statement</span><span class="s5">,</span>
+                <span class="s1">enable_check_rowcount=enable_check_rowcount</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">return </span><span class="s1">cls.orm_setup_cursor_result(</span>
+                <span class="s1">session</span><span class="s5">,</span>
+                <span class="s1">statement</span><span class="s5">,</span>
+                <span class="s1">params</span><span class="s5">,</span>
+                <span class="s1">execution_options</span><span class="s5">,</span>
+                <span class="s1">bind_arguments</span><span class="s5">,</span>
+                <span class="s1">result</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">super().orm_execute_statement(</span>
+                <span class="s1">session</span><span class="s5">,</span>
+                <span class="s1">statement</span><span class="s5">,</span>
+                <span class="s1">params</span><span class="s5">,</span>
+                <span class="s1">execution_options</span><span class="s5">,</span>
+                <span class="s1">bind_arguments</span><span class="s5">,</span>
+                <span class="s1">conn</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">can_use_returning(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">dialect: Dialect</span><span class="s5">,</span>
+        <span class="s1">mapper: Mapper[Any]</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">is_multitable: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">is_update_from: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">is_delete_using: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">is_executemany: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s0"># normal answer for &quot;should we use RETURNING&quot; at all.</span>
+        <span class="s1">normal_answer = (</span>
+            <span class="s1">dialect.update_returning </span><span class="s3">and </span><span class="s1">mapper.local_table.implicit_returning</span>
+        <span class="s1">)</span>
+        <span class="s3">if not </span><span class="s1">normal_answer:</span>
+            <span class="s3">return False</span>
+
+        <span class="s3">if </span><span class="s1">is_executemany:</span>
+            <span class="s3">return </span><span class="s1">dialect.update_executemany_returning</span>
+
+        <span class="s0"># these workarounds are currently hypothetical for UPDATE,</span>
+        <span class="s0"># unlike DELETE where they impact MariaDB</span>
+        <span class="s3">if </span><span class="s1">is_update_from:</span>
+            <span class="s3">return </span><span class="s1">dialect.update_returning_multifrom</span>
+
+        <span class="s3">elif </span><span class="s1">is_multitable </span><span class="s3">and not </span><span class="s1">dialect.update_returning_multifrom:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.CompileError(</span>
+                <span class="s4">f'Dialect &quot;</span><span class="s7">{</span><span class="s1">dialect.name</span><span class="s7">}</span><span class="s4">&quot; does not support RETURNING '</span>
+                <span class="s4">&quot;with UPDATE..FROM; for synchronize_session='fetch', &quot;</span>
+                <span class="s4">&quot;please add the additional execution option &quot;</span>
+                <span class="s4">&quot;'is_update_from=True' to the statement to indicate that &quot;</span>
+                <span class="s4">&quot;a separate SELECT should be used for this backend.&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_do_post_synchronize_bulk_evaluate(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">session</span><span class="s5">, </span><span class="s1">params</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">update_options</span>
+    <span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">params:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">mapper = update_options._subject_mapper</span>
+        <span class="s1">pk_keys = [prop.key </span><span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">mapper._identity_key_props]</span>
+
+        <span class="s1">identity_map = session.identity_map</span>
+
+        <span class="s3">for </span><span class="s1">param </span><span class="s3">in </span><span class="s1">params:</span>
+            <span class="s1">identity_key = mapper.identity_key_from_primary_key(</span>
+                <span class="s1">(param[key] </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">pk_keys)</span><span class="s5">,</span>
+                <span class="s1">update_options._identity_token</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s1">state = identity_map.fast_get_state(identity_key)</span>
+            <span class="s3">if not </span><span class="s1">state:</span>
+                <span class="s3">continue</span>
+
+            <span class="s1">evaluated_keys = set(param).difference(pk_keys)</span>
+
+            <span class="s1">dict_ = state.dict</span>
+            <span class="s0"># only evaluate unmodified attributes</span>
+            <span class="s1">to_evaluate = state.unmodified.intersection(evaluated_keys)</span>
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">to_evaluate:</span>
+                <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">dict_:</span>
+                    <span class="s1">dict_[key] = param[key]</span>
+
+            <span class="s1">state.manager.dispatch.refresh(state</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">to_evaluate)</span>
+
+            <span class="s1">state._commit(dict_</span><span class="s5">, </span><span class="s1">list(to_evaluate))</span>
+
+            <span class="s0"># attributes that were formerly modified instead get expired.</span>
+            <span class="s0"># this only gets hit if the session had pending changes</span>
+            <span class="s0"># and autoflush were set to False.</span>
+            <span class="s1">to_expire = evaluated_keys.intersection(dict_).difference(</span>
+                <span class="s1">to_evaluate</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">to_expire:</span>
+                <span class="s1">state._expire_attributes(dict_</span><span class="s5">, </span><span class="s1">to_expire)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_do_post_synchronize_evaluate(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">session</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">update_options</span>
+    <span class="s1">):</span>
+        <span class="s1">matched_objects = cls._get_matched_objects_on_criteria(</span>
+            <span class="s1">update_options</span><span class="s5">,</span>
+            <span class="s1">session.identity_map.all_states()</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">cls._apply_update_set_values_to_objects(</span>
+            <span class="s1">session</span><span class="s5">,</span>
+            <span class="s1">update_options</span><span class="s5">,</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">result.context.compiled_parameters[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">[(obj</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_) </span><span class="s3">for </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">matched_objects]</span><span class="s5">,</span>
+            <span class="s1">result.prefetch_cols()</span><span class="s5">,</span>
+            <span class="s1">result.postfetch_cols()</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_do_post_synchronize_fetch(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">session</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">update_options</span>
+    <span class="s1">):</span>
+        <span class="s1">target_mapper = update_options._subject_mapper</span>
+
+        <span class="s1">returned_defaults_rows = result.returned_defaults_rows</span>
+        <span class="s3">if </span><span class="s1">returned_defaults_rows:</span>
+            <span class="s1">pk_rows = cls._interpret_returning_rows(</span>
+                <span class="s1">result</span><span class="s5">, </span><span class="s1">target_mapper</span><span class="s5">, </span><span class="s1">returned_defaults_rows</span>
+            <span class="s1">)</span>
+            <span class="s1">matched_rows = [</span>
+                <span class="s1">tuple(row) + (update_options._identity_token</span><span class="s5">,</span><span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">pk_rows</span>
+            <span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">matched_rows = update_options._matched_rows</span>
+
+        <span class="s1">objs = [</span>
+            <span class="s1">session.identity_map[identity_key]</span>
+            <span class="s3">for </span><span class="s1">identity_key </span><span class="s3">in </span><span class="s1">[</span>
+                <span class="s1">target_mapper.identity_key_from_primary_key(</span>
+                    <span class="s1">list(primary_key)</span><span class="s5">,</span>
+                    <span class="s1">identity_token=identity_token</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">primary_key</span><span class="s5">, </span><span class="s1">identity_token </span><span class="s3">in </span><span class="s1">[</span>
+                    <span class="s1">(row[</span><span class="s6">0</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]</span><span class="s5">, </span><span class="s1">row[-</span><span class="s6">1</span><span class="s1">]) </span><span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">matched_rows</span>
+                <span class="s1">]</span>
+                <span class="s3">if </span><span class="s1">update_options._identity_token </span><span class="s3">is None</span>
+                <span class="s3">or </span><span class="s1">identity_token == update_options._identity_token</span>
+            <span class="s1">]</span>
+            <span class="s3">if </span><span class="s1">identity_key </span><span class="s3">in </span><span class="s1">session.identity_map</span>
+        <span class="s1">]</span>
+
+        <span class="s3">if not </span><span class="s1">objs:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">cls._apply_update_set_values_to_objects(</span>
+            <span class="s1">session</span><span class="s5">,</span>
+            <span class="s1">update_options</span><span class="s5">,</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">result.context.compiled_parameters[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">[</span>
+                <span class="s1">(</span>
+                    <span class="s1">obj</span><span class="s5">,</span>
+                    <span class="s1">attributes.instance_state(obj)</span><span class="s5">,</span>
+                    <span class="s1">attributes.instance_dict(obj)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">obj </span><span class="s3">in </span><span class="s1">objs</span>
+            <span class="s1">]</span><span class="s5">,</span>
+            <span class="s1">result.prefetch_cols()</span><span class="s5">,</span>
+            <span class="s1">result.postfetch_cols()</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_apply_update_set_values_to_objects(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session</span><span class="s5">,</span>
+        <span class="s1">update_options</span><span class="s5">,</span>
+        <span class="s1">statement</span><span class="s5">,</span>
+        <span class="s1">effective_params</span><span class="s5">,</span>
+        <span class="s1">matched_objects</span><span class="s5">,</span>
+        <span class="s1">prefetch_cols</span><span class="s5">,</span>
+        <span class="s1">postfetch_cols</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;apply values to objects derived from an update statement, e.g. 
+        UPDATE..SET &lt;values&gt; 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">mapper = update_options._subject_mapper</span>
+        <span class="s1">target_cls = mapper.class_</span>
+        <span class="s1">evaluator_compiler = evaluator._EvaluatorCompiler(target_cls)</span>
+        <span class="s1">resolved_values = cls._get_resolved_values(mapper</span><span class="s5">, </span><span class="s1">statement)</span>
+        <span class="s1">resolved_keys_as_propnames = cls._resolved_keys_as_propnames(</span>
+            <span class="s1">mapper</span><span class="s5">, </span><span class="s1">resolved_values</span>
+        <span class="s1">)</span>
+        <span class="s1">value_evaluators = {}</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">resolved_keys_as_propnames:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">_evaluator = evaluator_compiler.process(</span>
+                    <span class="s1">coercions.expect(roles.ExpressionElementRole</span><span class="s5">, </span><span class="s1">value)</span>
+                <span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">evaluator.UnevaluatableError:</span>
+                <span class="s3">pass</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">value_evaluators[key] = _evaluator</span>
+
+        <span class="s1">evaluated_keys = list(value_evaluators.keys())</span>
+        <span class="s1">attrib = {k </span><span class="s3">for </span><span class="s1">k</span><span class="s5">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">resolved_keys_as_propnames}</span>
+
+        <span class="s1">states = set()</span>
+
+        <span class="s1">to_prefetch = {</span>
+            <span class="s1">c</span>
+            <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">prefetch_cols</span>
+            <span class="s3">if </span><span class="s1">c.key </span><span class="s3">in </span><span class="s1">effective_params</span>
+            <span class="s3">and </span><span class="s1">c </span><span class="s3">in </span><span class="s1">mapper._columntoproperty</span>
+            <span class="s3">and </span><span class="s1">c.key </span><span class="s3">not in </span><span class="s1">evaluated_keys</span>
+        <span class="s1">}</span>
+        <span class="s1">to_expire = {</span>
+            <span class="s1">mapper._columntoproperty[c].key</span>
+            <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">postfetch_cols</span>
+            <span class="s3">if </span><span class="s1">c </span><span class="s3">in </span><span class="s1">mapper._columntoproperty</span>
+        <span class="s1">}.difference(evaluated_keys)</span>
+
+        <span class="s1">prefetch_transfer = [</span>
+            <span class="s1">(mapper._columntoproperty[c].key</span><span class="s5">, </span><span class="s1">c.key) </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">to_prefetch</span>
+        <span class="s1">]</span>
+
+        <span class="s3">for </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_ </span><span class="s3">in </span><span class="s1">matched_objects:</span>
+
+            <span class="s1">dict_.update(</span>
+                <span class="s1">{</span>
+                    <span class="s1">col_to_prop: effective_params[c_key]</span>
+                    <span class="s3">for </span><span class="s1">col_to_prop</span><span class="s5">, </span><span class="s1">c_key </span><span class="s3">in </span><span class="s1">prefetch_transfer</span>
+                <span class="s1">}</span>
+            <span class="s1">)</span>
+
+            <span class="s1">state._expire_attributes(state.dict</span><span class="s5">, </span><span class="s1">to_expire)</span>
+
+            <span class="s1">to_evaluate = state.unmodified.intersection(evaluated_keys)</span>
+
+            <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">to_evaluate:</span>
+                <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">dict_:</span>
+                    <span class="s0"># only run eval for attributes that are present.</span>
+                    <span class="s1">dict_[key] = value_evaluators[key](obj)</span>
+
+            <span class="s1">state.manager.dispatch.refresh(state</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">to_evaluate)</span>
+
+            <span class="s1">state._commit(dict_</span><span class="s5">, </span><span class="s1">list(to_evaluate))</span>
+
+            <span class="s0"># attributes that were formerly modified instead get expired.</span>
+            <span class="s0"># this only gets hit if the session had pending changes</span>
+            <span class="s0"># and autoflush were set to False.</span>
+            <span class="s1">to_expire = attrib.intersection(dict_).difference(to_evaluate)</span>
+            <span class="s3">if </span><span class="s1">to_expire:</span>
+                <span class="s1">state._expire_attributes(dict_</span><span class="s5">, </span><span class="s1">to_expire)</span>
+
+            <span class="s1">states.add(state)</span>
+        <span class="s1">session._register_altered(states)</span>
+
+
+<span class="s1">@CompileState.plugin_for(</span><span class="s4">&quot;orm&quot;</span><span class="s5">, </span><span class="s4">&quot;delete&quot;</span><span class="s1">)</span>
+<span class="s3">class </span><span class="s1">BulkORMDelete(BulkUDCompileState</span><span class="s5">, </span><span class="s1">DeleteDMLState):</span>
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">create_for_statement(cls</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s1">self = cls.__new__(cls)</span>
+
+        <span class="s1">dml_strategy = statement._annotations.get(</span>
+            <span class="s4">&quot;dml_strategy&quot;</span><span class="s5">, </span><span class="s4">&quot;unspecified&quot;</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">dml_strategy == </span><span class="s4">&quot;core_only&quot;</span>
+            <span class="s3">or </span><span class="s1">dml_strategy == </span><span class="s4">&quot;unspecified&quot;</span>
+            <span class="s3">and </span><span class="s4">&quot;parententity&quot; </span><span class="s3">not in </span><span class="s1">statement.table._annotations</span>
+        <span class="s1">):</span>
+            <span class="s1">DeleteDMLState.__init__(self</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw)</span>
+            <span class="s3">return </span><span class="s1">self</span>
+
+        <span class="s1">toplevel = </span><span class="s3">not </span><span class="s1">compiler.stack</span>
+
+        <span class="s1">orm_level_statement = statement</span>
+
+        <span class="s1">ext_info = statement.table._annotations[</span><span class="s4">&quot;parententity&quot;</span><span class="s1">]</span>
+        <span class="s1">self.mapper = mapper = ext_info.mapper</span>
+
+        <span class="s1">self._init_global_attributes(</span>
+            <span class="s1">statement</span><span class="s5">,</span>
+            <span class="s1">compiler</span><span class="s5">,</span>
+            <span class="s1">toplevel=toplevel</span><span class="s5">,</span>
+            <span class="s1">process_criteria_for_toplevel=toplevel</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">new_stmt = statement._clone()</span>
+
+        <span class="s3">if </span><span class="s1">new_stmt.table._annotations[</span><span class="s4">&quot;parententity&quot;</span><span class="s1">] </span><span class="s3">is </span><span class="s1">mapper:</span>
+            <span class="s1">new_stmt.table = mapper.local_table</span>
+
+        <span class="s1">new_crit = cls._adjust_for_extra_criteria(</span>
+            <span class="s1">self.global_attributes</span><span class="s5">, </span><span class="s1">mapper</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">new_crit:</span>
+            <span class="s1">new_stmt = new_stmt.where(*new_crit)</span>
+
+        <span class="s0"># do this first as we need to determine if there is</span>
+        <span class="s0"># DELETE..FROM</span>
+        <span class="s1">DeleteDMLState.__init__(self</span><span class="s5">, </span><span class="s1">new_stmt</span><span class="s5">, </span><span class="s1">compiler</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+        <span class="s1">use_supplemental_cols = </span><span class="s3">False</span>
+
+        <span class="s3">if not </span><span class="s1">toplevel:</span>
+            <span class="s1">synchronize_session = </span><span class="s3">None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">synchronize_session = compiler._annotations.get(</span>
+                <span class="s4">&quot;synchronize_session&quot;</span><span class="s5">, </span><span class="s3">None</span>
+            <span class="s1">)</span>
+        <span class="s1">can_use_returning = compiler._annotations.get(</span>
+            <span class="s4">&quot;can_use_returning&quot;</span><span class="s5">, </span><span class="s3">None</span>
+        <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">can_use_returning </span><span class="s3">is not False</span><span class="s1">:</span>
+            <span class="s0"># even though pre_exec has determined basic</span>
+            <span class="s0"># can_use_returning for the dialect, if we are to use</span>
+            <span class="s0"># RETURNING we need to run can_use_returning() at this level</span>
+            <span class="s0"># unconditionally because is_delete_using was not known</span>
+            <span class="s0"># at the pre_exec level</span>
+            <span class="s1">can_use_returning = (</span>
+                <span class="s1">synchronize_session == </span><span class="s4">&quot;fetch&quot;</span>
+                <span class="s3">and </span><span class="s1">self.can_use_returning(</span>
+                    <span class="s1">compiler.dialect</span><span class="s5">,</span>
+                    <span class="s1">mapper</span><span class="s5">,</span>
+                    <span class="s1">is_multitable=self.is_multitable</span><span class="s5">,</span>
+                    <span class="s1">is_delete_using=compiler._annotations.get(</span>
+                        <span class="s4">&quot;is_delete_using&quot;</span><span class="s5">, </span><span class="s3">False</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">can_use_returning:</span>
+            <span class="s1">use_supplemental_cols = </span><span class="s3">True</span>
+
+            <span class="s1">new_stmt = new_stmt.return_defaults(*new_stmt.table.primary_key)</span>
+
+        <span class="s3">if </span><span class="s1">toplevel:</span>
+            <span class="s1">new_stmt = self._setup_orm_returning(</span>
+                <span class="s1">compiler</span><span class="s5">,</span>
+                <span class="s1">orm_level_statement</span><span class="s5">,</span>
+                <span class="s1">new_stmt</span><span class="s5">,</span>
+                <span class="s1">dml_mapper=mapper</span><span class="s5">,</span>
+                <span class="s1">use_supplemental_cols=use_supplemental_cols</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+        <span class="s1">self.statement = new_stmt</span>
+
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">orm_execute_statement(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">session: Session</span><span class="s5">,</span>
+        <span class="s1">statement: dml.Delete</span><span class="s5">,</span>
+        <span class="s1">params: _CoreAnyExecuteParams</span><span class="s5">,</span>
+        <span class="s1">execution_options: OrmExecuteOptionsParameter</span><span class="s5">,</span>
+        <span class="s1">bind_arguments: _BindArguments</span><span class="s5">,</span>
+        <span class="s1">conn: Connection</span><span class="s5">,</span>
+    <span class="s1">) -&gt; _result.Result:</span>
+        <span class="s1">update_options = execution_options.get(</span>
+            <span class="s4">&quot;_sa_orm_update_options&quot;</span><span class="s5">, </span><span class="s1">cls.default_update_options</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">update_options._dml_strategy == </span><span class="s4">&quot;bulk&quot;</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Bulk ORM DELETE not supported right now. &quot;</span>
+                <span class="s4">&quot;Statement may be invoked at the &quot;</span>
+                <span class="s4">&quot;Core level using &quot;</span>
+                <span class="s4">&quot;session.connection().execute(stmt, parameters)&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">update_options._dml_strategy </span><span class="s3">not in </span><span class="s1">(</span><span class="s4">&quot;orm&quot;</span><span class="s5">, </span><span class="s4">&quot;auto&quot;</span><span class="s5">, </span><span class="s4">&quot;core_only&quot;</span><span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s4">&quot;Valid strategies for ORM DELETE strategy are 'orm', 'auto', &quot;</span>
+                <span class="s4">&quot;'core_only'&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">super().orm_execute_statement(</span>
+            <span class="s1">session</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">params</span><span class="s5">, </span><span class="s1">execution_options</span><span class="s5">, </span><span class="s1">bind_arguments</span><span class="s5">, </span><span class="s1">conn</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">can_use_returning(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">dialect: Dialect</span><span class="s5">,</span>
+        <span class="s1">mapper: Mapper[Any]</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">is_multitable: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">is_update_from: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">is_delete_using: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">is_executemany: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">) -&gt; bool:</span>
+        <span class="s0"># normal answer for &quot;should we use RETURNING&quot; at all.</span>
+        <span class="s1">normal_answer = (</span>
+            <span class="s1">dialect.delete_returning </span><span class="s3">and </span><span class="s1">mapper.local_table.implicit_returning</span>
+        <span class="s1">)</span>
+        <span class="s3">if not </span><span class="s1">normal_answer:</span>
+            <span class="s3">return False</span>
+
+        <span class="s0"># now get into special workarounds because MariaDB supports</span>
+        <span class="s0"># DELETE...RETURNING but not DELETE...USING...RETURNING.</span>
+        <span class="s3">if </span><span class="s1">is_delete_using:</span>
+            <span class="s0"># is_delete_using hint was passed.   use</span>
+            <span class="s0"># additional dialect feature (True for PG, False for MariaDB)</span>
+            <span class="s3">return </span><span class="s1">dialect.delete_returning_multifrom</span>
+
+        <span class="s3">elif </span><span class="s1">is_multitable </span><span class="s3">and not </span><span class="s1">dialect.delete_returning_multifrom:</span>
+            <span class="s0"># is_delete_using hint was not passed, but we determined</span>
+            <span class="s0"># at compile time that this is in fact a DELETE..USING.</span>
+            <span class="s0"># it's too late to continue since we did not pre-SELECT.</span>
+            <span class="s0"># raise that we need that hint up front.</span>
+
+            <span class="s3">raise </span><span class="s1">sa_exc.CompileError(</span>
+                <span class="s4">f'Dialect &quot;</span><span class="s7">{</span><span class="s1">dialect.name</span><span class="s7">}</span><span class="s4">&quot; does not support RETURNING '</span>
+                <span class="s4">&quot;with DELETE..USING; for synchronize_session='fetch', &quot;</span>
+                <span class="s4">&quot;please add the additional execution option &quot;</span>
+                <span class="s4">&quot;'is_delete_using=True' to the statement to indicate that &quot;</span>
+                <span class="s4">&quot;a separate SELECT should be used for this backend.&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return True</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_do_post_synchronize_evaluate(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">session</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">update_options</span>
+    <span class="s1">):</span>
+        <span class="s1">matched_objects = cls._get_matched_objects_on_criteria(</span>
+            <span class="s1">update_options</span><span class="s5">,</span>
+            <span class="s1">session.identity_map.all_states()</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">to_delete = []</span>
+
+        <span class="s3">for </span><span class="s1">_</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">is_partially_expired </span><span class="s3">in </span><span class="s1">matched_objects:</span>
+            <span class="s3">if </span><span class="s1">is_partially_expired:</span>
+                <span class="s1">state._expire(dict_</span><span class="s5">, </span><span class="s1">session.identity_map._modified)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">to_delete.append(state)</span>
+
+        <span class="s3">if </span><span class="s1">to_delete:</span>
+            <span class="s1">session._remove_newly_deleted(to_delete)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_do_post_synchronize_fetch(</span>
+        <span class="s1">cls</span><span class="s5">, </span><span class="s1">session</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">update_options</span>
+    <span class="s1">):</span>
+        <span class="s1">target_mapper = update_options._subject_mapper</span>
+
+        <span class="s1">returned_defaults_rows = result.returned_defaults_rows</span>
+
+        <span class="s3">if </span><span class="s1">returned_defaults_rows:</span>
+            <span class="s1">pk_rows = cls._interpret_returning_rows(</span>
+                <span class="s1">result</span><span class="s5">, </span><span class="s1">target_mapper</span><span class="s5">, </span><span class="s1">returned_defaults_rows</span>
+            <span class="s1">)</span>
+
+            <span class="s1">matched_rows = [</span>
+                <span class="s1">tuple(row) + (update_options._identity_token</span><span class="s5">,</span><span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">pk_rows</span>
+            <span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">matched_rows = update_options._matched_rows</span>
+
+        <span class="s3">for </span><span class="s1">row </span><span class="s3">in </span><span class="s1">matched_rows:</span>
+            <span class="s1">primary_key = row[</span><span class="s6">0</span><span class="s1">:-</span><span class="s6">1</span><span class="s1">]</span>
+            <span class="s1">identity_token = row[-</span><span class="s6">1</span><span class="s1">]</span>
+
+            <span class="s0"># TODO: inline this and call remove_newly_deleted</span>
+            <span class="s0"># once</span>
+            <span class="s1">identity_key = target_mapper.identity_key_from_primary_key(</span>
+                <span class="s1">list(primary_key)</span><span class="s5">,</span>
+                <span class="s1">identity_token=identity_token</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">identity_key </span><span class="s3">in </span><span class="s1">session.identity_map:</span>
+                <span class="s1">session._remove_newly_deleted(</span>
+                    <span class="s1">[</span>
+                        <span class="s1">attributes.instance_state(</span>
+                            <span class="s1">session.identity_map[identity_key]</span>
+                        <span class="s1">)</span>
+                    <span class="s1">]</span>
+                <span class="s1">)</span>
+</pre>
+</body>
+</html>

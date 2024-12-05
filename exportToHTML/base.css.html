@@ -1,0 +1,334 @@
+<html>
+<head>
+<title>base.css</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #e8bf6a;}
+.s3 { color: #bababa;}
+.s4 { color: #d8d8d8;}
+.s5 { color: #bbb55b;}
+.s6 { color: #cc7832;}
+.s7 { color: #a5c261;}
+.s8 { color: #6897bb;}
+.s9 { color: #cc8b60;}
+.s10 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+base.css</font>
+</center></td></tr></table>
+<pre><span class="s0">/* Reset básico */</span>
+<span class="s2">* </span><span class="s1">{</span>
+    <span class="s3">margin</span><span class="s4">: </span><span class="s5">0</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">0</span><span class="s6">;</span>
+    <span class="s3">box-sizing</span><span class="s4">: </span><span class="s7">border-box</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s2">body </span><span class="s1">{</span>
+    <span class="s3">font-family</span><span class="s4">: </span><span class="s2">Arial</span><span class="s6">, </span><span class="s7">sans-serif</span><span class="s6">;</span>
+    <span class="s3">line-height</span><span class="s4">: </span><span class="s5">1.6</span><span class="s6">;</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#f4f4f4</span><span class="s6">; </span><span class="s0">/* Cor de fundo padrão */</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s8">#333</span><span class="s6">; </span><span class="s0">/* Cor do texto padrão */</span>
+<span class="s1">}</span>
+<span class="s0">/* Barra de navegação */</span>
+<span class="s1">.</span><span class="s2">nav-bar </span><span class="s1">{</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">50</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#333</span><span class="s6">; </span><span class="s0">/* Fundo escuro */</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">10</span><span class="s7">px </span><span class="s5">20</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">justify-content</span><span class="s4">: </span><span class="s7">space-between</span><span class="s6">; </span><span class="s0">/* Espaça os itens de navegação e a lupa */</span>
+    <span class="s3">align-items</span><span class="s4">: </span><span class="s7">center</span><span class="s6">; </span><span class="s0">/* Centraliza verticalmente */</span>
+<span class="s1">}</span>
+
+<span class="s1">.</span><span class="s2">nav-bar </span><span class="s1">.</span><span class="s2">menu </span><span class="s1">{</span>
+    <span class="s3">list-style</span><span class="s4">: </span><span class="s7">none</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">gap</span><span class="s4">: </span><span class="s5">20</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">align-items</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+    <span class="s3">justify-content</span><span class="s4">: </span><span class="s7">center</span><span class="s6">; </span><span class="s0">/* Centraliza os itens da navegação */</span>
+    <span class="s3">flex-grow</span><span class="s4">: </span><span class="s5">1</span><span class="s6">; </span><span class="s0">/* Faz os itens da navegação ocuparem o espaço disponível */</span>
+<span class="s1">}</span>
+
+<span class="s1">.</span><span class="s2">nav-bar </span><span class="s1">.</span><span class="s2">menu li </span><span class="s1">{</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s7">white</span><span class="s6">;</span>
+    <span class="s3">cursor</span><span class="s4">: </span><span class="s7">pointer</span><span class="s6">;</span>
+    <span class="s3">text-transform</span><span class="s4">: </span><span class="s7">uppercase</span><span class="s6">;</span>
+    <span class="s3">font-size</span><span class="s4">: </span><span class="s5">14</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">transition</span><span class="s4">: </span><span class="s7">color </span><span class="s5">0.3</span><span class="s7">s ease</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s1">.</span><span class="s2">nav-bar </span><span class="s1">.</span><span class="s2">menu li</span><span class="s4">:</span><span class="s2">hover </span><span class="s1">{</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s8">#f4a261</span><span class="s6">; </span><span class="s0">/* Cor de destaque ao passar o mouse */</span>
+<span class="s1">}</span>
+
+
+<span class="s0">/* Caixa de pesquisa */</span>
+<span class="s1">.</span><span class="s2">search-box </span><span class="s1">{</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">22</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">none</span><span class="s6">; </span><span class="s0">/* Oculta a caixa de pesquisa por padrão */</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#05fa00</span><span class="s6">;</span>
+    <span class="s3">position</span><span class="s4">: </span><span class="s7">absolute</span><span class="s6">;</span>
+    <span class="s3">top</span><span class="s4">: </span><span class="s5">14</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Posiciona a caixa abaixo da barra de navegação */</span>
+    <span class="s3">right</span><span class="s4">: </span><span class="s5">70</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">5</span><span class="s7">px </span><span class="s5">10</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">border-radius</span><span class="s4">: </span><span class="s5">5</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">box-shadow</span><span class="s4">: </span><span class="s5">0</span><span class="s7">px </span><span class="s5">4</span><span class="s7">px </span><span class="s5">6</span><span class="s7">px </span><span class="s2">rgba</span><span class="s1">(</span><span class="s5">0</span><span class="s6">, </span><span class="s5">0</span><span class="s6">, </span><span class="s5">0</span><span class="s6">, </span><span class="s5">0.1</span><span class="s1">)</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">gap</span><span class="s4">: </span><span class="s5">10</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">align-items</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s1">.</span><span class="s2">search-box input </span><span class="s1">{</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">18</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">8</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">border</span><span class="s4">: </span><span class="s5">1</span><span class="s7">px solid </span><span class="s8">#ccc</span><span class="s6">;</span>
+    <span class="s3">border-radius</span><span class="s4">: </span><span class="s5">5</span><span class="s7">px</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s1">.</span><span class="s2">search-box button </span><span class="s1">{</span>
+    <span class="s3">top</span><span class="s4">: </span><span class="s1">-</span><span class="s5">5</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">right</span><span class="s4">: </span><span class="s1">-</span><span class="s5">60</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">position</span><span class="s4">: </span><span class="s7">absolute</span><span class="s6">;</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">28</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#121aff</span><span class="s6">;</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s7">white</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">8</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">border</span><span class="s4">: </span><span class="s7">none</span><span class="s6">;</span>
+    <span class="s3">border-radius</span><span class="s4">: </span><span class="s5">5</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">cursor</span><span class="s4">: </span><span class="s7">pointer</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s1">.</span><span class="s2">search-box button</span><span class="s4">:</span><span class="s2">hover </span><span class="s1">{</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#f4a261</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Responsividade */</span>
+<span class="s9">@media </span><span class="s1">(</span><span class="s3">max-width</span><span class="s4">: </span><span class="s5">768</span><span class="s7">px</span><span class="s1">) {</span>
+    <span class="s1">.</span><span class="s2">nav-bar </span><span class="s1">.</span><span class="s2">menu </span><span class="s1">{</span>
+        <span class="s3">flex-direction</span><span class="s4">: </span><span class="s7">column</span><span class="s6">; </span><span class="s0">/* Coloca os itens da navegação em coluna em telas menores */</span>
+        <span class="s3">gap</span><span class="s4">: </span><span class="s5">10</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">.</span><span class="s2">search-icon </span><span class="s1">{</span>
+        <span class="s3">font-size</span><span class="s4">: </span><span class="s5">18</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">.</span><span class="s2">search-box </span><span class="s1">{</span>
+        <span class="s3">right</span><span class="s4">: </span><span class="s5">10</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Ajusta a posição da caixa em telas menores */</span>
+        <span class="s3">top</span><span class="s4">: </span><span class="s5">40</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Banner/cabeçalho */</span>
+<span class="s1">.</span><span class="s2">header-banner </span><span class="s1">{</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#800000</span><span class="s6">; </span><span class="s0">/* Vermelho escuro */</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">240</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">align-items</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+    <span class="s3">justify-content</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s7">white</span><span class="s6">;</span>
+    <span class="s3">font-size</span><span class="s4">: </span><span class="s5">24</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">font-weight</span><span class="s4">: </span><span class="s7">bold</span><span class="s6">;</span>
+    <span class="s3">text-align</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Conteúdo principal */</span>
+<span class="s1">.</span><span class="s2">content </span><span class="s1">{</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#4a1faa</span><span class="s6">; </span><span class="s0">/* Roxo */</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">flex-wrap</span><span class="s4">: </span><span class="s7">wrap</span><span class="s6">; </span><span class="s0">/* Permite quebra em várias linhas */</span>
+    <span class="s3">gap</span><span class="s4">: </span><span class="s5">30</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Espaçamento entre caixas */</span>
+    <span class="s3">justify-content</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">20</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">330</span><span class="s7">px</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s1">.</span><span class="s2">box </span><span class="s1">{</span>
+    <span class="s3">margin-top</span><span class="s4">: </span><span class="s5">50</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">width</span><span class="s4">: </span><span class="s5">140</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Largura fixa inicial */</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">140</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">aspect-ratio</span><span class="s4">: </span><span class="s5">1 </span><span class="s1">/ </span><span class="s5">1</span><span class="s6">; </span><span class="s0">/* Mantém o formato quadrado */</span>
+    <span class="s3">border-radius</span><span class="s4">: </span><span class="s5">10</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">align-items</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+    <span class="s3">justify-content</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s7">white</span><span class="s6">;</span>
+    <span class="s3">font-weight</span><span class="s4">: </span><span class="s7">bold</span><span class="s6">;</span>
+    <span class="s3">text-align</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+    <span class="s3">transition</span><span class="s4">: </span><span class="s2">transform </span><span class="s5">0.3</span><span class="s7">s ease</span><span class="s6">, </span><span class="s2">box-shadow </span><span class="s5">0.3</span><span class="s7">s ease</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Estilização dinâmica por posição */</span>
+<span class="s1">.</span><span class="s2">box </span><span class="s1">{</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#333</span><span class="s6">; </span><span class="s0">/* Preto */</span>
+<span class="s1">}</span>
+
+
+<span class="s1">.</span><span class="s2">box</span><span class="s4">:</span><span class="s2">hover </span><span class="s1">{</span>
+    <span class="s3">transform</span><span class="s4">: </span><span class="s2">scale</span><span class="s1">(</span><span class="s5">1.1</span><span class="s1">)</span><span class="s6">; </span><span class="s0">/* Zoom ao passar o mouse */</span>
+    <span class="s3">box-shadow</span><span class="s4">: </span><span class="s5">0 4</span><span class="s7">px </span><span class="s5">15</span><span class="s7">px </span><span class="s2">rgba</span><span class="s1">(</span><span class="s5">0</span><span class="s6">, </span><span class="s5">0</span><span class="s6">, </span><span class="s5">0</span><span class="s6">, </span><span class="s5">0.2</span><span class="s1">)</span><span class="s6">; </span><span class="s0">/* Efeito de sombra */</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Responsividade */</span>
+<span class="s9">@media </span><span class="s1">(</span><span class="s3">max-width</span><span class="s4">: </span><span class="s5">768</span><span class="s7">px</span><span class="s1">) {</span>
+    <span class="s1">.</span><span class="s2">header-banner </span><span class="s1">{</span>
+        <span class="s3">font-size</span><span class="s4">: </span><span class="s5">18</span><span class="s7">px</span><span class="s6">;</span>
+        <span class="s3">height</span><span class="s4">: </span><span class="s5">150</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">.</span><span class="s2">content </span><span class="s1">{</span>
+        <span class="s3">gap</span><span class="s4">: </span><span class="s5">15</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Reduz o espaço entre caixas em telas menores */</span>
+    <span class="s1">}</span>
+
+    <span class="s1">.</span><span class="s2">box </span><span class="s1">{</span>
+        <span class="s3">width</span><span class="s4">: </span><span class="s2">calc</span><span class="s1">(</span><span class="s5">50</span><span class="s1">% - </span><span class="s5">15</span><span class="s7">px</span><span class="s1">)</span><span class="s6">; </span><span class="s0">/* Largura dinâmica para duas caixas por linha */</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Estilos para a barra de navegação e banner já existentes */</span>
+
+<span class="s0">/* Banner/cabeçalho */</span>
+<span class="s1">.</span><span class="s2">header-banner </span><span class="s1">{</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#800000</span><span class="s6">; </span><span class="s0">/* Cor de fundo do banner */</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">254</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Altura do banner */</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">align-items</span><span class="s4">: </span><span class="s7">center</span><span class="s6">; </span><span class="s0">/* Alinha os itens verticalmente no centro */</span>
+    <span class="s3">justify-content</span><span class="s4">: </span><span class="s7">center</span><span class="s6">; </span><span class="s0">/* Centraliza os itens horizontalmente */</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s7">white</span><span class="s6">;</span>
+    <span class="s3">font-size</span><span class="s4">: </span><span class="s5">24</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">font-weight</span><span class="s4">: </span><span class="s7">bold</span><span class="s6">;</span>
+    <span class="s3">text-align</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">0 20</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Espaçamento lateral */</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Container que vai segurar o conteúdo centralizado e a lupa */</span>
+<span class="s1">.</span><span class="s2">header-content </span><span class="s1">{</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">justify-content</span><span class="s4">: </span><span class="s7">space-between</span><span class="s6">; </span><span class="s0">/* Espaça o texto e a lupa */</span>
+    <span class="s3">align-items</span><span class="s4">: </span><span class="s7">center</span><span class="s6">; </span><span class="s0">/* Alinha verticalmente */</span>
+    <span class="s3">width</span><span class="s4">: </span><span class="s5">100</span><span class="s1">%</span><span class="s6">; </span><span class="s0">/* Garante que ocupe toda a largura disponível */</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Texto do cabeçalho */</span>
+<span class="s1">.</span><span class="s2">header-text </span><span class="s1">{</span>
+    <span class="s3">font-size</span><span class="s4">: </span><span class="s5">24</span><span class="s7">px</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+
+
+<span class="s0">/* Caixa de pesquisa */</span>
+<span class="s1">.</span><span class="s2">usuario-box </span><span class="s1">{</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">22</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">none</span><span class="s6">; </span><span class="s0">/* Oculta a caixa de pesquisa por padrão */</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#05fa00</span><span class="s6">;</span>
+    <span class="s3">position</span><span class="s4">: </span><span class="s7">absolute</span><span class="s6">;</span>
+    <span class="s3">top</span><span class="s4">: </span><span class="s5">14</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Posiciona a caixa abaixo da barra de navegação */</span>
+    <span class="s3">right</span><span class="s4">: </span><span class="s5">70</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">5</span><span class="s7">px </span><span class="s5">10</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">border-radius</span><span class="s4">: </span><span class="s5">5</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">box-shadow</span><span class="s4">: </span><span class="s5">0</span><span class="s7">px </span><span class="s5">4</span><span class="s7">px </span><span class="s5">6</span><span class="s7">px </span><span class="s2">rgba</span><span class="s1">(</span><span class="s5">0</span><span class="s6">, </span><span class="s5">0</span><span class="s6">, </span><span class="s5">0</span><span class="s6">, </span><span class="s5">0.1</span><span class="s1">)</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">gap</span><span class="s4">: </span><span class="s5">10</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">align-items</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+
+<span class="s1">.</span><span class="s2">usuario-btn button </span><span class="s1">{</span>
+    <span class="s3">top</span><span class="s4">: </span><span class="s5">8</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">left</span><span class="s4">: </span><span class="s5">12</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">position</span><span class="s4">: </span><span class="s7">absolute</span><span class="s6">;</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">30</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#f1a500</span><span class="s6">;</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s7">white</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">8</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">border</span><span class="s4">: </span><span class="s7">none</span><span class="s6">;</span>
+    <span class="s3">border-radius</span><span class="s4">: </span><span class="s5">5</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">cursor</span><span class="s4">: </span><span class="s7">pointer</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s1">.</span><span class="s2">usuario-box button</span><span class="s4">:</span><span class="s2">hover </span><span class="s1">{</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s8">#ffffff</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s2">h1 </span><span class="s1">{</span>
+    <span class="s3">font-family</span><span class="s4">: </span><span class="s10">&quot;Arial Black&quot;</span><span class="s6">;</span>
+<span class="s1">}</span>
+<span class="s2">a </span><span class="s1">{</span>
+    <span class="s3">text-decoration</span><span class="s4">: </span><span class="s7">none</span><span class="s6">;</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s8">#2a80ec</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s2">a </span><span class="s1">{</span>
+    <span class="s3">font-family</span><span class="s4">: </span><span class="s7">-apple-system</span><span class="s6">, </span><span class="s2">BlinkMacSystemFont</span><span class="s6">, </span><span class="s2">avenir next</span><span class="s6">, </span><span class="s2">avenir</span><span class="s6">, </span><span class="s2">segoe ui</span><span class="s6">, </span><span class="s2">helvetica neue</span><span class="s6">, </span><span class="s2">helvetica</span><span class="s6">, </span><span class="s2">Cantarell</span><span class="s6">, </span><span class="s2">Ubuntu</span><span class="s6">, </span><span class="s2">roboto</span><span class="s6">, </span><span class="s2">noto</span><span class="s6">, </span><span class="s2">arial</span><span class="s6">, </span><span class="s7">sans-serif</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s2">banner-img </span><span class="s1">{</span>
+    <span class="s3">background-image</span><span class="s4">: </span><span class="s2">url</span><span class="s1">(</span><span class="s10">'/static/Home.png'</span><span class="s1">)</span><span class="s6">; </span><span class="s0">/* Definindo a imagem de fundo */</span>
+    <span class="s3">background-size</span><span class="s4">: </span><span class="s7">cover</span><span class="s6">; </span><span class="s0">/* Faz a imagem cobrir toda a área */</span>
+    <span class="s3">background-position</span><span class="s4">: </span><span class="s7">center center</span><span class="s6">; </span><span class="s0">/* Centraliza a imagem */</span>
+    <span class="s3">background-repeat</span><span class="s4">: </span><span class="s7">no-repeat</span><span class="s6">; </span><span class="s0">/* Evita que a imagem se repita */</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">254</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Altura do banner */</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">align-items</span><span class="s4">: </span><span class="s7">center</span><span class="s6">; </span><span class="s0">/* Alinha os itens verticalmente no centro */</span>
+    <span class="s3">justify-content</span><span class="s4">: </span><span class="s7">center</span><span class="s6">; </span><span class="s0">/* Centraliza os itens horizontalmente */</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s7">white</span><span class="s6">;</span>
+    <span class="s3">font-size</span><span class="s4">: </span><span class="s5">24</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">font-weight</span><span class="s4">: </span><span class="s7">bold</span><span class="s6">;</span>
+    <span class="s3">text-align</span><span class="s4">: </span><span class="s7">center</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">0 20</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Espaçamento lateral */</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Container da imagem (ícone) */</span>
+<span class="s1">.</span><span class="s2">icon-container </span><span class="s1">{</span>
+    <span class="s3">position</span><span class="s4">: </span><span class="s7">relative</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">inline-block</span><span class="s6">;</span>
+    <span class="s3">margin</span><span class="s4">: </span><span class="s5">20</span><span class="s7">px</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/* A imagem do ícone (exemplo de hardware) */</span>
+<span class="s1">.</span><span class="s2">icon </span><span class="s1">{</span>
+    <span class="s3">width</span><span class="s4">: </span><span class="s5">110</span><span class="s7">px</span><span class="s6">; </span><span class="s0">/* Ajuste o tamanho do ícone conforme necessário */</span>
+    <span class="s3">height</span><span class="s4">: </span><span class="s5">110</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">border-radius</span><span class="s4">: </span><span class="s5">5</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">transition</span><span class="s4">: </span><span class="s2">transform </span><span class="s5">0.3</span><span class="s7">s ease</span><span class="s6">; </span><span class="s0">/* Para efeito de transição ao passar o mouse */</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Efeito de zoom ao passar o mouse no ícone */</span>
+<span class="s1">.</span><span class="s2">icon</span><span class="s4">:</span><span class="s2">hover </span><span class="s1">{</span>
+    <span class="s3">transform</span><span class="s4">: </span><span class="s2">scale</span><span class="s1">(</span><span class="s5">1.1</span><span class="s1">)</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Informações exibidas ao passar o mouse */</span>
+<span class="s1">.</span><span class="s2">hover-info </span><span class="s1">{</span>
+    <span class="s3">position</span><span class="s4">: </span><span class="s7">absolute</span><span class="s6">;</span>
+    <span class="s3">top</span><span class="s4">: </span><span class="s5">100</span><span class="s1">%</span><span class="s6">; </span><span class="s0">/* Coloca a caixa de informações abaixo da imagem */</span>
+    <span class="s3">left</span><span class="s4">: </span><span class="s5">50</span><span class="s1">%</span><span class="s6">;</span>
+    <span class="s3">transform</span><span class="s4">: </span><span class="s2">translateX</span><span class="s1">(-</span><span class="s5">50</span><span class="s1">%)</span><span class="s6">;</span>
+    <span class="s3">background-color</span><span class="s4">: </span><span class="s2">rgba</span><span class="s1">(</span><span class="s5">35</span><span class="s6">, </span><span class="s5">35</span><span class="s6">, </span><span class="s5">35</span><span class="s6">, </span><span class="s5">0.7</span><span class="s1">)</span><span class="s6">;</span>
+    <span class="s3">color</span><span class="s4">: </span><span class="s7">white</span><span class="s6">;</span>
+    <span class="s3">padding</span><span class="s4">: </span><span class="s5">10</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">border-radius</span><span class="s4">: </span><span class="s5">7</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">width</span><span class="s4">: </span><span class="s5">200</span><span class="s7">px</span><span class="s6">;</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">none</span><span class="s6">; </span><span class="s0">/* Inicialmente, a caixa de informações fica oculta */</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Exibe a caixa de informações quando o ícone for hover */</span>
+<span class="s1">.</span><span class="s2">icon-container</span><span class="s4">:</span><span class="s2">hover </span><span class="s1">.</span><span class="s2">hover-info </span><span class="s1">{</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">block</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/* Estilos para o conteúdo da main */</span>
+<span class="s1">.</span><span class="s2">content </span><span class="s1">{</span>
+    <span class="s3">display</span><span class="s4">: </span><span class="s7">flex</span><span class="s6">;</span>
+    <span class="s3">flex-wrap</span><span class="s4">: </span><span class="s7">wrap</span><span class="s6">;</span>
+    <span class="s3">justify-content</span><span class="s4">: </span><span class="s7">space-around</span><span class="s6">;</span>
+<span class="s1">}</span>
+
+</pre>
+</body>
+</html>

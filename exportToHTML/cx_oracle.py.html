@@ -1,0 +1,1507 @@
+<html>
+<head>
+<title>cx_oracle.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #bbb55b;}
+.s5 { color: #cc7832;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #717ed3; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+cx_oracle.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/oracle/cx_oracle.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">r&quot;&quot;&quot; 
+.. dialect:: oracle+cx_oracle 
+    :name: cx-Oracle 
+    :dbapi: cx_oracle 
+    :connectstring: oracle+cx_oracle://user:pass@hostname:port[/dbname][?service_name=&lt;service&gt;[&amp;key=value&amp;key=value...]] 
+    :url: https://oracle.github.io/python-cx_Oracle/ 
+ 
+DSN vs. Hostname connections 
+----------------------------- 
+ 
+cx_Oracle provides several methods of indicating the target database.  The 
+dialect translates from a series of different URL forms. 
+ 
+Hostname Connections with Easy Connect Syntax 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+ 
+Given a hostname, port and service name of the target Oracle Database, for 
+example from Oracle's `Easy Connect syntax 
+&lt;https://cx-oracle.readthedocs.io/en/latest/user_guide/connection_handling.html#easy-connect-syntax-for-connection-strings&gt;`_, 
+then connect in SQLAlchemy using the ``service_name`` query string parameter:: 
+ 
+    engine = create_engine(&quot;oracle+cx_oracle://scott:tiger@hostname:port/?service_name=myservice&amp;encoding=UTF-8&amp;nencoding=UTF-8&quot;) 
+ 
+The `full Easy Connect syntax 
+&lt;https://www.oracle.com/pls/topic/lookup?ctx=dblatest&amp;id=GUID-B0437826-43C1-49EC-A94D-B650B6A4A6EE&gt;`_ 
+is not supported.  Instead, use a ``tnsnames.ora`` file and connect using a 
+DSN. 
+ 
+Connections with tnsnames.ora or Oracle Cloud 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+ 
+Alternatively, if no port, database name, or ``service_name`` is provided, the 
+dialect will use an Oracle DSN &quot;connection string&quot;.  This takes the &quot;hostname&quot; 
+portion of the URL as the data source name.  For example, if the 
+``tnsnames.ora`` file contains a `Net Service Name 
+&lt;https://cx-oracle.readthedocs.io/en/latest/user_guide/connection_handling.html#net-service-names-for-connection-strings&gt;`_ 
+of ``myalias`` as below:: 
+ 
+    myalias = 
+      (DESCRIPTION = 
+        (ADDRESS = (PROTOCOL = TCP)(HOST = mymachine.example.com)(PORT = 1521)) 
+        (CONNECT_DATA = 
+          (SERVER = DEDICATED) 
+          (SERVICE_NAME = orclpdb1) 
+        ) 
+      ) 
+ 
+The cx_Oracle dialect connects to this database service when ``myalias`` is the 
+hostname portion of the URL, without specifying a port, database name or 
+``service_name``:: 
+ 
+    engine = create_engine(&quot;oracle+cx_oracle://scott:tiger@myalias/?encoding=UTF-8&amp;nencoding=UTF-8&quot;) 
+ 
+Users of Oracle Cloud should use this syntax and also configure the cloud 
+wallet as shown in cx_Oracle documentation `Connecting to Autononmous Databases 
+&lt;https://cx-oracle.readthedocs.io/en/latest/user_guide/connection_handling.html#autonomousdb&gt;`_. 
+ 
+SID Connections 
+^^^^^^^^^^^^^^^ 
+ 
+To use Oracle's obsolete SID connection syntax, the SID can be passed in a 
+&quot;database name&quot; portion of the URL as below:: 
+ 
+    engine = create_engine(&quot;oracle+cx_oracle://scott:tiger@hostname:1521/dbname?encoding=UTF-8&amp;nencoding=UTF-8&quot;) 
+ 
+Above, the DSN passed to cx_Oracle is created by ``cx_Oracle.makedsn()`` as 
+follows:: 
+ 
+    &gt;&gt;&gt; import cx_Oracle 
+    &gt;&gt;&gt; cx_Oracle.makedsn(&quot;hostname&quot;, 1521, sid=&quot;dbname&quot;) 
+    '(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=hostname)(PORT=1521))(CONNECT_DATA=(SID=dbname)))' 
+ 
+Passing cx_Oracle connect arguments 
+----------------------------------- 
+ 
+Additional connection arguments can usually be passed via the URL 
+query string; particular symbols like ``cx_Oracle.SYSDBA`` are intercepted 
+and converted to the correct symbol:: 
+ 
+    e = create_engine( 
+        &quot;oracle+cx_oracle://user:pass@dsn?encoding=UTF-8&amp;nencoding=UTF-8&amp;mode=SYSDBA&amp;events=true&quot;) 
+ 
+.. versionchanged:: 1.3 the cx_oracle dialect now accepts all argument names 
+   within the URL string itself, to be passed to the cx_Oracle DBAPI.   As 
+   was the case earlier but not correctly documented, the 
+   :paramref:`_sa.create_engine.connect_args` parameter also accepts all 
+   cx_Oracle DBAPI connect arguments. 
+ 
+To pass arguments directly to ``.connect()`` without using the query 
+string, use the :paramref:`_sa.create_engine.connect_args` dictionary. 
+Any cx_Oracle parameter value and/or constant may be passed, such as:: 
+ 
+    import cx_Oracle 
+    e = create_engine( 
+        &quot;oracle+cx_oracle://user:pass@dsn&quot;, 
+        connect_args={ 
+            &quot;encoding&quot;: &quot;UTF-8&quot;, 
+            &quot;nencoding&quot;: &quot;UTF-8&quot;, 
+            &quot;mode&quot;: cx_Oracle.SYSDBA, 
+            &quot;events&quot;: True 
+        } 
+    ) 
+ 
+Note that the default value for ``encoding`` and ``nencoding`` was changed to 
+&quot;UTF-8&quot; in cx_Oracle 8.0 so these parameters can be omitted when using that 
+version, or later. 
+ 
+Options consumed by the SQLAlchemy cx_Oracle dialect outside of the driver 
+-------------------------------------------------------------------------- 
+ 
+There are also options that are consumed by the SQLAlchemy cx_oracle dialect 
+itself.  These options are always passed directly to :func:`_sa.create_engine` 
+, such as:: 
+ 
+    e = create_engine( 
+        &quot;oracle+cx_oracle://user:pass@dsn&quot;, coerce_to_decimal=False) 
+ 
+The parameters accepted by the cx_oracle dialect are as follows: 
+ 
+* ``arraysize`` - set the cx_oracle.arraysize value on cursors; defaults 
+  to ``None``, indicating that the driver default should be used (typically 
+  the value is 100).  This setting controls how many rows are buffered when 
+  fetching rows, and can have a significant effect on performance when 
+  modified.   The setting is used for both ``cx_Oracle`` as well as 
+  ``oracledb``. 
+ 
+  .. versionchanged:: 2.0.26 - changed the default value from 50 to None, 
+    to use the default value of the driver itself. 
+ 
+* ``auto_convert_lobs`` - defaults to True; See :ref:`cx_oracle_lob`. 
+ 
+* ``coerce_to_decimal`` - see :ref:`cx_oracle_numeric` for detail. 
+ 
+* ``encoding_errors`` - see :ref:`cx_oracle_unicode_encoding_errors` for detail. 
+ 
+.. _cx_oracle_sessionpool: 
+ 
+Using cx_Oracle SessionPool 
+--------------------------- 
+ 
+The cx_Oracle library provides its own connection pool implementation that may 
+be used in place of SQLAlchemy's pooling functionality.  This can be achieved 
+by using the :paramref:`_sa.create_engine.creator` parameter to provide a 
+function that returns a new connection, along with setting 
+:paramref:`_sa.create_engine.pool_class` to ``NullPool`` to disable 
+SQLAlchemy's pooling:: 
+ 
+    import cx_Oracle 
+    from sqlalchemy import create_engine 
+    from sqlalchemy.pool import NullPool 
+ 
+    pool = cx_Oracle.SessionPool( 
+        user=&quot;scott&quot;, password=&quot;tiger&quot;, dsn=&quot;orclpdb&quot;, 
+        min=2, max=5, increment=1, threaded=True, 
+    encoding=&quot;UTF-8&quot;, nencoding=&quot;UTF-8&quot; 
+    ) 
+ 
+    engine = create_engine(&quot;oracle+cx_oracle://&quot;, creator=pool.acquire, poolclass=NullPool) 
+ 
+The above engine may then be used normally where cx_Oracle's pool handles 
+connection pooling:: 
+ 
+    with engine.connect() as conn: 
+        print(conn.scalar(&quot;select 1 FROM dual&quot;)) 
+ 
+ 
+As well as providing a scalable solution for multi-user applications, the 
+cx_Oracle session pool supports some Oracle features such as DRCP and 
+`Application Continuity 
+&lt;https://cx-oracle.readthedocs.io/en/latest/user_guide/ha.html#application-continuity-ac&gt;`_. 
+ 
+Using Oracle Database Resident Connection Pooling (DRCP) 
+-------------------------------------------------------- 
+ 
+When using Oracle's `DRCP 
+&lt;https://www.oracle.com/pls/topic/lookup?ctx=dblatest&amp;id=GUID-015CA8C1-2386-4626-855D-CC546DDC1086&gt;`_, 
+the best practice is to pass a connection class and &quot;purity&quot; when acquiring a 
+connection from the SessionPool.  Refer to the `cx_Oracle DRCP documentation 
+&lt;https://cx-oracle.readthedocs.io/en/latest/user_guide/connection_handling.html#database-resident-connection-pooling-drcp&gt;`_. 
+ 
+This can be achieved by wrapping ``pool.acquire()``:: 
+ 
+    import cx_Oracle 
+    from sqlalchemy import create_engine 
+    from sqlalchemy.pool import NullPool 
+ 
+    pool = cx_Oracle.SessionPool( 
+        user=&quot;scott&quot;, password=&quot;tiger&quot;, dsn=&quot;orclpdb&quot;, 
+        min=2, max=5, increment=1, threaded=True, 
+    encoding=&quot;UTF-8&quot;, nencoding=&quot;UTF-8&quot; 
+    ) 
+ 
+    def creator(): 
+        return pool.acquire(cclass=&quot;MYCLASS&quot;, purity=cx_Oracle.ATTR_PURITY_SELF) 
+ 
+    engine = create_engine(&quot;oracle+cx_oracle://&quot;, creator=creator, poolclass=NullPool) 
+ 
+The above engine may then be used normally where cx_Oracle handles session 
+pooling and Oracle Database additionally uses DRCP:: 
+ 
+    with engine.connect() as conn: 
+        print(conn.scalar(&quot;select 1 FROM dual&quot;)) 
+ 
+.. _cx_oracle_unicode: 
+ 
+Unicode 
+------- 
+ 
+As is the case for all DBAPIs under Python 3, all strings are inherently 
+Unicode strings.   In all cases however, the driver requires an explicit 
+encoding configuration. 
+ 
+Ensuring the Correct Client Encoding 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+ 
+The long accepted standard for establishing client encoding for nearly all 
+Oracle related software is via the `NLS_LANG &lt;https://www.oracle.com/database/technologies/faq-nls-lang.html&gt;`_ 
+environment variable.   cx_Oracle like most other Oracle drivers will use 
+this environment variable as the source of its encoding configuration.  The 
+format of this variable is idiosyncratic; a typical value would be 
+``AMERICAN_AMERICA.AL32UTF8``. 
+ 
+The cx_Oracle driver also supports a programmatic alternative which is to 
+pass the ``encoding`` and ``nencoding`` parameters directly to its 
+``.connect()`` function.  These can be present in the URL as follows:: 
+ 
+    engine = create_engine(&quot;oracle+cx_oracle://scott:tiger@orclpdb/?encoding=UTF-8&amp;nencoding=UTF-8&quot;) 
+ 
+For the meaning of the ``encoding`` and ``nencoding`` parameters, please 
+consult 
+`Characters Sets and National Language Support (NLS) &lt;https://cx-oracle.readthedocs.io/en/latest/user_guide/globalization.html#globalization&gt;`_. 
+ 
+.. seealso:: 
+ 
+    `Characters Sets and National Language Support (NLS) &lt;https://cx-oracle.readthedocs.io/en/latest/user_guide/globalization.html#globalization&gt;`_ 
+    - in the cx_Oracle documentation. 
+ 
+ 
+Unicode-specific Column datatypes 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+ 
+The Core expression language handles unicode data by use of the :class:`.Unicode` 
+and :class:`.UnicodeText` 
+datatypes.  These types correspond to the  VARCHAR2 and CLOB Oracle datatypes by 
+default.   When using these datatypes with Unicode data, it is expected that 
+the Oracle database is configured with a Unicode-aware character set, as well 
+as that the ``NLS_LANG`` environment variable is set appropriately, so that 
+the VARCHAR2 and CLOB datatypes can accommodate the data. 
+ 
+In the case that the Oracle database is not configured with a Unicode character 
+set, the two options are to use the :class:`_types.NCHAR` and 
+:class:`_oracle.NCLOB` datatypes explicitly, or to pass the flag 
+``use_nchar_for_unicode=True`` to :func:`_sa.create_engine`, 
+which will cause the 
+SQLAlchemy dialect to use NCHAR/NCLOB for the :class:`.Unicode` / 
+:class:`.UnicodeText` datatypes instead of VARCHAR/CLOB. 
+ 
+.. versionchanged:: 1.3  The :class:`.Unicode` and :class:`.UnicodeText` 
+   datatypes now correspond to the ``VARCHAR2`` and ``CLOB`` Oracle datatypes 
+   unless the ``use_nchar_for_unicode=True`` is passed to the dialect 
+   when :func:`_sa.create_engine` is called. 
+ 
+ 
+.. _cx_oracle_unicode_encoding_errors: 
+ 
+Encoding Errors 
+^^^^^^^^^^^^^^^ 
+ 
+For the unusual case that data in the Oracle database is present with a broken 
+encoding, the dialect accepts a parameter ``encoding_errors`` which will be 
+passed to Unicode decoding functions in order to affect how decoding errors are 
+handled.  The value is ultimately consumed by the Python `decode 
+&lt;https://docs.python.org/3/library/stdtypes.html#bytes.decode&gt;`_ function, and 
+is passed both via cx_Oracle's ``encodingErrors`` parameter consumed by 
+``Cursor.var()``, as well as SQLAlchemy's own decoding function, as the 
+cx_Oracle dialect makes use of both under different circumstances. 
+ 
+.. versionadded:: 1.3.11 
+ 
+ 
+.. _cx_oracle_setinputsizes: 
+ 
+Fine grained control over cx_Oracle data binding performance with setinputsizes 
+------------------------------------------------------------------------------- 
+ 
+The cx_Oracle DBAPI has a deep and fundamental reliance upon the usage of the 
+DBAPI ``setinputsizes()`` call.   The purpose of this call is to establish the 
+datatypes that are bound to a SQL statement for Python values being passed as 
+parameters.  While virtually no other DBAPI assigns any use to the 
+``setinputsizes()`` call, the cx_Oracle DBAPI relies upon it heavily in its 
+interactions with the Oracle client interface, and in some scenarios it is  not 
+possible for SQLAlchemy to know exactly how data should be bound, as some 
+settings can cause profoundly different performance characteristics, while 
+altering the type coercion behavior at the same time. 
+ 
+Users of the cx_Oracle dialect are **strongly encouraged** to read through 
+cx_Oracle's list of built-in datatype symbols at 
+https://cx-oracle.readthedocs.io/en/latest/api_manual/module.html#database-types. 
+Note that in some cases, significant performance degradation can occur when 
+using these types vs. not, in particular when specifying ``cx_Oracle.CLOB``. 
+ 
+On the SQLAlchemy side, the :meth:`.DialectEvents.do_setinputsizes` event can 
+be used both for runtime visibility (e.g. logging) of the setinputsizes step as 
+well as to fully control how ``setinputsizes()`` is used on a per-statement 
+basis. 
+ 
+.. versionadded:: 1.2.9 Added :meth:`.DialectEvents.setinputsizes` 
+ 
+ 
+Example 1 - logging all setinputsizes calls 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+ 
+The following example illustrates how to log the intermediary values from a 
+SQLAlchemy perspective before they are converted to the raw ``setinputsizes()`` 
+parameter dictionary.  The keys of the dictionary are :class:`.BindParameter` 
+objects which have a ``.key`` and a ``.type`` attribute:: 
+ 
+    from sqlalchemy import create_engine, event 
+ 
+    engine = create_engine(&quot;oracle+cx_oracle://scott:tiger@host/xe&quot;) 
+ 
+    @event.listens_for(engine, &quot;do_setinputsizes&quot;) 
+    def _log_setinputsizes(inputsizes, cursor, statement, parameters, context): 
+        for bindparam, dbapitype in inputsizes.items(): 
+                log.info( 
+                    &quot;Bound parameter name: %s  SQLAlchemy type: %r  &quot; 
+                    &quot;DBAPI object: %s&quot;, 
+                    bindparam.key, bindparam.type, dbapitype) 
+ 
+Example 2 - remove all bindings to CLOB 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+ 
+The ``CLOB`` datatype in cx_Oracle incurs a significant performance overhead, 
+however is set by default for the ``Text`` type within the SQLAlchemy 1.2 
+series.   This setting can be modified as follows:: 
+ 
+    from sqlalchemy import create_engine, event 
+    from cx_Oracle import CLOB 
+ 
+    engine = create_engine(&quot;oracle+cx_oracle://scott:tiger@host/xe&quot;) 
+ 
+    @event.listens_for(engine, &quot;do_setinputsizes&quot;) 
+    def _remove_clob(inputsizes, cursor, statement, parameters, context): 
+        for bindparam, dbapitype in list(inputsizes.items()): 
+            if dbapitype is CLOB: 
+                del inputsizes[bindparam] 
+ 
+.. _cx_oracle_returning: 
+ 
+RETURNING Support 
+----------------- 
+ 
+The cx_Oracle dialect implements RETURNING using OUT parameters. 
+The dialect supports RETURNING fully. 
+ 
+.. _cx_oracle_lob: 
+ 
+LOB Datatypes 
+-------------- 
+ 
+LOB datatypes refer to the &quot;large object&quot; datatypes such as CLOB, NCLOB and 
+BLOB. Modern versions of cx_Oracle and oracledb are optimized for these 
+datatypes to be delivered as a single buffer. As such, SQLAlchemy makes use of 
+these newer type handlers by default. 
+ 
+To disable the use of newer type handlers and deliver LOB objects as classic 
+buffered objects with a ``read()`` method, the parameter 
+``auto_convert_lobs=False`` may be passed to :func:`_sa.create_engine`, 
+which takes place only engine-wide. 
+ 
+Two Phase Transactions Not Supported (use oracledb) 
+--------------------------------------------------- 
+ 
+Two phase transactions are **not supported** under cx_Oracle due to poor driver 
+support.   The newer :ref:`oracledb` dialect however **does** support two phase 
+transactions and should be preferred. 
+ 
+.. _cx_oracle_numeric: 
+ 
+Precision Numerics 
+------------------ 
+ 
+SQLAlchemy's numeric types can handle receiving and returning values as Python 
+``Decimal`` objects or float objects.  When a :class:`.Numeric` object, or a 
+subclass such as :class:`.Float`, :class:`_oracle.DOUBLE_PRECISION` etc. is in 
+use, the :paramref:`.Numeric.asdecimal` flag determines if values should be 
+coerced to ``Decimal`` upon return, or returned as float objects.   To make 
+matters more complicated under Oracle, Oracle's ``NUMBER`` type can also 
+represent integer values if the &quot;scale&quot; is zero, so the Oracle-specific 
+:class:`_oracle.NUMBER` type takes this into account as well. 
+ 
+The cx_Oracle dialect makes extensive use of connection- and cursor-level 
+&quot;outputtypehandler&quot; callables in order to coerce numeric values as requested. 
+These callables are specific to the specific flavor of :class:`.Numeric` in 
+use, as well as if no SQLAlchemy typing objects are present.   There are 
+observed scenarios where Oracle may sends incomplete or ambiguous information 
+about the numeric types being returned, such as a query where the numeric types 
+are buried under multiple levels of subquery.  The type handlers do their best 
+to make the right decision in all cases, deferring to the underlying cx_Oracle 
+DBAPI for all those cases where the driver can make the best decision. 
+ 
+When no typing objects are present, as when executing plain SQL strings, a 
+default &quot;outputtypehandler&quot; is present which will generally return numeric 
+values which specify precision and scale as Python ``Decimal`` objects.  To 
+disable this coercion to decimal for performance reasons, pass the flag 
+``coerce_to_decimal=False`` to :func:`_sa.create_engine`:: 
+ 
+    engine = create_engine(&quot;oracle+cx_oracle://dsn&quot;, coerce_to_decimal=False) 
+ 
+The ``coerce_to_decimal`` flag only impacts the results of plain string 
+SQL statements that are not otherwise associated with a :class:`.Numeric` 
+SQLAlchemy type (or a subclass of such). 
+ 
+.. versionchanged:: 1.2  The numeric handling system for cx_Oracle has been 
+   reworked to take advantage of newer cx_Oracle features as well 
+   as better integration of outputtypehandlers. 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">decimal</span>
+<span class="s3">import </span><span class="s1">random</span>
+<span class="s3">import </span><span class="s1">re</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">base </span><span class="s3">as </span><span class="s1">oracle</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">OracleCompiler</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">OracleDialect</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">OracleExecutionContext</span>
+<span class="s3">from </span><span class="s1">.types </span><span class="s3">import </span><span class="s1">_OracleDateLiteralRender</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">cursor </span><span class="s3">as </span><span class="s1">_cursor</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">interfaces</span>
+<span class="s3">from </span><span class="s1">...engine </span><span class="s3">import </span><span class="s1">processors</span>
+<span class="s3">from </span><span class="s1">...sql </span><span class="s3">import </span><span class="s1">sqltypes</span>
+<span class="s3">from </span><span class="s1">...sql._typing </span><span class="s3">import </span><span class="s1">is_sql_compiler</span>
+
+<span class="s0"># source:</span>
+<span class="s0"># https://github.com/oracle/python-cx_Oracle/issues/596#issuecomment-999243649</span>
+<span class="s1">_CX_ORACLE_MAGIC_LOB_SIZE = </span><span class="s4">131072</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleInteger(sqltypes.Integer):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s0"># see https://github.com/oracle/python-cx_Oracle/issues/</span>
+        <span class="s0"># 208#issuecomment-409715955</span>
+        <span class="s3">return </span><span class="s1">int</span>
+
+    <span class="s3">def </span><span class="s1">_cx_oracle_var(self</span><span class="s5">, </span><span class="s1">dialect</span><span class="s5">, </span><span class="s1">cursor</span><span class="s5">, </span><span class="s1">arraysize=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">cx_Oracle = dialect.dbapi</span>
+        <span class="s3">return </span><span class="s1">cursor.var(</span>
+            <span class="s1">cx_Oracle.STRING</span><span class="s5">,</span>
+            <span class="s4">255</span><span class="s5">,</span>
+            <span class="s1">arraysize=arraysize </span><span class="s3">if </span><span class="s1">arraysize </span><span class="s3">is not None else </span><span class="s1">cursor.arraysize</span><span class="s5">,</span>
+            <span class="s1">outconverter=int</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_cx_oracle_outputtypehandler(self</span><span class="s5">, </span><span class="s1">dialect):</span>
+        <span class="s3">def </span><span class="s1">handler(cursor</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">default_type</span><span class="s5">, </span><span class="s1">size</span><span class="s5">, </span><span class="s1">precision</span><span class="s5">, </span><span class="s1">scale):</span>
+            <span class="s3">return </span><span class="s1">self._cx_oracle_var(dialect</span><span class="s5">, </span><span class="s1">cursor)</span>
+
+        <span class="s3">return </span><span class="s1">handler</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleNumeric(sqltypes.Numeric):</span>
+    <span class="s1">is_number = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s5">, </span><span class="s1">dialect):</span>
+        <span class="s3">if </span><span class="s1">self.scale == </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+        <span class="s3">elif </span><span class="s1">self.asdecimal:</span>
+            <span class="s1">processor = processors.to_decimal_processor_factory(</span>
+                <span class="s1">decimal.Decimal</span><span class="s5">, </span><span class="s1">self._effective_decimal_return_scale</span>
+            <span class="s1">)</span>
+
+            <span class="s3">def </span><span class="s1">process(value):</span>
+                <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">(int</span><span class="s5">, </span><span class="s1">float)):</span>
+                    <span class="s3">return </span><span class="s1">processor(value)</span>
+                <span class="s3">elif </span><span class="s1">value </span><span class="s3">is not None and </span><span class="s1">value.is_infinite():</span>
+                    <span class="s3">return </span><span class="s1">float(value)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">return </span><span class="s1">value</span>
+
+            <span class="s3">return </span><span class="s1">process</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">processors.to_float</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s5">, </span><span class="s1">dialect</span><span class="s5">, </span><span class="s1">coltype):</span>
+        <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">_cx_oracle_outputtypehandler(self</span><span class="s5">, </span><span class="s1">dialect):</span>
+        <span class="s1">cx_Oracle = dialect.dbapi</span>
+
+        <span class="s3">def </span><span class="s1">handler(cursor</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">default_type</span><span class="s5">, </span><span class="s1">size</span><span class="s5">, </span><span class="s1">precision</span><span class="s5">, </span><span class="s1">scale):</span>
+            <span class="s1">outconverter = </span><span class="s3">None</span>
+
+            <span class="s3">if </span><span class="s1">precision:</span>
+                <span class="s3">if </span><span class="s1">self.asdecimal:</span>
+                    <span class="s3">if </span><span class="s1">default_type == cx_Oracle.NATIVE_FLOAT:</span>
+                        <span class="s0"># receiving float and doing Decimal after the fact</span>
+                        <span class="s0"># allows for float(&quot;inf&quot;) to be handled</span>
+                        <span class="s1">type_ = default_type</span>
+                        <span class="s1">outconverter = decimal.Decimal</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">type_ = decimal.Decimal</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">if </span><span class="s1">self.is_number </span><span class="s3">and </span><span class="s1">scale == </span><span class="s4">0</span><span class="s1">:</span>
+                        <span class="s0"># integer. cx_Oracle is observed to handle the widest</span>
+                        <span class="s0"># variety of ints when no directives are passed,</span>
+                        <span class="s0"># from 5.2 to 7.0.  See [ticket:4457]</span>
+                        <span class="s3">return None</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">type_ = cx_Oracle.NATIVE_FLOAT</span>
+
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">self.asdecimal:</span>
+                    <span class="s3">if </span><span class="s1">default_type == cx_Oracle.NATIVE_FLOAT:</span>
+                        <span class="s1">type_ = default_type</span>
+                        <span class="s1">outconverter = decimal.Decimal</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">type_ = decimal.Decimal</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">if </span><span class="s1">self.is_number </span><span class="s3">and </span><span class="s1">scale == </span><span class="s4">0</span><span class="s1">:</span>
+                        <span class="s0"># integer. cx_Oracle is observed to handle the widest</span>
+                        <span class="s0"># variety of ints when no directives are passed,</span>
+                        <span class="s0"># from 5.2 to 7.0.  See [ticket:4457]</span>
+                        <span class="s3">return None</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">type_ = cx_Oracle.NATIVE_FLOAT</span>
+
+            <span class="s3">return </span><span class="s1">cursor.var(</span>
+                <span class="s1">type_</span><span class="s5">,</span>
+                <span class="s4">255</span><span class="s5">,</span>
+                <span class="s1">arraysize=cursor.arraysize</span><span class="s5">,</span>
+                <span class="s1">outconverter=outconverter</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">handler</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleUUID(sqltypes.Uuid):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.STRING</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleBinaryFloat(_OracleNumeric):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.NATIVE_FLOAT</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleBINARY_FLOAT(_OracleBinaryFloat</span><span class="s5">, </span><span class="s1">oracle.BINARY_FLOAT):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleBINARY_DOUBLE(_OracleBinaryFloat</span><span class="s5">, </span><span class="s1">oracle.BINARY_DOUBLE):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleNUMBER(_OracleNumeric):</span>
+    <span class="s1">is_number = </span><span class="s3">True</span>
+
+
+<span class="s3">class </span><span class="s1">_CXOracleDate(oracle._OracleDate):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s5">, </span><span class="s1">dialect):</span>
+        <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s5">, </span><span class="s1">dialect</span><span class="s5">, </span><span class="s1">coltype):</span>
+        <span class="s3">def </span><span class="s1">process(value):</span>
+            <span class="s3">if </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">value.date()</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s3">return </span><span class="s1">process</span>
+
+
+<span class="s3">class </span><span class="s1">_CXOracleTIMESTAMP(_OracleDateLiteralRender</span><span class="s5">, </span><span class="s1">sqltypes.TIMESTAMP):</span>
+    <span class="s3">def </span><span class="s1">literal_processor(self</span><span class="s5">, </span><span class="s1">dialect):</span>
+        <span class="s3">return </span><span class="s1">self._literal_processor_datetime(dialect)</span>
+
+
+<span class="s3">class </span><span class="s1">_LOBDataType:</span>
+    <span class="s3">pass</span>
+
+
+<span class="s0"># TODO: the names used across CHAR / VARCHAR / NCHAR / NVARCHAR</span>
+<span class="s0"># here are inconsistent and not very good</span>
+<span class="s3">class </span><span class="s1">_OracleChar(sqltypes.CHAR):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.FIXED_CHAR</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleNChar(sqltypes.NCHAR):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.FIXED_NCHAR</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleUnicodeStringNCHAR(oracle.NVARCHAR2):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.NCHAR</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleUnicodeStringCHAR(sqltypes.Unicode):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.LONG_STRING</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleUnicodeTextNCLOB(_LOBDataType</span><span class="s5">, </span><span class="s1">oracle.NCLOB):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s0"># previously, this was dbapi.NCLOB.</span>
+        <span class="s0"># DB_TYPE_NVARCHAR will instead be passed to setinputsizes()</span>
+        <span class="s0"># when this datatype is used.</span>
+        <span class="s3">return </span><span class="s1">dbapi.DB_TYPE_NVARCHAR</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleUnicodeTextCLOB(_LOBDataType</span><span class="s5">, </span><span class="s1">sqltypes.UnicodeText):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s0"># previously, this was dbapi.CLOB.</span>
+        <span class="s0"># DB_TYPE_NVARCHAR will instead be passed to setinputsizes()</span>
+        <span class="s0"># when this datatype is used.</span>
+        <span class="s3">return </span><span class="s1">dbapi.DB_TYPE_NVARCHAR</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleText(_LOBDataType</span><span class="s5">, </span><span class="s1">sqltypes.Text):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s0"># previously, this was dbapi.CLOB.</span>
+        <span class="s0"># DB_TYPE_NVARCHAR will instead be passed to setinputsizes()</span>
+        <span class="s0"># when this datatype is used.</span>
+        <span class="s3">return </span><span class="s1">dbapi.DB_TYPE_NVARCHAR</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleLong(_LOBDataType</span><span class="s5">, </span><span class="s1">oracle.LONG):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.LONG_STRING</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleString(sqltypes.String):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleEnum(sqltypes.Enum):</span>
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s5">, </span><span class="s1">dialect):</span>
+        <span class="s1">enum_proc = sqltypes.Enum.bind_processor(self</span><span class="s5">, </span><span class="s1">dialect)</span>
+
+        <span class="s3">def </span><span class="s1">process(value):</span>
+            <span class="s1">raw_str = enum_proc(value)</span>
+            <span class="s3">return </span><span class="s1">raw_str</span>
+
+        <span class="s3">return </span><span class="s1">process</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleBinary(_LOBDataType</span><span class="s5">, </span><span class="s1">sqltypes.LargeBinary):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s0"># previously, this was dbapi.BLOB.</span>
+        <span class="s0"># DB_TYPE_RAW will instead be passed to setinputsizes()</span>
+        <span class="s0"># when this datatype is used.</span>
+        <span class="s3">return </span><span class="s1">dbapi.DB_TYPE_RAW</span>
+
+    <span class="s3">def </span><span class="s1">bind_processor(self</span><span class="s5">, </span><span class="s1">dialect):</span>
+        <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">result_processor(self</span><span class="s5">, </span><span class="s1">dialect</span><span class="s5">, </span><span class="s1">coltype):</span>
+        <span class="s3">if not </span><span class="s1">dialect.auto_convert_lobs:</span>
+            <span class="s3">return None</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">super().result_processor(dialect</span><span class="s5">, </span><span class="s1">coltype)</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleInterval(oracle.INTERVAL):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.INTERVAL</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleRaw(oracle.RAW):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">_OracleRowid(oracle.ROWID):</span>
+    <span class="s3">def </span><span class="s1">get_dbapi_type(self</span><span class="s5">, </span><span class="s1">dbapi):</span>
+        <span class="s3">return </span><span class="s1">dbapi.ROWID</span>
+
+
+<span class="s3">class </span><span class="s1">OracleCompiler_cx_oracle(OracleCompiler):</span>
+    <span class="s1">_oracle_cx_sql_compiler = </span><span class="s3">True</span>
+
+    <span class="s1">_oracle_returning = </span><span class="s3">False</span>
+
+    <span class="s0"># Oracle bind names can't start with digits or underscores.</span>
+    <span class="s0"># currently we rely upon Oracle-specific quoting of bind names in most</span>
+    <span class="s0"># cases.  however for expanding params, the escape chars are used.</span>
+    <span class="s0"># see #8708</span>
+    <span class="s1">bindname_escape_characters = util.immutabledict(</span>
+        <span class="s1">{</span>
+            <span class="s2">&quot;%&quot;</span><span class="s1">: </span><span class="s2">&quot;P&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;(&quot;</span><span class="s1">: </span><span class="s2">&quot;A&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;)&quot;</span><span class="s1">: </span><span class="s2">&quot;Z&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;:&quot;</span><span class="s1">: </span><span class="s2">&quot;C&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;.&quot;</span><span class="s1">: </span><span class="s2">&quot;C&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;[&quot;</span><span class="s1">: </span><span class="s2">&quot;C&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;]&quot;</span><span class="s1">: </span><span class="s2">&quot;C&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot; &quot;</span><span class="s1">: </span><span class="s2">&quot;C&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;</span><span class="s6">\\</span><span class="s2">&quot;</span><span class="s1">: </span><span class="s2">&quot;C&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;/&quot;</span><span class="s1">: </span><span class="s2">&quot;C&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;?&quot;</span><span class="s1">: </span><span class="s2">&quot;C&quot;</span><span class="s5">,</span>
+        <span class="s1">}</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">bindparam_string(self</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">**kw):</span>
+        <span class="s1">quote = getattr(name</span><span class="s5">, </span><span class="s2">&quot;quote&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">quote </span><span class="s3">is True</span>
+            <span class="s3">or </span><span class="s1">quote </span><span class="s3">is not False</span>
+            <span class="s3">and </span><span class="s1">self.preparer._bindparam_requires_quotes(name)</span>
+            <span class="s0"># bind param quoting for Oracle doesn't work with post_compile</span>
+            <span class="s0"># params.  For those, the default bindparam_string will escape</span>
+            <span class="s0"># special chars, and the appending of a number &quot;_1&quot; etc. will</span>
+            <span class="s0"># take care of reserved words</span>
+            <span class="s3">and not </span><span class="s1">kw.get(</span><span class="s2">&quot;post_compile&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s0"># interesting to note about expanding parameters - since the</span>
+            <span class="s0"># new parameters take the form &lt;paramname&gt;_&lt;int&gt;, at least if</span>
+            <span class="s0"># they are originally formed from reserved words, they no longer</span>
+            <span class="s0"># need quoting :).    names that include illegal characters</span>
+            <span class="s0"># won't work however.</span>
+            <span class="s1">quoted_name = </span><span class="s2">'&quot;%s&quot;' </span><span class="s1">% name</span>
+            <span class="s1">kw[</span><span class="s2">&quot;escaped_from&quot;</span><span class="s1">] = name</span>
+            <span class="s1">name = quoted_name</span>
+            <span class="s3">return </span><span class="s1">OracleCompiler.bindparam_string(self</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+        <span class="s0"># TODO: we could likely do away with quoting altogether for</span>
+        <span class="s0"># Oracle parameters and use the custom escaping here</span>
+        <span class="s1">escaped_from = kw.get(</span><span class="s2">&quot;escaped_from&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if not </span><span class="s1">escaped_from:</span>
+            <span class="s3">if </span><span class="s1">self._bind_translate_re.search(name):</span>
+                <span class="s0"># not quite the translate use case as we want to</span>
+                <span class="s0"># also get a quick boolean if we even found</span>
+                <span class="s0"># unusual characters in the name</span>
+                <span class="s1">new_name = self._bind_translate_re.sub(</span>
+                    <span class="s3">lambda </span><span class="s1">m: self._bind_translate_chars[m.group(</span><span class="s4">0</span><span class="s1">)]</span><span class="s5">,</span>
+                    <span class="s1">name</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">new_name[</span><span class="s4">0</span><span class="s1">].isdigit() </span><span class="s3">or </span><span class="s1">new_name[</span><span class="s4">0</span><span class="s1">] == </span><span class="s2">&quot;_&quot;</span><span class="s1">:</span>
+                    <span class="s1">new_name = </span><span class="s2">&quot;D&quot; </span><span class="s1">+ new_name</span>
+                <span class="s1">kw[</span><span class="s2">&quot;escaped_from&quot;</span><span class="s1">] = name</span>
+                <span class="s1">name = new_name</span>
+            <span class="s3">elif </span><span class="s1">name[</span><span class="s4">0</span><span class="s1">].isdigit() </span><span class="s3">or </span><span class="s1">name[</span><span class="s4">0</span><span class="s1">] == </span><span class="s2">&quot;_&quot;</span><span class="s1">:</span>
+                <span class="s1">new_name = </span><span class="s2">&quot;D&quot; </span><span class="s1">+ name</span>
+                <span class="s1">kw[</span><span class="s2">&quot;escaped_from&quot;</span><span class="s1">] = name</span>
+                <span class="s1">name = new_name</span>
+
+        <span class="s3">return </span><span class="s1">OracleCompiler.bindparam_string(self</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">**kw)</span>
+
+
+<span class="s3">class </span><span class="s1">OracleExecutionContext_cx_oracle(OracleExecutionContext):</span>
+    <span class="s1">out_parameters = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">_generate_out_parameter_vars(self):</span>
+        <span class="s0"># check for has_out_parameters or RETURNING, create cx_Oracle.var</span>
+        <span class="s0"># objects if so</span>
+        <span class="s3">if </span><span class="s1">self.compiled.has_out_parameters </span><span class="s3">or </span><span class="s1">self.compiled._oracle_returning:</span>
+            <span class="s1">out_parameters = self.out_parameters</span>
+            <span class="s3">assert </span><span class="s1">out_parameters </span><span class="s3">is not None</span>
+
+            <span class="s1">len_params = len(self.parameters)</span>
+
+            <span class="s1">quoted_bind_names = self.compiled.escaped_bind_names</span>
+            <span class="s3">for </span><span class="s1">bindparam </span><span class="s3">in </span><span class="s1">self.compiled.binds.values():</span>
+                <span class="s3">if </span><span class="s1">bindparam.isoutparam:</span>
+                    <span class="s1">name = self.compiled.bind_names[bindparam]</span>
+                    <span class="s1">type_impl = bindparam.type.dialect_impl(self.dialect)</span>
+
+                    <span class="s3">if </span><span class="s1">hasattr(type_impl</span><span class="s5">, </span><span class="s2">&quot;_cx_oracle_var&quot;</span><span class="s1">):</span>
+                        <span class="s1">out_parameters[name] = type_impl._cx_oracle_var(</span>
+                            <span class="s1">self.dialect</span><span class="s5">, </span><span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">arraysize=len_params</span>
+                        <span class="s1">)</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">dbtype = type_impl.get_dbapi_type(self.dialect.dbapi)</span>
+
+                        <span class="s1">cx_Oracle = self.dialect.dbapi</span>
+
+                        <span class="s3">assert </span><span class="s1">cx_Oracle </span><span class="s3">is not None</span>
+
+                        <span class="s3">if </span><span class="s1">dbtype </span><span class="s3">is None</span><span class="s1">:</span>
+                            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                                <span class="s2">&quot;Cannot create out parameter for &quot;</span>
+                                <span class="s2">&quot;parameter &quot;</span>
+                                <span class="s2">&quot;%r - its type %r is not supported by&quot;</span>
+                                <span class="s2">&quot; cx_oracle&quot; </span><span class="s1">% (bindparam.key</span><span class="s5">, </span><span class="s1">bindparam.type)</span>
+                            <span class="s1">)</span>
+
+                        <span class="s0"># note this is an OUT parameter.   Using</span>
+                        <span class="s0"># non-LOB datavalues with large unicode-holding</span>
+                        <span class="s0"># values causes the failure (both cx_Oracle and</span>
+                        <span class="s0"># oracledb):</span>
+                        <span class="s0"># ORA-22835: Buffer too small for CLOB to CHAR or</span>
+                        <span class="s0"># BLOB to RAW conversion (actual: 16507,</span>
+                        <span class="s0"># maximum: 4000)</span>
+                        <span class="s0"># [SQL: INSERT INTO long_text (x, y, z) VALUES</span>
+                        <span class="s0"># (:x, :y, :z) RETURNING long_text.x, long_text.y,</span>
+                        <span class="s0"># long_text.z INTO :ret_0, :ret_1, :ret_2]</span>
+                        <span class="s0"># so even for DB_TYPE_NVARCHAR we convert to a LOB</span>
+
+                        <span class="s3">if </span><span class="s1">isinstance(type_impl</span><span class="s5">, </span><span class="s1">_LOBDataType):</span>
+                            <span class="s3">if </span><span class="s1">dbtype == cx_Oracle.DB_TYPE_NVARCHAR:</span>
+                                <span class="s1">dbtype = cx_Oracle.NCLOB</span>
+                            <span class="s3">elif </span><span class="s1">dbtype == cx_Oracle.DB_TYPE_RAW:</span>
+                                <span class="s1">dbtype = cx_Oracle.BLOB</span>
+                            <span class="s0"># other LOB types go in directly</span>
+
+                            <span class="s1">out_parameters[name] = self.cursor.var(</span>
+                                <span class="s1">dbtype</span><span class="s5">,</span>
+                                <span class="s0"># this is fine also in oracledb_async since</span>
+                                <span class="s0"># the driver will await the read coroutine</span>
+                                <span class="s1">outconverter=</span><span class="s3">lambda </span><span class="s1">value: value.read()</span><span class="s5">,</span>
+                                <span class="s1">arraysize=len_params</span><span class="s5">,</span>
+                            <span class="s1">)</span>
+                        <span class="s3">elif </span><span class="s1">(</span>
+                            <span class="s1">isinstance(type_impl</span><span class="s5">, </span><span class="s1">_OracleNumeric)</span>
+                            <span class="s3">and </span><span class="s1">type_impl.asdecimal</span>
+                        <span class="s1">):</span>
+                            <span class="s1">out_parameters[name] = self.cursor.var(</span>
+                                <span class="s1">decimal.Decimal</span><span class="s5">,</span>
+                                <span class="s1">arraysize=len_params</span><span class="s5">,</span>
+                            <span class="s1">)</span>
+
+                        <span class="s3">else</span><span class="s1">:</span>
+                            <span class="s1">out_parameters[name] = self.cursor.var(</span>
+                                <span class="s1">dbtype</span><span class="s5">, </span><span class="s1">arraysize=len_params</span>
+                            <span class="s1">)</span>
+
+                    <span class="s3">for </span><span class="s1">param </span><span class="s3">in </span><span class="s1">self.parameters:</span>
+                        <span class="s1">param[quoted_bind_names.get(name</span><span class="s5">, </span><span class="s1">name)] = (</span>
+                            <span class="s1">out_parameters[name]</span>
+                        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_generate_cursor_outputtype_handler(self):</span>
+        <span class="s1">output_handlers = {}</span>
+
+        <span class="s3">for </span><span class="s1">keyname</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">objects</span><span class="s5">, </span><span class="s1">type_ </span><span class="s3">in </span><span class="s1">self.compiled._result_columns:</span>
+            <span class="s1">handler = type_._cached_custom_processor(</span>
+                <span class="s1">self.dialect</span><span class="s5">,</span>
+                <span class="s2">&quot;cx_oracle_outputtypehandler&quot;</span><span class="s5">,</span>
+                <span class="s1">self._get_cx_oracle_type_handler</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">handler:</span>
+                <span class="s1">denormalized_name = self.dialect.denormalize_name(keyname)</span>
+                <span class="s1">output_handlers[denormalized_name] = handler</span>
+
+        <span class="s3">if </span><span class="s1">output_handlers:</span>
+            <span class="s1">default_handler = self._dbapi_connection.outputtypehandler</span>
+
+            <span class="s3">def </span><span class="s1">output_type_handler(</span>
+                <span class="s1">cursor</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">default_type</span><span class="s5">, </span><span class="s1">size</span><span class="s5">, </span><span class="s1">precision</span><span class="s5">, </span><span class="s1">scale</span>
+            <span class="s1">):</span>
+                <span class="s3">if </span><span class="s1">name </span><span class="s3">in </span><span class="s1">output_handlers:</span>
+                    <span class="s3">return </span><span class="s1">output_handlers[name](</span>
+                        <span class="s1">cursor</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">default_type</span><span class="s5">, </span><span class="s1">size</span><span class="s5">, </span><span class="s1">precision</span><span class="s5">, </span><span class="s1">scale</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">return </span><span class="s1">default_handler(</span>
+                        <span class="s1">cursor</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">default_type</span><span class="s5">, </span><span class="s1">size</span><span class="s5">, </span><span class="s1">precision</span><span class="s5">, </span><span class="s1">scale</span>
+                    <span class="s1">)</span>
+
+            <span class="s1">self.cursor.outputtypehandler = output_type_handler</span>
+
+    <span class="s3">def </span><span class="s1">_get_cx_oracle_type_handler(self</span><span class="s5">, </span><span class="s1">impl):</span>
+        <span class="s3">if </span><span class="s1">hasattr(impl</span><span class="s5">, </span><span class="s2">&quot;_cx_oracle_outputtypehandler&quot;</span><span class="s1">):</span>
+            <span class="s3">return </span><span class="s1">impl._cx_oracle_outputtypehandler(self.dialect)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">pre_exec(self):</span>
+        <span class="s1">super().pre_exec()</span>
+        <span class="s3">if not </span><span class="s1">getattr(self.compiled</span><span class="s5">, </span><span class="s2">&quot;_oracle_cx_sql_compiler&quot;</span><span class="s5">, </span><span class="s3">False</span><span class="s1">):</span>
+            <span class="s3">return</span>
+
+        <span class="s1">self.out_parameters = {}</span>
+
+        <span class="s1">self._generate_out_parameter_vars()</span>
+
+        <span class="s1">self._generate_cursor_outputtype_handler()</span>
+
+    <span class="s3">def </span><span class="s1">post_exec(self):</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">self.compiled</span>
+            <span class="s3">and </span><span class="s1">is_sql_compiler(self.compiled)</span>
+            <span class="s3">and </span><span class="s1">self.compiled._oracle_returning</span>
+        <span class="s1">):</span>
+            <span class="s1">initial_buffer = self.fetchall_for_returning(</span>
+                <span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">_internal=</span><span class="s3">True</span>
+            <span class="s1">)</span>
+
+            <span class="s1">fetch_strategy = _cursor.FullyBufferedCursorFetchStrategy(</span>
+                <span class="s1">self.cursor</span><span class="s5">,</span>
+                <span class="s1">[</span>
+                    <span class="s1">(entry.keyname</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+                    <span class="s3">for </span><span class="s1">entry </span><span class="s3">in </span><span class="s1">self.compiled._result_columns</span>
+                <span class="s1">]</span><span class="s5">,</span>
+                <span class="s1">initial_buffer=initial_buffer</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">self.cursor_fetch_strategy = fetch_strategy</span>
+
+    <span class="s3">def </span><span class="s1">create_cursor(self):</span>
+        <span class="s1">c = self._dbapi_connection.cursor()</span>
+        <span class="s3">if </span><span class="s1">self.dialect.arraysize:</span>
+            <span class="s1">c.arraysize = self.dialect.arraysize</span>
+
+        <span class="s3">return </span><span class="s1">c</span>
+
+    <span class="s3">def </span><span class="s1">fetchall_for_returning(self</span><span class="s5">, </span><span class="s1">cursor</span><span class="s5">, </span><span class="s1">*</span><span class="s5">, </span><span class="s1">_internal=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s1">compiled = self.compiled</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s3">not </span><span class="s1">_internal</span>
+            <span class="s3">and </span><span class="s1">compiled </span><span class="s3">is None</span>
+            <span class="s3">or not </span><span class="s1">is_sql_compiler(compiled)</span>
+            <span class="s3">or not </span><span class="s1">compiled._oracle_returning</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+                <span class="s2">&quot;execution context was not prepared for Oracle RETURNING&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s0"># create a fake cursor result from the out parameters. unlike</span>
+        <span class="s0"># get_out_parameter_values(), the result-row handlers here will be</span>
+        <span class="s0"># applied at the Result level</span>
+
+        <span class="s1">numcols = len(self.out_parameters)</span>
+
+        <span class="s0"># [stmt_result for stmt_result in outparam.values] == each</span>
+        <span class="s0"># statement in executemany</span>
+        <span class="s0"># [val for val in stmt_result] == each row for a particular</span>
+        <span class="s0"># statement</span>
+        <span class="s3">return </span><span class="s1">list(</span>
+            <span class="s1">zip(</span>
+                <span class="s1">*[</span>
+                    <span class="s1">[</span>
+                        <span class="s1">val</span>
+                        <span class="s3">for </span><span class="s1">stmt_result </span><span class="s3">in </span><span class="s1">self.out_parameters[</span>
+                            <span class="s2">f&quot;ret_</span><span class="s6">{</span><span class="s1">j</span><span class="s6">}</span><span class="s2">&quot;</span>
+                        <span class="s1">].values</span>
+                        <span class="s3">for </span><span class="s1">val </span><span class="s3">in </span><span class="s1">(stmt_result </span><span class="s3">or </span><span class="s1">())</span>
+                    <span class="s1">]</span>
+                    <span class="s3">for </span><span class="s1">j </span><span class="s3">in </span><span class="s1">range(numcols)</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get_out_parameter_values(self</span><span class="s5">, </span><span class="s1">out_param_names):</span>
+        <span class="s0"># this method should not be called when the compiler has</span>
+        <span class="s0"># RETURNING as we've turned the has_out_parameters flag set to</span>
+        <span class="s0"># False.</span>
+        <span class="s3">assert not </span><span class="s1">self.compiled.returning</span>
+
+        <span class="s3">return </span><span class="s1">[</span>
+            <span class="s1">self.dialect._paramval(self.out_parameters[name])</span>
+            <span class="s3">for </span><span class="s1">name </span><span class="s3">in </span><span class="s1">out_param_names</span>
+        <span class="s1">]</span>
+
+
+<span class="s3">class </span><span class="s1">OracleDialect_cx_oracle(OracleDialect):</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+    <span class="s1">execution_ctx_cls = OracleExecutionContext_cx_oracle</span>
+    <span class="s1">statement_compiler = OracleCompiler_cx_oracle</span>
+
+    <span class="s1">supports_sane_rowcount = </span><span class="s3">True</span>
+    <span class="s1">supports_sane_multi_rowcount = </span><span class="s3">True</span>
+
+    <span class="s1">insert_executemany_returning = </span><span class="s3">True</span>
+    <span class="s1">insert_executemany_returning_sort_by_parameter_order = </span><span class="s3">True</span>
+    <span class="s1">update_executemany_returning = </span><span class="s3">True</span>
+    <span class="s1">delete_executemany_returning = </span><span class="s3">True</span>
+
+    <span class="s1">bind_typing = interfaces.BindTyping.SETINPUTSIZES</span>
+
+    <span class="s1">driver = </span><span class="s2">&quot;cx_oracle&quot;</span>
+
+    <span class="s1">colspecs = util.update_copy(</span>
+        <span class="s1">OracleDialect.colspecs</span><span class="s5">,</span>
+        <span class="s1">{</span>
+            <span class="s1">sqltypes.TIMESTAMP: _CXOracleTIMESTAMP</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Numeric: _OracleNumeric</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Float: _OracleNumeric</span><span class="s5">,</span>
+            <span class="s1">oracle.BINARY_FLOAT: _OracleBINARY_FLOAT</span><span class="s5">,</span>
+            <span class="s1">oracle.BINARY_DOUBLE: _OracleBINARY_DOUBLE</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Integer: _OracleInteger</span><span class="s5">,</span>
+            <span class="s1">oracle.NUMBER: _OracleNUMBER</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Date: _CXOracleDate</span><span class="s5">,</span>
+            <span class="s1">sqltypes.LargeBinary: _OracleBinary</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Boolean: oracle._OracleBoolean</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Interval: _OracleInterval</span><span class="s5">,</span>
+            <span class="s1">oracle.INTERVAL: _OracleInterval</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Text: _OracleText</span><span class="s5">,</span>
+            <span class="s1">sqltypes.String: _OracleString</span><span class="s5">,</span>
+            <span class="s1">sqltypes.UnicodeText: _OracleUnicodeTextCLOB</span><span class="s5">,</span>
+            <span class="s1">sqltypes.CHAR: _OracleChar</span><span class="s5">,</span>
+            <span class="s1">sqltypes.NCHAR: _OracleNChar</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Enum: _OracleEnum</span><span class="s5">,</span>
+            <span class="s1">oracle.LONG: _OracleLong</span><span class="s5">,</span>
+            <span class="s1">oracle.RAW: _OracleRaw</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Unicode: _OracleUnicodeStringCHAR</span><span class="s5">,</span>
+            <span class="s1">sqltypes.NVARCHAR: _OracleUnicodeStringNCHAR</span><span class="s5">,</span>
+            <span class="s1">sqltypes.Uuid: _OracleUUID</span><span class="s5">,</span>
+            <span class="s1">oracle.NCLOB: _OracleUnicodeTextNCLOB</span><span class="s5">,</span>
+            <span class="s1">oracle.ROWID: _OracleRowid</span><span class="s5">,</span>
+        <span class="s1">}</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">execute_sequence_format = list</span>
+
+    <span class="s1">_cx_oracle_threaded = </span><span class="s3">None</span>
+
+    <span class="s1">_cursor_var_unicode_kwargs = util.immutabledict()</span>
+
+    <span class="s1">@util.deprecated_params(</span>
+        <span class="s1">threaded=(</span>
+            <span class="s2">&quot;1.3&quot;</span><span class="s5">,</span>
+            <span class="s2">&quot;The 'threaded' parameter to the cx_oracle/oracledb dialect &quot;</span>
+            <span class="s2">&quot;is deprecated as a dialect-level argument, and will be removed &quot;</span>
+            <span class="s2">&quot;in a future release.  As of version 1.3, it defaults to False &quot;</span>
+            <span class="s2">&quot;rather than True.  The 'threaded' option can be passed to &quot;</span>
+            <span class="s2">&quot;cx_Oracle directly in the URL query string passed to &quot;</span>
+            <span class="s2">&quot;:func:`_sa.create_engine`.&quot;</span><span class="s5">,</span>
+        <span class="s1">)</span>
+    <span class="s1">)</span>
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">auto_convert_lobs=</span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">coerce_to_decimal=</span><span class="s3">True</span><span class="s5">,</span>
+        <span class="s1">arraysize=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">encoding_errors=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">threaded=</span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">**kwargs</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">OracleDialect.__init__(self</span><span class="s5">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">self.arraysize = arraysize</span>
+        <span class="s1">self.encoding_errors = encoding_errors</span>
+        <span class="s3">if </span><span class="s1">encoding_errors:</span>
+            <span class="s1">self._cursor_var_unicode_kwargs = {</span>
+                <span class="s2">&quot;encodingErrors&quot;</span><span class="s1">: encoding_errors</span>
+            <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">threaded </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self._cx_oracle_threaded = threaded</span>
+        <span class="s1">self.auto_convert_lobs = auto_convert_lobs</span>
+        <span class="s1">self.coerce_to_decimal = coerce_to_decimal</span>
+        <span class="s3">if </span><span class="s1">self._use_nchar_for_unicode:</span>
+            <span class="s1">self.colspecs = self.colspecs.copy()</span>
+            <span class="s1">self.colspecs[sqltypes.Unicode] = _OracleUnicodeStringNCHAR</span>
+            <span class="s1">self.colspecs[sqltypes.UnicodeText] = _OracleUnicodeTextNCLOB</span>
+
+        <span class="s1">dbapi_module = self.dbapi</span>
+        <span class="s1">self._load_version(dbapi_module)</span>
+
+        <span class="s3">if </span><span class="s1">dbapi_module </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s0"># these constants will first be seen in SQLAlchemy datatypes</span>
+            <span class="s0"># coming from the get_dbapi_type() method.   We then</span>
+            <span class="s0"># will place the following types into setinputsizes() calls</span>
+            <span class="s0"># on each statement.  Oracle constants that are not in this</span>
+            <span class="s0"># list will not be put into setinputsizes().</span>
+            <span class="s1">self.include_set_input_sizes = {</span>
+                <span class="s1">dbapi_module.DATETIME</span><span class="s5">,</span>
+                <span class="s1">dbapi_module.DB_TYPE_NVARCHAR</span><span class="s5">,  </span><span class="s0"># used for CLOB, NCLOB</span>
+                <span class="s1">dbapi_module.DB_TYPE_RAW</span><span class="s5">,  </span><span class="s0"># used for BLOB</span>
+                <span class="s1">dbapi_module.NCLOB</span><span class="s5">,  </span><span class="s0"># not currently used except for OUT param</span>
+                <span class="s1">dbapi_module.CLOB</span><span class="s5">,  </span><span class="s0"># not currently used except for OUT param</span>
+                <span class="s1">dbapi_module.LOB</span><span class="s5">,  </span><span class="s0"># not currently used</span>
+                <span class="s1">dbapi_module.BLOB</span><span class="s5">,  </span><span class="s0"># not currently used except for OUT param</span>
+                <span class="s1">dbapi_module.NCHAR</span><span class="s5">,</span>
+                <span class="s1">dbapi_module.FIXED_NCHAR</span><span class="s5">,</span>
+                <span class="s1">dbapi_module.FIXED_CHAR</span><span class="s5">,</span>
+                <span class="s1">dbapi_module.TIMESTAMP</span><span class="s5">,</span>
+                <span class="s1">int</span><span class="s5">,  </span><span class="s0"># _OracleInteger,</span>
+                <span class="s0"># _OracleBINARY_FLOAT, _OracleBINARY_DOUBLE,</span>
+                <span class="s1">dbapi_module.NATIVE_FLOAT</span><span class="s5">,</span>
+            <span class="s1">}</span>
+
+            <span class="s1">self._paramval = </span><span class="s3">lambda </span><span class="s1">value: value.getvalue()</span>
+
+    <span class="s3">def </span><span class="s1">_load_version(self</span><span class="s5">, </span><span class="s1">dbapi_module):</span>
+        <span class="s1">version = (</span><span class="s4">0</span><span class="s5">, </span><span class="s4">0</span><span class="s5">, </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">dbapi_module </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">m = re.match(</span><span class="s2">r&quot;(\d+)\.(\d+)(?:\.(\d+))?&quot;</span><span class="s5">, </span><span class="s1">dbapi_module.version)</span>
+            <span class="s3">if </span><span class="s1">m:</span>
+                <span class="s1">version = tuple(</span>
+                    <span class="s1">int(x) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">m.group(</span><span class="s4">1</span><span class="s5">, </span><span class="s4">2</span><span class="s5">, </span><span class="s4">3</span><span class="s1">) </span><span class="s3">if </span><span class="s1">x </span><span class="s3">is not None</span>
+                <span class="s1">)</span>
+        <span class="s1">self.cx_oracle_ver = version</span>
+        <span class="s3">if </span><span class="s1">self.cx_oracle_ver &lt; (</span><span class="s4">8</span><span class="s5">,</span><span class="s1">) </span><span class="s3">and </span><span class="s1">self.cx_oracle_ver &gt; (</span><span class="s4">0</span><span class="s5">, </span><span class="s4">0</span><span class="s5">, </span><span class="s4">0</span><span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s2">&quot;cx_Oracle version 8 and above are supported&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">import </span><span class="s1">cx_Oracle</span>
+
+        <span class="s3">return </span><span class="s1">cx_Oracle</span>
+
+    <span class="s3">def </span><span class="s1">initialize(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s1">super().initialize(connection)</span>
+        <span class="s1">self._detect_decimal_char(connection)</span>
+
+    <span class="s3">def </span><span class="s1">get_isolation_level(self</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s0"># sources:</span>
+
+        <span class="s0"># general idea of transaction id, have to start one, etc.</span>
+        <span class="s0"># https://stackoverflow.com/questions/10711204/how-to-check-isoloation-level</span>
+
+        <span class="s0"># how to decode xid cols from v$transaction to match</span>
+        <span class="s0"># https://asktom.oracle.com/pls/apex/f?p=100:11:0::::P11_QUESTION_ID:9532779900346079444</span>
+
+        <span class="s0"># Oracle tuple comparison without using IN:</span>
+        <span class="s0"># https://www.sql-workbench.eu/comparison/tuple_comparison.html</span>
+
+        <span class="s3">with </span><span class="s1">dbapi_connection.cursor() </span><span class="s3">as </span><span class="s1">cursor:</span>
+            <span class="s0"># this is the only way to ensure a transaction is started without</span>
+            <span class="s0"># actually running DML.   There's no way to see the configured</span>
+            <span class="s0"># isolation level without getting it from v$transaction which</span>
+            <span class="s0"># means transaction has to be started.</span>
+            <span class="s1">outval = cursor.var(str)</span>
+            <span class="s1">cursor.execute(</span>
+                <span class="s2">&quot;&quot;&quot; 
+                begin 
+                   :trans_id := dbms_transaction.local_transaction_id( TRUE ); 
+                end; 
+                &quot;&quot;&quot;</span><span class="s5">,</span>
+                <span class="s1">{</span><span class="s2">&quot;trans_id&quot;</span><span class="s1">: outval}</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s1">trans_id = outval.getvalue()</span>
+            <span class="s1">xidusn</span><span class="s5">, </span><span class="s1">xidslot</span><span class="s5">, </span><span class="s1">xidsqn = trans_id.split(</span><span class="s2">&quot;.&quot;</span><span class="s5">, </span><span class="s4">2</span><span class="s1">)</span>
+
+            <span class="s1">cursor.execute(</span>
+                <span class="s2">&quot;SELECT CASE BITAND(t.flag, POWER(2, 28)) &quot;</span>
+                <span class="s2">&quot;WHEN 0 THEN 'READ COMMITTED' &quot;</span>
+                <span class="s2">&quot;ELSE 'SERIALIZABLE' END AS isolation_level &quot;</span>
+                <span class="s2">&quot;FROM v$transaction t WHERE &quot;</span>
+                <span class="s2">&quot;(t.xidusn, t.xidslot, t.xidsqn) = &quot;</span>
+                <span class="s2">&quot;((:xidusn, :xidslot, :xidsqn))&quot;</span><span class="s5">,</span>
+                <span class="s1">{</span><span class="s2">&quot;xidusn&quot;</span><span class="s1">: xidusn</span><span class="s5">, </span><span class="s2">&quot;xidslot&quot;</span><span class="s1">: xidslot</span><span class="s5">, </span><span class="s2">&quot;xidsqn&quot;</span><span class="s1">: xidsqn}</span><span class="s5">,</span>
+            <span class="s1">)</span>
+            <span class="s1">row = cursor.fetchone()</span>
+            <span class="s3">if </span><span class="s1">row </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s2">&quot;could not retrieve isolation level&quot;</span>
+                <span class="s1">)</span>
+            <span class="s1">result = row[</span><span class="s4">0</span><span class="s1">]</span>
+
+        <span class="s3">return </span><span class="s1">result</span>
+
+    <span class="s3">def </span><span class="s1">get_isolation_level_values(self</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s3">return </span><span class="s1">super().get_isolation_level_values(dbapi_connection) + [</span>
+            <span class="s2">&quot;AUTOCOMMIT&quot;</span>
+        <span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">set_isolation_level(self</span><span class="s5">, </span><span class="s1">dbapi_connection</span><span class="s5">, </span><span class="s1">level):</span>
+        <span class="s3">if </span><span class="s1">level == </span><span class="s2">&quot;AUTOCOMMIT&quot;</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.autocommit = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.autocommit = </span><span class="s3">False</span>
+            <span class="s1">dbapi_connection.rollback()</span>
+            <span class="s3">with </span><span class="s1">dbapi_connection.cursor() </span><span class="s3">as </span><span class="s1">cursor:</span>
+                <span class="s1">cursor.execute(</span><span class="s2">f&quot;ALTER SESSION SET ISOLATION_LEVEL=</span><span class="s6">{</span><span class="s1">level</span><span class="s6">}</span><span class="s2">&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_detect_decimal_char(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s0"># we have the option to change this setting upon connect,</span>
+        <span class="s0"># or just look at what it is upon connect and convert.</span>
+        <span class="s0"># to minimize the chance of interference with changes to</span>
+        <span class="s0"># NLS_TERRITORY or formatting behavior of the DB, we opt</span>
+        <span class="s0"># to just look at it</span>
+
+        <span class="s1">dbapi_connection = connection.connection</span>
+
+        <span class="s3">with </span><span class="s1">dbapi_connection.cursor() </span><span class="s3">as </span><span class="s1">cursor:</span>
+            <span class="s0"># issue #8744</span>
+            <span class="s0"># nls_session_parameters is not available in some Oracle</span>
+            <span class="s0"># modes like &quot;mount mode&quot;.  But then, v$nls_parameters is not</span>
+            <span class="s0"># available if the connection doesn't have SYSDBA priv.</span>
+            <span class="s0">#</span>
+            <span class="s0"># simplify the whole thing and just use the method that we were</span>
+            <span class="s0"># doing in the test suite already, selecting a number</span>
+
+            <span class="s3">def </span><span class="s1">output_type_handler(</span>
+                <span class="s1">cursor</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">defaultType</span><span class="s5">, </span><span class="s1">size</span><span class="s5">, </span><span class="s1">precision</span><span class="s5">, </span><span class="s1">scale</span>
+            <span class="s1">):</span>
+                <span class="s3">return </span><span class="s1">cursor.var(</span>
+                    <span class="s1">self.dbapi.STRING</span><span class="s5">, </span><span class="s4">255</span><span class="s5">, </span><span class="s1">arraysize=cursor.arraysize</span>
+                <span class="s1">)</span>
+
+            <span class="s1">cursor.outputtypehandler = output_type_handler</span>
+            <span class="s1">cursor.execute(</span><span class="s2">&quot;SELECT 1.1 FROM DUAL&quot;</span><span class="s1">)</span>
+            <span class="s1">value = cursor.fetchone()[</span><span class="s4">0</span><span class="s1">]</span>
+
+            <span class="s1">decimal_char = value.lstrip(</span><span class="s2">&quot;0&quot;</span><span class="s1">)[</span><span class="s4">1</span><span class="s1">]</span>
+            <span class="s3">assert not </span><span class="s1">decimal_char[</span><span class="s4">0</span><span class="s1">].isdigit()</span>
+
+        <span class="s1">self._decimal_char = decimal_char</span>
+
+        <span class="s3">if </span><span class="s1">self._decimal_char != </span><span class="s2">&quot;.&quot;</span><span class="s1">:</span>
+            <span class="s1">_detect_decimal = self._detect_decimal</span>
+            <span class="s1">_to_decimal = self._to_decimal</span>
+
+            <span class="s1">self._detect_decimal = </span><span class="s3">lambda </span><span class="s1">value: _detect_decimal(</span>
+                <span class="s1">value.replace(self._decimal_char</span><span class="s5">, </span><span class="s2">&quot;.&quot;</span><span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">self._to_decimal = </span><span class="s3">lambda </span><span class="s1">value: _to_decimal(</span>
+                <span class="s1">value.replace(self._decimal_char</span><span class="s5">, </span><span class="s2">&quot;.&quot;</span><span class="s1">)</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_detect_decimal(self</span><span class="s5">, </span><span class="s1">value):</span>
+        <span class="s3">if </span><span class="s2">&quot;.&quot; </span><span class="s3">in </span><span class="s1">value:</span>
+            <span class="s3">return </span><span class="s1">self._to_decimal(value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">int(value)</span>
+
+    <span class="s1">_to_decimal = decimal.Decimal</span>
+
+    <span class="s3">def </span><span class="s1">_generate_connection_outputtype_handler(self):</span>
+        <span class="s7">&quot;&quot;&quot;establish the default outputtypehandler established at the 
+        connection level. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">dialect = self</span>
+        <span class="s1">cx_Oracle = dialect.dbapi</span>
+
+        <span class="s1">number_handler = _OracleNUMBER(</span>
+            <span class="s1">asdecimal=</span><span class="s3">True</span>
+        <span class="s1">)._cx_oracle_outputtypehandler(dialect)</span>
+        <span class="s1">float_handler = _OracleNUMBER(</span>
+            <span class="s1">asdecimal=</span><span class="s3">False</span>
+        <span class="s1">)._cx_oracle_outputtypehandler(dialect)</span>
+
+        <span class="s3">def </span><span class="s1">output_type_handler(</span>
+            <span class="s1">cursor</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">default_type</span><span class="s5">, </span><span class="s1">size</span><span class="s5">, </span><span class="s1">precision</span><span class="s5">, </span><span class="s1">scale</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">default_type == cx_Oracle.NUMBER</span>
+                <span class="s3">and </span><span class="s1">default_type </span><span class="s3">is not </span><span class="s1">cx_Oracle.NATIVE_FLOAT</span>
+            <span class="s1">):</span>
+                <span class="s3">if not </span><span class="s1">dialect.coerce_to_decimal:</span>
+                    <span class="s3">return None</span>
+                <span class="s3">elif </span><span class="s1">precision == </span><span class="s4">0 </span><span class="s3">and </span><span class="s1">scale </span><span class="s3">in </span><span class="s1">(</span><span class="s4">0</span><span class="s5">, </span><span class="s1">-</span><span class="s4">127</span><span class="s1">):</span>
+                    <span class="s0"># ambiguous type, this occurs when selecting</span>
+                    <span class="s0"># numbers from deep subqueries</span>
+                    <span class="s3">return </span><span class="s1">cursor.var(</span>
+                        <span class="s1">cx_Oracle.STRING</span><span class="s5">,</span>
+                        <span class="s4">255</span><span class="s5">,</span>
+                        <span class="s1">outconverter=dialect._detect_decimal</span><span class="s5">,</span>
+                        <span class="s1">arraysize=cursor.arraysize</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">precision </span><span class="s3">and </span><span class="s1">scale &gt; </span><span class="s4">0</span><span class="s1">:</span>
+                    <span class="s3">return </span><span class="s1">number_handler(</span>
+                        <span class="s1">cursor</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">default_type</span><span class="s5">, </span><span class="s1">size</span><span class="s5">, </span><span class="s1">precision</span><span class="s5">, </span><span class="s1">scale</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">return </span><span class="s1">float_handler(</span>
+                        <span class="s1">cursor</span><span class="s5">, </span><span class="s1">name</span><span class="s5">, </span><span class="s1">default_type</span><span class="s5">, </span><span class="s1">size</span><span class="s5">, </span><span class="s1">precision</span><span class="s5">, </span><span class="s1">scale</span>
+                    <span class="s1">)</span>
+
+            <span class="s0"># if unicode options were specified, add a decoder, otherwise</span>
+            <span class="s0"># cx_Oracle should return Unicode</span>
+            <span class="s3">elif </span><span class="s1">(</span>
+                <span class="s1">dialect._cursor_var_unicode_kwargs</span>
+                <span class="s3">and </span><span class="s1">default_type</span>
+                <span class="s3">in </span><span class="s1">(</span>
+                    <span class="s1">cx_Oracle.STRING</span><span class="s5">,</span>
+                    <span class="s1">cx_Oracle.FIXED_CHAR</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">and </span><span class="s1">default_type </span><span class="s3">is not </span><span class="s1">cx_Oracle.CLOB</span>
+                <span class="s3">and </span><span class="s1">default_type </span><span class="s3">is not </span><span class="s1">cx_Oracle.NCLOB</span>
+            <span class="s1">):</span>
+                <span class="s3">return </span><span class="s1">cursor.var(</span>
+                    <span class="s1">str</span><span class="s5">,</span>
+                    <span class="s1">size</span><span class="s5">,</span>
+                    <span class="s1">cursor.arraysize</span><span class="s5">,</span>
+                    <span class="s1">**dialect._cursor_var_unicode_kwargs</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+            <span class="s3">elif </span><span class="s1">dialect.auto_convert_lobs </span><span class="s3">and </span><span class="s1">default_type </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s1">cx_Oracle.CLOB</span><span class="s5">,</span>
+                <span class="s1">cx_Oracle.NCLOB</span><span class="s5">,</span>
+            <span class="s1">):</span>
+                <span class="s3">return </span><span class="s1">cursor.var(</span>
+                    <span class="s1">cx_Oracle.DB_TYPE_NVARCHAR</span><span class="s5">,</span>
+                    <span class="s1">_CX_ORACLE_MAGIC_LOB_SIZE</span><span class="s5">,</span>
+                    <span class="s1">cursor.arraysize</span><span class="s5">,</span>
+                    <span class="s1">**dialect._cursor_var_unicode_kwargs</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+            <span class="s3">elif </span><span class="s1">dialect.auto_convert_lobs </span><span class="s3">and </span><span class="s1">default_type </span><span class="s3">in </span><span class="s1">(</span>
+                <span class="s1">cx_Oracle.BLOB</span><span class="s5">,</span>
+            <span class="s1">):</span>
+                <span class="s3">return </span><span class="s1">cursor.var(</span>
+                    <span class="s1">cx_Oracle.DB_TYPE_RAW</span><span class="s5">,</span>
+                    <span class="s1">_CX_ORACLE_MAGIC_LOB_SIZE</span><span class="s5">,</span>
+                    <span class="s1">cursor.arraysize</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">output_type_handler</span>
+
+    <span class="s3">def </span><span class="s1">on_connect(self):</span>
+        <span class="s1">output_type_handler = self._generate_connection_outputtype_handler()</span>
+
+        <span class="s3">def </span><span class="s1">on_connect(conn):</span>
+            <span class="s1">conn.outputtypehandler = output_type_handler</span>
+
+        <span class="s3">return </span><span class="s1">on_connect</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s5">, </span><span class="s1">url):</span>
+        <span class="s1">opts = dict(url.query)</span>
+
+        <span class="s3">for </span><span class="s1">opt </span><span class="s3">in </span><span class="s1">(</span><span class="s2">&quot;use_ansi&quot;</span><span class="s5">, </span><span class="s2">&quot;auto_convert_lobs&quot;</span><span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">opt </span><span class="s3">in </span><span class="s1">opts:</span>
+                <span class="s1">util.warn_deprecated(</span>
+                    <span class="s2">f&quot;</span><span class="s6">{</span><span class="s1">self.driver</span><span class="s6">} </span><span class="s2">dialect option </span><span class="s6">{</span><span class="s1">opt</span><span class="s6">!r} </span><span class="s2">should only be &quot;</span>
+                    <span class="s2">&quot;passed to create_engine directly, not within the URL &quot;</span>
+                    <span class="s2">&quot;string&quot;</span><span class="s5">,</span>
+                    <span class="s1">version=</span><span class="s2">&quot;1.3&quot;</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s1">opt</span><span class="s5">, </span><span class="s1">bool)</span>
+                <span class="s1">setattr(self</span><span class="s5">, </span><span class="s1">opt</span><span class="s5">, </span><span class="s1">opts.pop(opt))</span>
+
+        <span class="s1">database = url.database</span>
+        <span class="s1">service_name = opts.pop(</span><span class="s2">&quot;service_name&quot;</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">database </span><span class="s3">or </span><span class="s1">service_name:</span>
+            <span class="s0"># if we have a database, then we have a remote host</span>
+            <span class="s1">port = url.port</span>
+            <span class="s3">if </span><span class="s1">port:</span>
+                <span class="s1">port = int(port)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">port = </span><span class="s4">1521</span>
+
+            <span class="s3">if </span><span class="s1">database </span><span class="s3">and </span><span class="s1">service_name:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s2">'&quot;service_name&quot; option shouldn</span><span class="s6">\'</span><span class="s2">t '</span>
+                    <span class="s2">'be used with a &quot;database&quot; part of the url'</span>
+                <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">database:</span>
+                <span class="s1">makedsn_kwargs = {</span><span class="s2">&quot;sid&quot;</span><span class="s1">: database}</span>
+            <span class="s3">if </span><span class="s1">service_name:</span>
+                <span class="s1">makedsn_kwargs = {</span><span class="s2">&quot;service_name&quot;</span><span class="s1">: service_name}</span>
+
+            <span class="s1">dsn = self.dbapi.makedsn(url.host</span><span class="s5">, </span><span class="s1">port</span><span class="s5">, </span><span class="s1">**makedsn_kwargs)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># we have a local tnsname</span>
+            <span class="s1">dsn = url.host</span>
+
+        <span class="s3">if </span><span class="s1">dsn </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">opts[</span><span class="s2">&quot;dsn&quot;</span><span class="s1">] = dsn</span>
+        <span class="s3">if </span><span class="s1">url.password </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">opts[</span><span class="s2">&quot;password&quot;</span><span class="s1">] = url.password</span>
+        <span class="s3">if </span><span class="s1">url.username </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">opts[</span><span class="s2">&quot;user&quot;</span><span class="s1">] = url.username</span>
+
+        <span class="s3">if </span><span class="s1">self._cx_oracle_threaded </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">opts.setdefault(</span><span class="s2">&quot;threaded&quot;</span><span class="s5">, </span><span class="s1">self._cx_oracle_threaded)</span>
+
+        <span class="s3">def </span><span class="s1">convert_cx_oracle_constant(value):</span>
+            <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s5">, </span><span class="s1">str):</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">int_val = int(value)</span>
+                <span class="s3">except </span><span class="s1">ValueError:</span>
+                    <span class="s1">value = value.upper()</span>
+                    <span class="s3">return </span><span class="s1">getattr(self.dbapi</span><span class="s5">, </span><span class="s1">value)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">return </span><span class="s1">int_val</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">value</span>
+
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s2">&quot;mode&quot;</span><span class="s5">, </span><span class="s1">convert_cx_oracle_constant)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s2">&quot;threaded&quot;</span><span class="s5">, </span><span class="s1">bool)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s2">&quot;events&quot;</span><span class="s5">, </span><span class="s1">bool)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s2">&quot;purity&quot;</span><span class="s5">, </span><span class="s1">convert_cx_oracle_constant)</span>
+        <span class="s3">return </span><span class="s1">([]</span><span class="s5">, </span><span class="s1">opts)</span>
+
+    <span class="s3">def </span><span class="s1">_get_server_version_info(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s3">return </span><span class="s1">tuple(int(x) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">connection.connection.version.split(</span><span class="s2">&quot;.&quot;</span><span class="s1">))</span>
+
+    <span class="s3">def </span><span class="s1">is_disconnect(self</span><span class="s5">, </span><span class="s1">e</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">cursor):</span>
+        <span class="s1">(error</span><span class="s5">,</span><span class="s1">) = e.args</span>
+        <span class="s3">if </span><span class="s1">isinstance(</span>
+            <span class="s1">e</span><span class="s5">, </span><span class="s1">(self.dbapi.InterfaceError</span><span class="s5">, </span><span class="s1">self.dbapi.DatabaseError)</span>
+        <span class="s1">) </span><span class="s3">and </span><span class="s2">&quot;not connected&quot; </span><span class="s3">in </span><span class="s1">str(e):</span>
+            <span class="s3">return True</span>
+
+        <span class="s3">if </span><span class="s1">hasattr(error</span><span class="s5">, </span><span class="s2">&quot;code&quot;</span><span class="s1">) </span><span class="s3">and </span><span class="s1">error.code </span><span class="s3">in </span><span class="s1">{</span>
+            <span class="s4">28</span><span class="s5">,</span>
+            <span class="s4">3114</span><span class="s5">,</span>
+            <span class="s4">3113</span><span class="s5">,</span>
+            <span class="s4">3135</span><span class="s5">,</span>
+            <span class="s4">1033</span><span class="s5">,</span>
+            <span class="s4">2396</span><span class="s5">,</span>
+        <span class="s1">}:</span>
+            <span class="s0"># ORA-00028: your session has been killed</span>
+            <span class="s0"># ORA-03114: not connected to ORACLE</span>
+            <span class="s0"># ORA-03113: end-of-file on communication channel</span>
+            <span class="s0"># ORA-03135: connection lost contact</span>
+            <span class="s0"># ORA-01033: ORACLE initialization or shutdown in progress</span>
+            <span class="s0"># ORA-02396: exceeded maximum idle time, please connect again</span>
+            <span class="s0"># TODO: Others ?</span>
+            <span class="s3">return True</span>
+
+        <span class="s3">if </span><span class="s1">re.match(</span><span class="s2">r&quot;^(?:DPI-1010|DPI-1080|DPY-1001|DPY-4011)&quot;</span><span class="s5">, </span><span class="s1">str(e)):</span>
+            <span class="s0"># DPI-1010: not connected</span>
+            <span class="s0"># DPI-1080: connection was closed by ORA-3113</span>
+            <span class="s0"># python-oracledb's DPY-1001: not connected to database</span>
+            <span class="s0"># python-oracledb's DPY-4011: the database or network closed the</span>
+            <span class="s0"># connection</span>
+            <span class="s0"># TODO: others?</span>
+            <span class="s3">return True</span>
+
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">create_xid(self):</span>
+        <span class="s1">id_ = random.randint(</span><span class="s4">0</span><span class="s5">, </span><span class="s4">2</span><span class="s1">**</span><span class="s4">128</span><span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">(</span><span class="s4">0x1234</span><span class="s5">, </span><span class="s2">&quot;%032x&quot; </span><span class="s1">% id_</span><span class="s5">, </span><span class="s2">&quot;%032x&quot; </span><span class="s1">% </span><span class="s4">9</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">do_executemany(self</span><span class="s5">, </span><span class="s1">cursor</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">parameters</span><span class="s5">, </span><span class="s1">context=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">isinstance(parameters</span><span class="s5">, </span><span class="s1">tuple):</span>
+            <span class="s1">parameters = list(parameters)</span>
+        <span class="s1">cursor.executemany(statement</span><span class="s5">, </span><span class="s1">parameters)</span>
+
+    <span class="s3">def </span><span class="s1">do_begin_twophase(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">xid):</span>
+        <span class="s1">connection.connection.begin(*xid)</span>
+        <span class="s1">connection.connection.info[</span><span class="s2">&quot;cx_oracle_xid&quot;</span><span class="s1">] = xid</span>
+
+    <span class="s3">def </span><span class="s1">do_prepare_twophase(self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">xid):</span>
+        <span class="s1">result = connection.connection.prepare()</span>
+        <span class="s1">connection.info[</span><span class="s2">&quot;cx_oracle_prepared&quot;</span><span class="s1">] = result</span>
+
+    <span class="s3">def </span><span class="s1">do_rollback_twophase(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">xid</span><span class="s5">, </span><span class="s1">is_prepared=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">recover=</span><span class="s3">False</span>
+    <span class="s1">):</span>
+        <span class="s1">self.do_rollback(connection.connection)</span>
+        <span class="s0"># TODO: need to end XA state here</span>
+
+    <span class="s3">def </span><span class="s1">do_commit_twophase(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">connection</span><span class="s5">, </span><span class="s1">xid</span><span class="s5">, </span><span class="s1">is_prepared=</span><span class="s3">True</span><span class="s5">, </span><span class="s1">recover=</span><span class="s3">False</span>
+    <span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">is_prepared:</span>
+            <span class="s1">self.do_commit(connection.connection)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">recover:</span>
+                <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+                    <span class="s2">&quot;2pc recovery not implemented for cx_Oracle&quot;</span>
+                <span class="s1">)</span>
+            <span class="s1">oci_prepared = connection.info[</span><span class="s2">&quot;cx_oracle_prepared&quot;</span><span class="s1">]</span>
+            <span class="s3">if </span><span class="s1">oci_prepared:</span>
+                <span class="s1">self.do_commit(connection.connection)</span>
+        <span class="s0"># TODO: need to end XA state here</span>
+
+    <span class="s3">def </span><span class="s1">do_set_input_sizes(self</span><span class="s5">, </span><span class="s1">cursor</span><span class="s5">, </span><span class="s1">list_of_tuples</span><span class="s5">, </span><span class="s1">context):</span>
+        <span class="s3">if </span><span class="s1">self.positional:</span>
+            <span class="s0"># not usually used, here to support if someone is modifying</span>
+            <span class="s0"># the dialect to use positional style</span>
+            <span class="s1">cursor.setinputsizes(</span>
+                <span class="s1">*[dbtype </span><span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">dbtype</span><span class="s5">, </span><span class="s1">sqltype </span><span class="s3">in </span><span class="s1">list_of_tuples]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">collection = (</span>
+                <span class="s1">(key</span><span class="s5">, </span><span class="s1">dbtype)</span>
+                <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">dbtype</span><span class="s5">, </span><span class="s1">sqltype </span><span class="s3">in </span><span class="s1">list_of_tuples</span>
+                <span class="s3">if </span><span class="s1">dbtype</span>
+            <span class="s1">)</span>
+
+            <span class="s1">cursor.setinputsizes(**{key: dbtype </span><span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">dbtype </span><span class="s3">in </span><span class="s1">collection})</span>
+
+    <span class="s3">def </span><span class="s1">do_recover_twophase(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+            <span class="s2">&quot;recover two phase query for cx_Oracle not implemented&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s1">dialect = OracleDialect_cx_oracle</span>
+</pre>
+</body>
+</html>

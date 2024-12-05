@@ -1,0 +1,387 @@
+<html>
+<head>
+<title>pagination.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #bbb55b;}
+.s5 { color: #96bf7d;}
+.s6 { color: #5d69bb;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pagination.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">math </span><span class="s0">import </span><span class="s1">ceil</span>
+
+<span class="s0">import </span><span class="s1">sqlalchemy </span><span class="s0">as </span><span class="s1">sa</span>
+<span class="s0">import </span><span class="s1">sqlalchemy.orm </span><span class="s0">as </span><span class="s1">sa_orm</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">abort</span>
+<span class="s0">from </span><span class="s1">flask </span><span class="s0">import </span><span class="s1">request</span>
+
+
+<span class="s0">class </span><span class="s1">Pagination:</span>
+    <span class="s2">&quot;&quot;&quot;Apply an offset and limit to the query based on the current page and number of 
+    items per page. 
+ 
+    Don't create pagination objects manually. They are created by 
+    :meth:`.SQLAlchemy.paginate` and :meth:`.Query.paginate`. 
+ 
+    This is a base class, a subclass must implement :meth:`_query_items` and 
+    :meth:`_query_count`. Those methods will use arguments passed as ``kwargs`` to 
+    perform the queries. 
+ 
+    :param page: The current page, used to calculate the offset. Defaults to the 
+        ``page`` query arg during a request, or 1 otherwise. 
+    :param per_page: The maximum number of items on a page, used to calculate the 
+        offset and limit. Defaults to the ``per_page`` query arg during a request, 
+        or 20 otherwise. 
+    :param max_per_page: The maximum allowed value for ``per_page``, to limit a 
+        user-provided value. Use ``None`` for no limit. Defaults to 100. 
+    :param error_out: Abort with a ``404 Not Found`` error if no items are returned 
+        and ``page`` is not 1, or if ``page`` or ``per_page`` is less than 1, or if 
+        either are not ints. 
+    :param count: Calculate the total number of values by issuing an extra count 
+        query. For very complex queries this may be inaccurate or slow, so it can be 
+        disabled and set manually if necessary. 
+    :param kwargs: Information about the query to paginate. Different subclasses will 
+        require different arguments. 
+ 
+    .. versionchanged:: 3.0 
+        Iterating over a pagination object iterates over its items. 
+ 
+    .. versionchanged:: 3.0 
+        Creating instances manually is not a public API. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">page: int | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s3">,</span>
+        <span class="s1">per_page: int | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s3">,</span>
+        <span class="s1">max_per_page: int | </span><span class="s0">None </span><span class="s1">= </span><span class="s4">100</span><span class="s3">,</span>
+        <span class="s1">error_out: bool = </span><span class="s0">True</span><span class="s3">,</span>
+        <span class="s1">count: bool = </span><span class="s0">True</span><span class="s3">,</span>
+        <span class="s1">**kwargs: t.Any</span><span class="s3">,</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self._query_args = kwargs</span>
+        <span class="s1">page</span><span class="s3">, </span><span class="s1">per_page = self._prepare_page_args(</span>
+            <span class="s1">page=page</span><span class="s3">,</span>
+            <span class="s1">per_page=per_page</span><span class="s3">,</span>
+            <span class="s1">max_per_page=max_per_page</span><span class="s3">,</span>
+            <span class="s1">error_out=error_out</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">self.page: int = page</span>
+        <span class="s5">&quot;&quot;&quot;The current page.&quot;&quot;&quot;</span>
+
+        <span class="s1">self.per_page: int = per_page</span>
+        <span class="s5">&quot;&quot;&quot;The maximum number of items on a page.&quot;&quot;&quot;</span>
+
+        <span class="s1">self.max_per_page: int | </span><span class="s0">None </span><span class="s1">= max_per_page</span>
+        <span class="s5">&quot;&quot;&quot;The maximum allowed value for ``per_page``.&quot;&quot;&quot;</span>
+
+        <span class="s1">items = self._query_items()</span>
+
+        <span class="s0">if not </span><span class="s1">items </span><span class="s0">and </span><span class="s1">page != </span><span class="s4">1 </span><span class="s0">and </span><span class="s1">error_out:</span>
+            <span class="s1">abort(</span><span class="s4">404</span><span class="s1">)</span>
+
+        <span class="s1">self.items: list[t.Any] = items</span>
+        <span class="s5">&quot;&quot;&quot;The items on the current page. Iterating over the pagination object is 
+        equivalent to iterating over the items. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">if </span><span class="s1">count:</span>
+            <span class="s1">total = self._query_count()</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">total = </span><span class="s0">None</span>
+
+        <span class="s1">self.total: int | </span><span class="s0">None </span><span class="s1">= total</span>
+        <span class="s5">&quot;&quot;&quot;The total number of items across all pages.&quot;&quot;&quot;</span>
+
+    <span class="s1">@staticmethod</span>
+    <span class="s0">def </span><span class="s1">_prepare_page_args(</span>
+        <span class="s1">*</span><span class="s3">,</span>
+        <span class="s1">page: int | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s3">,</span>
+        <span class="s1">per_page: int | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s3">,</span>
+        <span class="s1">max_per_page: int | </span><span class="s0">None </span><span class="s1">= </span><span class="s0">None</span><span class="s3">,</span>
+        <span class="s1">error_out: bool = </span><span class="s0">True</span><span class="s3">,</span>
+    <span class="s1">) -&gt; tuple[int</span><span class="s3">, </span><span class="s1">int]:</span>
+        <span class="s0">if </span><span class="s1">request:</span>
+            <span class="s0">if </span><span class="s1">page </span><span class="s0">is None</span><span class="s1">:</span>
+                <span class="s0">try</span><span class="s1">:</span>
+                    <span class="s1">page = int(request.args.get(</span><span class="s5">&quot;page&quot;</span><span class="s3">, </span><span class="s4">1</span><span class="s1">))</span>
+                <span class="s0">except </span><span class="s1">(TypeError</span><span class="s3">, </span><span class="s1">ValueError):</span>
+                    <span class="s0">if </span><span class="s1">error_out:</span>
+                        <span class="s1">abort(</span><span class="s4">404</span><span class="s1">)</span>
+
+                    <span class="s1">page = </span><span class="s4">1</span>
+
+            <span class="s0">if </span><span class="s1">per_page </span><span class="s0">is None</span><span class="s1">:</span>
+                <span class="s0">try</span><span class="s1">:</span>
+                    <span class="s1">per_page = int(request.args.get(</span><span class="s5">&quot;per_page&quot;</span><span class="s3">, </span><span class="s4">20</span><span class="s1">))</span>
+                <span class="s0">except </span><span class="s1">(TypeError</span><span class="s3">, </span><span class="s1">ValueError):</span>
+                    <span class="s0">if </span><span class="s1">error_out:</span>
+                        <span class="s1">abort(</span><span class="s4">404</span><span class="s1">)</span>
+
+                    <span class="s1">per_page = </span><span class="s4">20</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">if </span><span class="s1">page </span><span class="s0">is None</span><span class="s1">:</span>
+                <span class="s1">page = </span><span class="s4">1</span>
+
+            <span class="s0">if </span><span class="s1">per_page </span><span class="s0">is None</span><span class="s1">:</span>
+                <span class="s1">per_page = </span><span class="s4">20</span>
+
+        <span class="s0">if </span><span class="s1">max_per_page </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">per_page = min(per_page</span><span class="s3">, </span><span class="s1">max_per_page)</span>
+
+        <span class="s0">if </span><span class="s1">page &lt; </span><span class="s4">1</span><span class="s1">:</span>
+            <span class="s0">if </span><span class="s1">error_out:</span>
+                <span class="s1">abort(</span><span class="s4">404</span><span class="s1">)</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">page = </span><span class="s4">1</span>
+
+        <span class="s0">if </span><span class="s1">per_page &lt; </span><span class="s4">1</span><span class="s1">:</span>
+            <span class="s0">if </span><span class="s1">error_out:</span>
+                <span class="s1">abort(</span><span class="s4">404</span><span class="s1">)</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">per_page = </span><span class="s4">20</span>
+
+        <span class="s0">return </span><span class="s1">page</span><span class="s3">, </span><span class="s1">per_page</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">_query_offset(self) -&gt; int:</span>
+        <span class="s2">&quot;&quot;&quot;The index of the first item to query, passed to ``offset()``. 
+ 
+        :meta private: 
+ 
+        .. versionadded:: 3.0 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">(self.page - </span><span class="s4">1</span><span class="s1">) * self.per_page</span>
+
+    <span class="s0">def </span><span class="s1">_query_items(self) -&gt; list[t.Any]:</span>
+        <span class="s2">&quot;&quot;&quot;Execute the query to get the items on the current page. 
+ 
+        Uses init arguments stored in :attr:`_query_args`. 
+ 
+        :meta private: 
+ 
+        .. versionadded:: 3.0 
+        &quot;&quot;&quot;</span>
+        <span class="s0">raise </span><span class="s1">NotImplementedError</span>
+
+    <span class="s0">def </span><span class="s1">_query_count(self) -&gt; int:</span>
+        <span class="s2">&quot;&quot;&quot;Execute the query to get the total number of items. 
+ 
+        Uses init arguments stored in :attr:`_query_args`. 
+ 
+        :meta private: 
+ 
+        .. versionadded:: 3.0 
+        &quot;&quot;&quot;</span>
+        <span class="s0">raise </span><span class="s1">NotImplementedError</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">first(self) -&gt; int:</span>
+        <span class="s2">&quot;&quot;&quot;The number of the first item on the page, starting from 1, or 0 if there are 
+        no items. 
+ 
+        .. versionadded:: 3.0 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">len(self.items) == </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s4">0</span>
+
+        <span class="s0">return </span><span class="s1">(self.page - </span><span class="s4">1</span><span class="s1">) * self.per_page + </span><span class="s4">1</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">last(self) -&gt; int:</span>
+        <span class="s2">&quot;&quot;&quot;The number of the last item on the page, starting from 1, inclusive, or 0 if 
+        there are no items. 
+ 
+        .. versionadded:: 3.0 
+        &quot;&quot;&quot;</span>
+        <span class="s1">first = self.first</span>
+        <span class="s0">return </span><span class="s1">max(first</span><span class="s3">, </span><span class="s1">first + len(self.items) - </span><span class="s4">1</span><span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">pages(self) -&gt; int:</span>
+        <span class="s2">&quot;&quot;&quot;The total number of pages.&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self.total == </span><span class="s4">0 </span><span class="s0">or </span><span class="s1">self.total </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s4">0</span>
+
+        <span class="s0">return </span><span class="s1">ceil(self.total / self.per_page)</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">has_prev(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;``True`` if this is not the first page.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self.page &gt; </span><span class="s4">1</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">prev_num(self) -&gt; int | </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;The previous page number, or ``None`` if this is the first page.&quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">self.has_prev:</span>
+            <span class="s0">return None</span>
+
+        <span class="s0">return </span><span class="s1">self.page - </span><span class="s4">1</span>
+
+    <span class="s0">def </span><span class="s1">prev(self</span><span class="s3">, </span><span class="s1">*</span><span class="s3">, </span><span class="s1">error_out: bool = </span><span class="s0">False</span><span class="s1">) -&gt; Pagination:</span>
+        <span class="s2">&quot;&quot;&quot;Query the :class:`Pagination` object for the previous page. 
+ 
+        :param error_out: Abort with a ``404 Not Found`` error if no items are returned 
+            and ``page`` is not 1, or if ``page`` or ``per_page`` is less than 1, or if 
+            either are not ints. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">p = type(self)(</span>
+            <span class="s1">page=self.page - </span><span class="s4">1</span><span class="s3">,</span>
+            <span class="s1">per_page=self.per_page</span><span class="s3">,</span>
+            <span class="s1">error_out=error_out</span><span class="s3">,</span>
+            <span class="s1">count=</span><span class="s0">False</span><span class="s3">,</span>
+            <span class="s1">**self._query_args</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">p.total = self.total</span>
+        <span class="s0">return </span><span class="s1">p</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">has_next(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;``True`` if this is not the last page.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self.page &lt; self.pages</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">next_num(self) -&gt; int | </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;The next page number, or ``None`` if this is the last page.&quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">self.has_next:</span>
+            <span class="s0">return None</span>
+
+        <span class="s0">return </span><span class="s1">self.page + </span><span class="s4">1</span>
+
+    <span class="s0">def </span><span class="s1">next(self</span><span class="s3">, </span><span class="s1">*</span><span class="s3">, </span><span class="s1">error_out: bool = </span><span class="s0">False</span><span class="s1">) -&gt; Pagination:</span>
+        <span class="s2">&quot;&quot;&quot;Query the :class:`Pagination` object for the next page. 
+ 
+        :param error_out: Abort with a ``404 Not Found`` error if no items are returned 
+            and ``page`` is not 1, or if ``page`` or ``per_page`` is less than 1, or if 
+            either are not ints. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">p = type(self)(</span>
+            <span class="s1">page=self.page + </span><span class="s4">1</span><span class="s3">,</span>
+            <span class="s1">per_page=self.per_page</span><span class="s3">,</span>
+            <span class="s1">max_per_page=self.max_per_page</span><span class="s3">,</span>
+            <span class="s1">error_out=error_out</span><span class="s3">,</span>
+            <span class="s1">count=</span><span class="s0">False</span><span class="s3">,</span>
+            <span class="s1">**self._query_args</span><span class="s3">,</span>
+        <span class="s1">)</span>
+        <span class="s1">p.total = self.total</span>
+        <span class="s0">return </span><span class="s1">p</span>
+
+    <span class="s0">def </span><span class="s1">iter_pages(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">*</span><span class="s3">,</span>
+        <span class="s1">left_edge: int = </span><span class="s4">2</span><span class="s3">,</span>
+        <span class="s1">left_current: int = </span><span class="s4">2</span><span class="s3">,</span>
+        <span class="s1">right_current: int = </span><span class="s4">4</span><span class="s3">,</span>
+        <span class="s1">right_edge: int = </span><span class="s4">2</span><span class="s3">,</span>
+    <span class="s1">) -&gt; t.Iterator[int | </span><span class="s0">None</span><span class="s1">]:</span>
+        <span class="s2">&quot;&quot;&quot;Yield page numbers for a pagination widget. Skipped pages between the edges 
+        and middle are represented by a ``None``. 
+ 
+        For example, if there are 20 pages and the current page is 7, the following 
+        values are yielded. 
+ 
+        .. code-block:: python 
+ 
+            1, 2, None, 5, 6, 7, 8, 9, 10, 11, None, 19, 20 
+ 
+        :param left_edge: How many pages to show from the first page. 
+        :param left_current: How many pages to show left of the current page. 
+        :param right_current: How many pages to show right of the current page. 
+        :param right_edge: How many pages to show from the last page. 
+ 
+        .. versionchanged:: 3.0 
+            Improved efficiency of calculating what to yield. 
+ 
+        .. versionchanged:: 3.0 
+            ``right_current`` boundary is inclusive. 
+ 
+        .. versionchanged:: 3.0 
+            All parameters are keyword-only. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">pages_end = self.pages + </span><span class="s4">1</span>
+
+        <span class="s0">if </span><span class="s1">pages_end == </span><span class="s4">1</span><span class="s1">:</span>
+            <span class="s0">return</span>
+
+        <span class="s1">left_end = min(</span><span class="s4">1 </span><span class="s1">+ left_edge</span><span class="s3">, </span><span class="s1">pages_end)</span>
+        <span class="s0">yield from </span><span class="s1">range(</span><span class="s4">1</span><span class="s3">, </span><span class="s1">left_end)</span>
+
+        <span class="s0">if </span><span class="s1">left_end == pages_end:</span>
+            <span class="s0">return</span>
+
+        <span class="s1">mid_start = max(left_end</span><span class="s3">, </span><span class="s1">self.page - left_current)</span>
+        <span class="s1">mid_end = min(self.page + right_current + </span><span class="s4">1</span><span class="s3">, </span><span class="s1">pages_end)</span>
+
+        <span class="s0">if </span><span class="s1">mid_start - left_end &gt; </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s0">yield None</span>
+
+        <span class="s0">yield from </span><span class="s1">range(mid_start</span><span class="s3">, </span><span class="s1">mid_end)</span>
+
+        <span class="s0">if </span><span class="s1">mid_end == pages_end:</span>
+            <span class="s0">return</span>
+
+        <span class="s1">right_start = max(mid_end</span><span class="s3">, </span><span class="s1">pages_end - right_edge)</span>
+
+        <span class="s0">if </span><span class="s1">right_start - mid_end &gt; </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s0">yield None</span>
+
+        <span class="s0">yield from </span><span class="s1">range(right_start</span><span class="s3">, </span><span class="s1">pages_end)</span>
+
+    <span class="s0">def </span><span class="s1">__iter__(self) -&gt; t.Iterator[t.Any]:</span>
+        <span class="s0">yield from </span><span class="s1">self.items</span>
+
+
+<span class="s0">class </span><span class="s1">SelectPagination(Pagination):</span>
+    <span class="s2">&quot;&quot;&quot;Returned by :meth:`.SQLAlchemy.paginate`. Takes ``select`` and ``session`` 
+    arguments in addition to the :class:`Pagination` arguments. 
+ 
+    .. versionadded:: 3.0 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">_query_items(self) -&gt; list[t.Any]:</span>
+        <span class="s1">select = self._query_args[</span><span class="s5">&quot;select&quot;</span><span class="s1">]</span>
+        <span class="s1">select = select.limit(self.per_page).offset(self._query_offset)</span>
+        <span class="s1">session = self._query_args[</span><span class="s5">&quot;session&quot;</span><span class="s1">]</span>
+        <span class="s0">return </span><span class="s1">list(session.execute(select).unique().scalars())</span>
+
+    <span class="s0">def </span><span class="s1">_query_count(self) -&gt; int:</span>
+        <span class="s1">select = self._query_args[</span><span class="s5">&quot;select&quot;</span><span class="s1">]</span>
+        <span class="s1">sub = select.options(sa_orm.lazyload(</span><span class="s5">&quot;*&quot;</span><span class="s1">)).order_by(</span><span class="s0">None</span><span class="s1">).subquery()</span>
+        <span class="s1">session = self._query_args[</span><span class="s5">&quot;session&quot;</span><span class="s1">]</span>
+        <span class="s1">out = session.execute(sa.select(sa.func.count()).select_from(sub)).scalar()</span>
+        <span class="s0">return </span><span class="s1">out  </span><span class="s6"># type: ignore[no-any-return]</span>
+
+
+<span class="s0">class </span><span class="s1">QueryPagination(Pagination):</span>
+    <span class="s2">&quot;&quot;&quot;Returned by :meth:`.Query.paginate`. Takes a ``query`` argument in addition to 
+    the :class:`Pagination` arguments. 
+ 
+    .. versionadded:: 3.0 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">_query_items(self) -&gt; list[t.Any]:</span>
+        <span class="s1">query = self._query_args[</span><span class="s5">&quot;query&quot;</span><span class="s1">]</span>
+        <span class="s1">out = query.limit(self.per_page).offset(self._query_offset).all()</span>
+        <span class="s0">return </span><span class="s1">out  </span><span class="s6"># type: ignore[no-any-return]</span>
+
+    <span class="s0">def </span><span class="s1">_query_count(self) -&gt; int:</span>
+        <span class="s6"># Query.count automatically disables eager loads</span>
+        <span class="s1">out = self._query_args[</span><span class="s5">&quot;query&quot;</span><span class="s1">].order_by(</span><span class="s0">None</span><span class="s1">).count()</span>
+        <span class="s0">return </span><span class="s1">out  </span><span class="s6"># type: ignore[no-any-return]</span>
+</pre>
+</body>
+</html>

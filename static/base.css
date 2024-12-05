@@ -1,0 +1,307 @@
+/* Reset básico */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+    background-color: #f4f4f4; /* Cor de fundo padrão */
+    color: #333; /* Cor do texto padrão */
+}
+/* Barra de navegação */
+.nav-bar {
+    height: 50px;
+    background-color: #333; /* Fundo escuro */
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between; /* Espaça os itens de navegação e a lupa */
+    align-items: center; /* Centraliza verticalmente */
+}
+
+.nav-bar .menu {
+    list-style: none;
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    justify-content: center; /* Centraliza os itens da navegação */
+    flex-grow: 1; /* Faz os itens da navegação ocuparem o espaço disponível */
+}
+
+.nav-bar .menu li {
+    color: white;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 14px;
+    transition: color 0.3s ease;
+}
+
+.nav-bar .menu li:hover {
+    color: #f4a261; /* Cor de destaque ao passar o mouse */
+}
+
+
+/* Caixa de pesquisa */
+.search-box {
+    height: 22px;
+    display: none; /* Oculta a caixa de pesquisa por padrão */
+    background-color: #05fa00;
+    position: absolute;
+    top: 14px; /* Posiciona a caixa abaixo da barra de navegação */
+    right: 70px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.search-box input {
+    height: 18px;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+.search-box button {
+    top: -5px;
+    right: -60px;
+    position: absolute;
+    height: 28px;
+    background-color: #121aff;
+    color: white;
+    padding: 8px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.search-box button:hover {
+    background-color: #f4a261;
+}
+
+/* Responsividade */
+@media (max-width: 768px) {
+    .nav-bar .menu {
+        flex-direction: column; /* Coloca os itens da navegação em coluna em telas menores */
+        gap: 10px;
+    }
+
+    .search-icon {
+        font-size: 18px;
+    }
+
+    .search-box {
+        right: 10px; /* Ajusta a posição da caixa em telas menores */
+        top: 40px;
+    }
+}
+
+/* Banner/cabeçalho */
+.header-banner {
+    background-color: #800000; /* Vermelho escuro */
+    height: 240px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    text-align: center;
+}
+
+/* Conteúdo principal */
+.content {
+    background-color: #4a1faa; /* Roxo */
+    display: flex;
+    flex-wrap: wrap; /* Permite quebra em várias linhas */
+    gap: 30px; /* Espaçamento entre caixas */
+    justify-content: center;
+    padding: 20px;
+    height: 330px;
+}
+
+.box {
+    margin-top: 50px;
+    width: 140px; /* Largura fixa inicial */
+    height: 140px;
+    aspect-ratio: 1 / 1; /* Mantém o formato quadrado */
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Estilização dinâmica por posição */
+.box {
+    background-color: #333; /* Preto */
+}
+
+
+.box:hover {
+    transform: scale(1.1); /* Zoom ao passar o mouse */
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2); /* Efeito de sombra */
+}
+
+/* Responsividade */
+@media (max-width: 768px) {
+    .header-banner {
+        font-size: 18px;
+        height: 150px;
+    }
+
+    .content {
+        gap: 15px; /* Reduz o espaço entre caixas em telas menores */
+    }
+
+    .box {
+        width: calc(50% - 15px); /* Largura dinâmica para duas caixas por linha */
+    }
+}
+
+/* Estilos para a barra de navegação e banner já existentes */
+
+/* Banner/cabeçalho */
+.header-banner {
+    background-color: #800000; /* Cor de fundo do banner */
+    height: 254px; /* Altura do banner */
+    display: flex;
+    align-items: center; /* Alinha os itens verticalmente no centro */
+    justify-content: center; /* Centraliza os itens horizontalmente */
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    text-align: center;
+    padding: 0 20px; /* Espaçamento lateral */
+}
+
+/* Container que vai segurar o conteúdo centralizado e a lupa */
+.header-content {
+    display: flex;
+    justify-content: space-between; /* Espaça o texto e a lupa */
+    align-items: center; /* Alinha verticalmente */
+    width: 100%; /* Garante que ocupe toda a largura disponível */
+}
+
+/* Texto do cabeçalho */
+.header-text {
+    font-size: 24px;
+}
+
+
+
+/* Caixa de pesquisa */
+.usuario-box {
+    height: 22px;
+    display: none; /* Oculta a caixa de pesquisa por padrão */
+    background-color: #05fa00;
+    position: absolute;
+    top: 14px; /* Posiciona a caixa abaixo da barra de navegação */
+    right: 70px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+
+.usuario-btn button {
+    top: 8px;
+    left: 12px;
+    position: absolute;
+    height: 30px;
+    background-color: #f1a500;
+    color: white;
+    padding: 8px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.usuario-box button:hover {
+    background-color: #ffffff;
+}
+
+h1 {
+    font-family: "Arial Black";
+}
+a {
+    text-decoration: none;
+    color: #2a80ec;
+}
+
+a {
+    font-family: -apple-system, BlinkMacSystemFont, avenir next, avenir, segoe ui, helvetica neue, helvetica, Cantarell, Ubuntu, roboto, noto, arial, sans-serif;
+}
+
+banner-img {
+    background-image: url('/static/Home.png'); /* Definindo a imagem de fundo */
+    background-size: cover; /* Faz a imagem cobrir toda a área */
+    background-position: center center; /* Centraliza a imagem */
+    background-repeat: no-repeat; /* Evita que a imagem se repita */
+    height: 254px; /* Altura do banner */
+    display: flex;
+    align-items: center; /* Alinha os itens verticalmente no centro */
+    justify-content: center; /* Centraliza os itens horizontalmente */
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    text-align: center;
+    padding: 0 20px; /* Espaçamento lateral */
+}
+
+/* Container da imagem (ícone) */
+.icon-container {
+    position: relative;
+    display: inline-block;
+    margin: 20px;
+}
+
+/* A imagem do ícone (exemplo de hardware) */
+.icon {
+    width: 110px; /* Ajuste o tamanho do ícone conforme necessário */
+    height: 110px;
+    border-radius: 5px;
+    transition: transform 0.3s ease; /* Para efeito de transição ao passar o mouse */
+}
+
+/* Efeito de zoom ao passar o mouse no ícone */
+.icon:hover {
+    transform: scale(1.1);
+}
+
+/* Informações exibidas ao passar o mouse */
+.hover-info {
+    position: absolute;
+    top: 100%; /* Coloca a caixa de informações abaixo da imagem */
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(35, 35, 35, 0.7);
+    color: white;
+    padding: 10px;
+    border-radius: 7px;
+    width: 200px;
+    display: none; /* Inicialmente, a caixa de informações fica oculta */
+}
+
+/* Exibe a caixa de informações quando o ícone for hover */
+.icon-container:hover .hover-info {
+    display: block;
+}
+
+/* Estilos para o conteúdo da main */
+.content {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-around;
+}
+

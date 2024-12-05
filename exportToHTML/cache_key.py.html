@@ -1,0 +1,1081 @@
+<html>
+<head>
+<title>cache_key.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #bbb55b;}
+.s5 { color: #96bf7d;}
+.s6 { color: #717ed3; font-style: italic;}
+.s7 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+cache_key.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># sql/cache_key.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">enum</span>
+<span class="s2">from </span><span class="s1">itertools </span><span class="s2">import </span><span class="s1">zip_longest</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Dict</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterator</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">List</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">MutableMapping</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">NamedTuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Optional</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Sequence</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Tuple</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">anon_map</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">HasTraversalDispatch</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">HasTraverseInternals</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">InternalTraversal</span>
+<span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">prefix_anon_map</span>
+<span class="s2">from </span><span class="s1">.. </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">..inspection </span><span class="s2">import </span><span class="s1">inspect</span>
+<span class="s2">from </span><span class="s1">..util </span><span class="s2">import </span><span class="s1">HasMemoized</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Literal</span>
+<span class="s2">from </span><span class="s1">..util.typing </span><span class="s2">import </span><span class="s1">Protocol</span>
+
+<span class="s2">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">BindParameter</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">ClauseElement</span>
+    <span class="s2">from </span><span class="s1">.elements </span><span class="s2">import </span><span class="s1">ColumnElement</span>
+    <span class="s2">from </span><span class="s1">.visitors </span><span class="s2">import </span><span class="s1">_TraverseInternalsType</span>
+    <span class="s2">from </span><span class="s1">..engine.interfaces </span><span class="s2">import </span><span class="s1">_CoreSingleExecuteParams</span>
+
+
+<span class="s2">class </span><span class="s1">_CacheKeyTraversalDispatchType(Protocol):</span>
+    <span class="s2">def </span><span class="s1">__call__(</span>
+        <span class="s1">s</span><span class="s3">, </span><span class="s1">self: HasCacheKey</span><span class="s3">, </span><span class="s1">visitor: _CacheKeyTraversal</span>
+    <span class="s1">) -&gt; _CacheKeyTraversalDispatchTypeReturn: ...</span>
+
+
+<span class="s2">class </span><span class="s1">CacheConst(enum.Enum):</span>
+    <span class="s1">NO_CACHE = </span><span class="s4">0</span>
+
+
+<span class="s1">NO_CACHE = CacheConst.NO_CACHE</span>
+
+
+<span class="s1">_CacheKeyTraversalType = Union[</span>
+    <span class="s5">&quot;_TraverseInternalsType&quot;</span><span class="s3">, </span><span class="s1">Literal[CacheConst.NO_CACHE]</span><span class="s3">, </span><span class="s1">Literal[</span><span class="s2">None</span><span class="s1">]</span>
+<span class="s1">]</span>
+
+
+<span class="s2">class </span><span class="s1">CacheTraverseTarget(enum.Enum):</span>
+    <span class="s1">CACHE_IN_PLACE = </span><span class="s4">0</span>
+    <span class="s1">CALL_GEN_CACHE_KEY = </span><span class="s4">1</span>
+    <span class="s1">STATIC_CACHE_KEY = </span><span class="s4">2</span>
+    <span class="s1">PROPAGATE_ATTRS = </span><span class="s4">3</span>
+    <span class="s1">ANON_NAME = </span><span class="s4">4</span>
+
+
+<span class="s1">(</span>
+    <span class="s1">CACHE_IN_PLACE</span><span class="s3">,</span>
+    <span class="s1">CALL_GEN_CACHE_KEY</span><span class="s3">,</span>
+    <span class="s1">STATIC_CACHE_KEY</span><span class="s3">,</span>
+    <span class="s1">PROPAGATE_ATTRS</span><span class="s3">,</span>
+    <span class="s1">ANON_NAME</span><span class="s3">,</span>
+<span class="s1">) = tuple(CacheTraverseTarget)</span>
+
+<span class="s1">_CacheKeyTraversalDispatchTypeReturn = Sequence[</span>
+    <span class="s1">Tuple[</span>
+        <span class="s1">str</span><span class="s3">,</span>
+        <span class="s1">Any</span><span class="s3">,</span>
+        <span class="s1">Union[</span>
+            <span class="s1">Callable[...</span><span class="s3">, </span><span class="s1">Tuple[Any</span><span class="s3">, </span><span class="s1">...]]</span><span class="s3">,</span>
+            <span class="s1">CacheTraverseTarget</span><span class="s3">,</span>
+            <span class="s1">InternalTraversal</span><span class="s3">,</span>
+        <span class="s1">]</span><span class="s3">,</span>
+    <span class="s1">]</span>
+<span class="s1">]</span>
+
+
+<span class="s2">class </span><span class="s1">HasCacheKey:</span>
+    <span class="s6">&quot;&quot;&quot;Mixin for objects which can produce a cache key. 
+ 
+    This class is usually in a hierarchy that starts with the 
+    :class:`.HasTraverseInternals` base, but this is optional.  Currently, 
+    the class should be able to work on its own without including 
+    :class:`.HasTraverseInternals`. 
+ 
+    .. seealso:: 
+ 
+        :class:`.CacheKey` 
+ 
+        :ref:`sql_caching` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_cache_key_traversal: _CacheKeyTraversalType = NO_CACHE</span>
+
+    <span class="s1">_is_has_cache_key = </span><span class="s2">True</span>
+
+    <span class="s1">_hierarchy_supports_caching = </span><span class="s2">True</span>
+    <span class="s5">&quot;&quot;&quot;private attribute which may be set to False to prevent the 
+    inherit_cache warning from being emitted for a hierarchy of subclasses. 
+ 
+    Currently applies to the :class:`.ExecutableDDLElement` hierarchy which 
+    does not implement caching. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">inherit_cache: Optional[bool] = </span><span class="s2">None</span>
+    <span class="s5">&quot;&quot;&quot;Indicate if this :class:`.HasCacheKey` instance should make use of the 
+    cache key generation scheme used by its immediate superclass. 
+ 
+    The attribute defaults to ``None``, which indicates that a construct has 
+    not yet taken into account whether or not its appropriate for it to 
+    participate in caching; this is functionally equivalent to setting the 
+    value to ``False``, except that a warning is also emitted. 
+ 
+    This flag can be set to ``True`` on a particular class, if the SQL that 
+    corresponds to the object does not change based on attributes which 
+    are local to this class, and not its superclass. 
+ 
+    .. seealso:: 
+ 
+        :ref:`compilerext_caching` - General guideslines for setting the 
+        :attr:`.HasCacheKey.inherit_cache` attribute for third-party or user 
+        defined SQL constructs. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">_generated_cache_key_traversal: Any</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_generate_cache_attrs(</span>
+        <span class="s1">cls</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Union[_CacheKeyTraversalDispatchType</span><span class="s3">, </span><span class="s1">Literal[CacheConst.NO_CACHE]]:</span>
+        <span class="s6">&quot;&quot;&quot;generate cache key dispatcher for a new class. 
+ 
+        This sets the _generated_cache_key_traversal attribute once called 
+        so should only be called once per class. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">inherit_cache = cls.__dict__.get(</span><span class="s5">&quot;inherit_cache&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s1">inherit = bool(inherit_cache)</span>
+
+        <span class="s2">if </span><span class="s1">inherit:</span>
+            <span class="s1">_cache_key_traversal = getattr(cls</span><span class="s3">, </span><span class="s5">&quot;_cache_key_traversal&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">_cache_key_traversal </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s2">assert </span><span class="s1">issubclass(cls</span><span class="s3">, </span><span class="s1">HasTraverseInternals)</span>
+                    <span class="s1">_cache_key_traversal = cls._traverse_internals</span>
+                <span class="s2">except </span><span class="s1">AttributeError:</span>
+                    <span class="s1">cls._generated_cache_key_traversal = NO_CACHE</span>
+                    <span class="s2">return </span><span class="s1">NO_CACHE</span>
+
+            <span class="s2">assert </span><span class="s1">_cache_key_traversal </span><span class="s2">is not </span><span class="s1">NO_CACHE</span><span class="s3">, </span><span class="s1">(</span>
+                <span class="s5">f&quot;class </span><span class="s7">{</span><span class="s1">cls</span><span class="s7">} </span><span class="s5">has _cache_key_traversal=NO_CACHE, &quot;</span>
+                <span class="s5">&quot;which conflicts with inherit_cache=True&quot;</span>
+            <span class="s1">)</span>
+
+            <span class="s0"># TODO: wouldn't we instead get this from our superclass?</span>
+            <span class="s0"># also, our superclass may not have this yet, but in any case,</span>
+            <span class="s0"># we'd generate for the superclass that has it.   this is a little</span>
+            <span class="s0"># more complicated, so for the moment this is a little less</span>
+            <span class="s0"># efficient on startup but simpler.</span>
+            <span class="s2">return </span><span class="s1">_cache_key_traversal_visitor.generate_dispatch(</span>
+                <span class="s1">cls</span><span class="s3">,</span>
+                <span class="s1">_cache_key_traversal</span><span class="s3">,</span>
+                <span class="s5">&quot;_generated_cache_key_traversal&quot;</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">_cache_key_traversal = cls.__dict__.get(</span>
+                <span class="s5">&quot;_cache_key_traversal&quot;</span><span class="s3">, </span><span class="s2">None</span>
+            <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">_cache_key_traversal </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s1">_cache_key_traversal = cls.__dict__.get(</span>
+                    <span class="s5">&quot;_traverse_internals&quot;</span><span class="s3">, </span><span class="s2">None</span>
+                <span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">_cache_key_traversal </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s1">cls._generated_cache_key_traversal = NO_CACHE</span>
+                    <span class="s2">if </span><span class="s1">(</span>
+                        <span class="s1">inherit_cache </span><span class="s2">is None</span>
+                        <span class="s2">and </span><span class="s1">cls._hierarchy_supports_caching</span>
+                    <span class="s1">):</span>
+                        <span class="s1">util.warn(</span>
+                            <span class="s5">&quot;Class %s will not make use of SQL compilation &quot;</span>
+                            <span class="s5">&quot;caching as it does not set the 'inherit_cache' &quot;</span>
+                            <span class="s5">&quot;attribute to ``True``.  This can have &quot;</span>
+                            <span class="s5">&quot;significant performance implications including &quot;</span>
+                            <span class="s5">&quot;some performance degradations in comparison to &quot;</span>
+                            <span class="s5">&quot;prior SQLAlchemy versions.  Set this attribute &quot;</span>
+                            <span class="s5">&quot;to True if this object can make use of the cache &quot;</span>
+                            <span class="s5">&quot;key generated by the superclass.  Alternatively, &quot;</span>
+                            <span class="s5">&quot;this attribute may be set to False which will &quot;</span>
+                            <span class="s5">&quot;disable this warning.&quot; </span><span class="s1">% (cls.__name__)</span><span class="s3">,</span>
+                            <span class="s1">code=</span><span class="s5">&quot;cprf&quot;</span><span class="s3">,</span>
+                        <span class="s1">)</span>
+                    <span class="s2">return </span><span class="s1">NO_CACHE</span>
+
+            <span class="s2">return </span><span class="s1">_cache_key_traversal_visitor.generate_dispatch(</span>
+                <span class="s1">cls</span><span class="s3">,</span>
+                <span class="s1">_cache_key_traversal</span><span class="s3">,</span>
+                <span class="s5">&quot;_generated_cache_key_traversal&quot;</span><span class="s3">,</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s5">&quot;sqlalchemy.sql.elements&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">_gen_cache_key(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">anon_map: anon_map</span><span class="s3">, </span><span class="s1">bindparams: List[BindParameter[Any]]</span>
+    <span class="s1">) -&gt; Optional[Tuple[Any</span><span class="s3">, </span><span class="s1">...]]:</span>
+        <span class="s6">&quot;&quot;&quot;return an optional cache key. 
+ 
+        The cache key is a tuple which can contain any series of 
+        objects that are hashable and also identifies 
+        this object uniquely within the presence of a larger SQL expression 
+        or statement, for the purposes of caching the resulting query. 
+ 
+        The cache key should be based on the SQL compiled structure that would 
+        ultimately be produced.   That is, two structures that are composed in 
+        exactly the same way should produce the same cache key; any difference 
+        in the structures that would affect the SQL string or the type handlers 
+        should result in a different cache key. 
+ 
+        If a structure cannot produce a useful cache key, the NO_CACHE 
+        symbol should be added to the anon_map and the method should 
+        return None. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">cls = self.__class__</span>
+
+        <span class="s1">id_</span><span class="s3">, </span><span class="s1">found = anon_map.get_anon(self)</span>
+        <span class="s2">if </span><span class="s1">found:</span>
+            <span class="s2">return </span><span class="s1">(id_</span><span class="s3">, </span><span class="s1">cls)</span>
+
+        <span class="s1">dispatcher: Union[</span>
+            <span class="s1">Literal[CacheConst.NO_CACHE]</span><span class="s3">,</span>
+            <span class="s1">_CacheKeyTraversalDispatchType</span><span class="s3">,</span>
+        <span class="s1">]</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">dispatcher = cls.__dict__[</span><span class="s5">&quot;_generated_cache_key_traversal&quot;</span><span class="s1">]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s0"># traversals.py -&gt; _preconfigure_traversals()</span>
+            <span class="s0"># may be used to run these ahead of time, but</span>
+            <span class="s0"># is not enabled right now.</span>
+            <span class="s0"># this block will generate any remaining dispatchers.</span>
+            <span class="s1">dispatcher = cls._generate_cache_attrs()</span>
+
+        <span class="s2">if </span><span class="s1">dispatcher </span><span class="s2">is </span><span class="s1">NO_CACHE:</span>
+            <span class="s1">anon_map[NO_CACHE] = </span><span class="s2">True</span>
+            <span class="s2">return None</span>
+
+        <span class="s1">result: Tuple[Any</span><span class="s3">, </span><span class="s1">...] = (id_</span><span class="s3">, </span><span class="s1">cls)</span>
+
+        <span class="s0"># inline of _cache_key_traversal_visitor.run_generated_dispatch()</span>
+
+        <span class="s2">for </span><span class="s1">attrname</span><span class="s3">, </span><span class="s1">obj</span><span class="s3">, </span><span class="s1">meth </span><span class="s2">in </span><span class="s1">dispatcher(</span>
+            <span class="s1">self</span><span class="s3">, </span><span class="s1">_cache_key_traversal_visitor</span>
+        <span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">obj </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s0"># TODO: see if C code can help here as Python lacks an</span>
+                <span class="s0"># efficient switch construct</span>
+
+                <span class="s2">if </span><span class="s1">meth </span><span class="s2">is </span><span class="s1">STATIC_CACHE_KEY:</span>
+                    <span class="s1">sck = obj._static_cache_key</span>
+                    <span class="s2">if </span><span class="s1">sck </span><span class="s2">is </span><span class="s1">NO_CACHE:</span>
+                        <span class="s1">anon_map[NO_CACHE] = </span><span class="s2">True</span>
+                        <span class="s2">return None</span>
+                    <span class="s1">result += (attrname</span><span class="s3">, </span><span class="s1">sck)</span>
+                <span class="s2">elif </span><span class="s1">meth </span><span class="s2">is </span><span class="s1">ANON_NAME:</span>
+                    <span class="s1">elements = util.preloaded.sql_elements</span>
+                    <span class="s2">if </span><span class="s1">isinstance(obj</span><span class="s3">, </span><span class="s1">elements._anonymous_label):</span>
+                        <span class="s1">obj = obj.apply_map(anon_map)  </span><span class="s0"># type: ignore</span>
+                    <span class="s1">result += (attrname</span><span class="s3">, </span><span class="s1">obj)</span>
+                <span class="s2">elif </span><span class="s1">meth </span><span class="s2">is </span><span class="s1">CALL_GEN_CACHE_KEY:</span>
+                    <span class="s1">result += (</span>
+                        <span class="s1">attrname</span><span class="s3">,</span>
+                        <span class="s1">obj._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span><span class="s3">,</span>
+                    <span class="s1">)</span>
+
+                <span class="s0"># remaining cache functions are against</span>
+                <span class="s0"># Python tuples, dicts, lists, etc. so we can skip</span>
+                <span class="s0"># if they are empty</span>
+                <span class="s2">elif </span><span class="s1">obj:</span>
+                    <span class="s2">if </span><span class="s1">meth </span><span class="s2">is </span><span class="s1">CACHE_IN_PLACE:</span>
+                        <span class="s1">result += (attrname</span><span class="s3">, </span><span class="s1">obj)</span>
+                    <span class="s2">elif </span><span class="s1">meth </span><span class="s2">is </span><span class="s1">PROPAGATE_ATTRS:</span>
+                        <span class="s1">result += (</span>
+                            <span class="s1">attrname</span><span class="s3">,</span>
+                            <span class="s1">obj[</span><span class="s5">&quot;compile_state_plugin&quot;</span><span class="s1">]</span><span class="s3">,</span>
+                            <span class="s1">(</span>
+                                <span class="s1">obj[</span><span class="s5">&quot;plugin_subject&quot;</span><span class="s1">]._gen_cache_key(</span>
+                                    <span class="s1">anon_map</span><span class="s3">, </span><span class="s1">bindparams</span>
+                                <span class="s1">)</span>
+                                <span class="s2">if </span><span class="s1">obj[</span><span class="s5">&quot;plugin_subject&quot;</span><span class="s1">]</span>
+                                <span class="s2">else None</span>
+                            <span class="s1">)</span><span class="s3">,</span>
+                        <span class="s1">)</span>
+                    <span class="s2">elif </span><span class="s1">meth </span><span class="s2">is </span><span class="s1">InternalTraversal.dp_annotations_key:</span>
+                        <span class="s0"># obj is here is the _annotations dict.  Table uses</span>
+                        <span class="s0"># a memoized version of it.  however in other cases,</span>
+                        <span class="s0"># we generate it given anon_map as we may be from a</span>
+                        <span class="s0"># Join, Aliased, etc.</span>
+                        <span class="s0"># see #8790</span>
+
+                        <span class="s2">if </span><span class="s1">self._gen_static_annotations_cache_key:  </span><span class="s0"># type: ignore  # noqa: E501</span>
+                            <span class="s1">result += self._annotations_cache_key  </span><span class="s0"># type: ignore  # noqa: E501</span>
+                        <span class="s2">else</span><span class="s1">:</span>
+                            <span class="s1">result += self._gen_annotations_cache_key(anon_map)  </span><span class="s0"># type: ignore  # noqa: E501</span>
+
+                    <span class="s2">elif </span><span class="s1">(</span>
+                        <span class="s1">meth </span><span class="s2">is </span><span class="s1">InternalTraversal.dp_clauseelement_list</span>
+                        <span class="s2">or </span><span class="s1">meth </span><span class="s2">is </span><span class="s1">InternalTraversal.dp_clauseelement_tuple</span>
+                        <span class="s2">or </span><span class="s1">meth</span>
+                        <span class="s2">is </span><span class="s1">InternalTraversal.dp_memoized_select_entities</span>
+                    <span class="s1">):</span>
+                        <span class="s1">result += (</span>
+                            <span class="s1">attrname</span><span class="s3">,</span>
+                            <span class="s1">tuple(</span>
+                                <span class="s1">[</span>
+                                    <span class="s1">elem._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                                    <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">obj</span>
+                                <span class="s1">]</span>
+                            <span class="s1">)</span><span class="s3">,</span>
+                        <span class="s1">)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">result += meth(  </span><span class="s0"># type: ignore</span>
+                            <span class="s1">attrname</span><span class="s3">, </span><span class="s1">obj</span><span class="s3">, </span><span class="s1">self</span><span class="s3">, </span><span class="s1">anon_map</span><span class="s3">, </span><span class="s1">bindparams</span>
+                        <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">result</span>
+
+    <span class="s2">def </span><span class="s1">_generate_cache_key(self) -&gt; Optional[CacheKey]:</span>
+        <span class="s6">&quot;&quot;&quot;return a cache key. 
+ 
+        The cache key is a tuple which can contain any series of 
+        objects that are hashable and also identifies 
+        this object uniquely within the presence of a larger SQL expression 
+        or statement, for the purposes of caching the resulting query. 
+ 
+        The cache key should be based on the SQL compiled structure that would 
+        ultimately be produced.   That is, two structures that are composed in 
+        exactly the same way should produce the same cache key; any difference 
+        in the structures that would affect the SQL string or the type handlers 
+        should result in a different cache key. 
+ 
+        The cache key returned by this method is an instance of 
+        :class:`.CacheKey`, which consists of a tuple representing the 
+        cache key, as well as a list of :class:`.BindParameter` objects 
+        which are extracted from the expression.   While two expressions 
+        that produce identical cache key tuples will themselves generate 
+        identical SQL strings, the list of :class:`.BindParameter` objects 
+        indicates the bound values which may have different values in 
+        each one; these bound parameters must be consulted in order to 
+        execute the statement with the correct parameters. 
+ 
+        a :class:`_expression.ClauseElement` structure that does not implement 
+        a :meth:`._gen_cache_key` method and does not implement a 
+        :attr:`.traverse_internals` attribute will not be cacheable; when 
+        such an element is embedded into a larger structure, this method 
+        will return None, indicating no cache key is available. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">bindparams: List[BindParameter[Any]] = []</span>
+
+        <span class="s1">_anon_map = anon_map()</span>
+        <span class="s1">key = self._gen_cache_key(_anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+        <span class="s2">if </span><span class="s1">NO_CACHE </span><span class="s2">in </span><span class="s1">_anon_map:</span>
+            <span class="s2">return None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">assert </span><span class="s1">key </span><span class="s2">is not None</span>
+            <span class="s2">return </span><span class="s1">CacheKey(key</span><span class="s3">, </span><span class="s1">bindparams)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_generate_cache_key_for_object(</span>
+        <span class="s1">cls</span><span class="s3">, </span><span class="s1">obj: HasCacheKey</span>
+    <span class="s1">) -&gt; Optional[CacheKey]:</span>
+        <span class="s1">bindparams: List[BindParameter[Any]] = []</span>
+
+        <span class="s1">_anon_map = anon_map()</span>
+        <span class="s1">key = obj._gen_cache_key(_anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+        <span class="s2">if </span><span class="s1">NO_CACHE </span><span class="s2">in </span><span class="s1">_anon_map:</span>
+            <span class="s2">return None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">assert </span><span class="s1">key </span><span class="s2">is not None</span>
+            <span class="s2">return </span><span class="s1">CacheKey(key</span><span class="s3">, </span><span class="s1">bindparams)</span>
+
+
+<span class="s2">class </span><span class="s1">HasCacheKeyTraverse(HasTraverseInternals</span><span class="s3">, </span><span class="s1">HasCacheKey):</span>
+    <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">MemoizedHasCacheKey(HasCacheKey</span><span class="s3">, </span><span class="s1">HasMemoized):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">@HasMemoized.memoized_instancemethod</span>
+    <span class="s2">def </span><span class="s1">_generate_cache_key(self) -&gt; Optional[CacheKey]:</span>
+        <span class="s2">return </span><span class="s1">HasCacheKey._generate_cache_key(self)</span>
+
+
+<span class="s2">class </span><span class="s1">SlotsMemoizedHasCacheKey(HasCacheKey</span><span class="s3">, </span><span class="s1">util.MemoizedSlots):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s2">def </span><span class="s1">_memoized_method__generate_cache_key(self) -&gt; Optional[CacheKey]:</span>
+        <span class="s2">return </span><span class="s1">HasCacheKey._generate_cache_key(self)</span>
+
+
+<span class="s2">class </span><span class="s1">CacheKey(NamedTuple):</span>
+    <span class="s6">&quot;&quot;&quot;The key used to identify a SQL statement construct in the 
+    SQL compilation cache. 
+ 
+    .. seealso:: 
+ 
+        :ref:`sql_caching` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">key: Tuple[Any</span><span class="s3">, </span><span class="s1">...]</span>
+    <span class="s1">bindparams: Sequence[BindParameter[Any]]</span>
+
+    <span class="s0"># can't set __hash__ attribute because it interferes</span>
+    <span class="s0"># with namedtuple</span>
+    <span class="s0"># can't use &quot;if not TYPE_CHECKING&quot; because mypy rejects it</span>
+    <span class="s0"># inside of a NamedTuple</span>
+    <span class="s2">def </span><span class="s1">__hash__(self) -&gt; Optional[int]:  </span><span class="s0"># type: ignore</span>
+        <span class="s6">&quot;&quot;&quot;CacheKey itself is not hashable - hash the .key portion&quot;&quot;&quot;</span>
+        <span class="s2">return None</span>
+
+    <span class="s2">def </span><span class="s1">to_offline_string(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">statement_cache: MutableMapping[Any</span><span class="s3">, </span><span class="s1">str]</span><span class="s3">,</span>
+        <span class="s1">statement: ClauseElement</span><span class="s3">,</span>
+        <span class="s1">parameters: _CoreSingleExecuteParams</span><span class="s3">,</span>
+    <span class="s1">) -&gt; str:</span>
+        <span class="s6">&quot;&quot;&quot;Generate an &quot;offline string&quot; form of this :class:`.CacheKey` 
+ 
+        The &quot;offline string&quot; is basically the string SQL for the 
+        statement plus a repr of the bound parameter values in series. 
+        Whereas the :class:`.CacheKey` object is dependent on in-memory 
+        identities in order to work as a cache key, the &quot;offline&quot; version 
+        is suitable for a cache that will work for other processes as well. 
+ 
+        The given ``statement_cache`` is a dictionary-like object where the 
+        string form of the statement itself will be cached.  This dictionary 
+        should be in a longer lived scope in order to reduce the time spent 
+        stringifying statements. 
+ 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self.key </span><span class="s2">not in </span><span class="s1">statement_cache:</span>
+            <span class="s1">statement_cache[self.key] = sql_str = str(statement)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">sql_str = statement_cache[self.key]</span>
+
+        <span class="s2">if not </span><span class="s1">self.bindparams:</span>
+            <span class="s1">param_tuple = tuple(parameters[key] </span><span class="s2">for </span><span class="s1">key </span><span class="s2">in </span><span class="s1">sorted(parameters))</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">param_tuple = tuple(</span>
+                <span class="s1">parameters.get(bindparam.key</span><span class="s3">, </span><span class="s1">bindparam.value)</span>
+                <span class="s2">for </span><span class="s1">bindparam </span><span class="s2">in </span><span class="s1">self.bindparams</span>
+            <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">repr((sql_str</span><span class="s3">, </span><span class="s1">param_tuple))</span>
+
+    <span class="s2">def </span><span class="s1">__eq__(self</span><span class="s3">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s2">return </span><span class="s1">bool(self.key == other.key)</span>
+
+    <span class="s2">def </span><span class="s1">__ne__(self</span><span class="s3">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s2">return not </span><span class="s1">(self.key == other.key)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_diff_tuples(cls</span><span class="s3">, </span><span class="s1">left: CacheKey</span><span class="s3">, </span><span class="s1">right: CacheKey) -&gt; str:</span>
+        <span class="s1">ck1 = CacheKey(left</span><span class="s3">, </span><span class="s1">[])</span>
+        <span class="s1">ck2 = CacheKey(right</span><span class="s3">, </span><span class="s1">[])</span>
+        <span class="s2">return </span><span class="s1">ck1._diff(ck2)</span>
+
+    <span class="s2">def </span><span class="s1">_whats_different(self</span><span class="s3">, </span><span class="s1">other: CacheKey) -&gt; Iterator[str]:</span>
+        <span class="s1">k1 = self.key</span>
+        <span class="s1">k2 = other.key</span>
+
+        <span class="s1">stack: List[int] = []</span>
+        <span class="s1">pickup_index = </span><span class="s4">0</span>
+        <span class="s2">while True</span><span class="s1">:</span>
+            <span class="s1">s1</span><span class="s3">, </span><span class="s1">s2 = k1</span><span class="s3">, </span><span class="s1">k2</span>
+            <span class="s2">for </span><span class="s1">idx </span><span class="s2">in </span><span class="s1">stack:</span>
+                <span class="s1">s1 = s1[idx]</span>
+                <span class="s1">s2 = s2[idx]</span>
+
+            <span class="s2">for </span><span class="s1">idx</span><span class="s3">, </span><span class="s1">(e1</span><span class="s3">, </span><span class="s1">e2) </span><span class="s2">in </span><span class="s1">enumerate(zip_longest(s1</span><span class="s3">, </span><span class="s1">s2)):</span>
+                <span class="s2">if </span><span class="s1">idx &lt; pickup_index:</span>
+                    <span class="s2">continue</span>
+                <span class="s2">if </span><span class="s1">e1 != e2:</span>
+                    <span class="s2">if </span><span class="s1">isinstance(e1</span><span class="s3">, </span><span class="s1">tuple) </span><span class="s2">and </span><span class="s1">isinstance(e2</span><span class="s3">, </span><span class="s1">tuple):</span>
+                        <span class="s1">stack.append(idx)</span>
+                        <span class="s2">break</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s2">yield </span><span class="s5">&quot;key%s[%d]:  %s != %s&quot; </span><span class="s1">% (</span>
+                            <span class="s5">&quot;&quot;</span><span class="s1">.join(</span><span class="s5">&quot;[%d]&quot; </span><span class="s1">% id_ </span><span class="s2">for </span><span class="s1">id_ </span><span class="s2">in </span><span class="s1">stack)</span><span class="s3">,</span>
+                            <span class="s1">idx</span><span class="s3">,</span>
+                            <span class="s1">e1</span><span class="s3">,</span>
+                            <span class="s1">e2</span><span class="s3">,</span>
+                        <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">pickup_index = stack.pop(-</span><span class="s4">1</span><span class="s1">)</span>
+                <span class="s2">break</span>
+
+    <span class="s2">def </span><span class="s1">_diff(self</span><span class="s3">, </span><span class="s1">other: CacheKey) -&gt; str:</span>
+        <span class="s2">return </span><span class="s5">&quot;, &quot;</span><span class="s1">.join(self._whats_different(other))</span>
+
+    <span class="s2">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s1">stack: List[Union[Tuple[Any</span><span class="s3">, </span><span class="s1">...]</span><span class="s3">, </span><span class="s1">HasCacheKey]] = [self.key]</span>
+
+        <span class="s1">output = []</span>
+        <span class="s1">sentinel = object()</span>
+        <span class="s1">indent = -</span><span class="s4">1</span>
+        <span class="s2">while </span><span class="s1">stack:</span>
+            <span class="s1">elem = stack.pop(</span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">elem </span><span class="s2">is </span><span class="s1">sentinel:</span>
+                <span class="s1">output.append((</span><span class="s5">&quot; &quot; </span><span class="s1">* (indent * </span><span class="s4">2</span><span class="s1">)) + </span><span class="s5">&quot;),&quot;</span><span class="s1">)</span>
+                <span class="s1">indent -= </span><span class="s4">1</span>
+            <span class="s2">elif </span><span class="s1">isinstance(elem</span><span class="s3">, </span><span class="s1">tuple):</span>
+                <span class="s2">if not </span><span class="s1">elem:</span>
+                    <span class="s1">output.append((</span><span class="s5">&quot; &quot; </span><span class="s1">* ((indent + </span><span class="s4">1</span><span class="s1">) * </span><span class="s4">2</span><span class="s1">)) + </span><span class="s5">&quot;()&quot;</span><span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">indent += </span><span class="s4">1</span>
+                    <span class="s1">stack = list(elem) + [sentinel] + stack</span>
+                    <span class="s1">output.append((</span><span class="s5">&quot; &quot; </span><span class="s1">* (indent * </span><span class="s4">2</span><span class="s1">)) + </span><span class="s5">&quot;(&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">isinstance(elem</span><span class="s3">, </span><span class="s1">HasCacheKey):</span>
+                    <span class="s1">repr_ = </span><span class="s5">&quot;&lt;%s object at %s&gt;&quot; </span><span class="s1">% (</span>
+                        <span class="s1">type(elem).__name__</span><span class="s3">,</span>
+                        <span class="s1">hex(id(elem))</span><span class="s3">,</span>
+                    <span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">repr_ = repr(elem)</span>
+                <span class="s1">output.append((</span><span class="s5">&quot; &quot; </span><span class="s1">* (indent * </span><span class="s4">2</span><span class="s1">)) + </span><span class="s5">&quot;  &quot; </span><span class="s1">+ repr_ + </span><span class="s5">&quot;, &quot;</span><span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s5">&quot;CacheKey(key=%s)&quot; </span><span class="s1">% (</span><span class="s5">&quot;</span><span class="s7">\n</span><span class="s5">&quot;</span><span class="s1">.join(output)</span><span class="s3">,</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_generate_param_dict(self) -&gt; Dict[str</span><span class="s3">, </span><span class="s1">Any]:</span>
+        <span class="s6">&quot;&quot;&quot;used for testing&quot;&quot;&quot;</span>
+
+        <span class="s1">_anon_map = prefix_anon_map()</span>
+        <span class="s2">return </span><span class="s1">{b.key % _anon_map: b.effective_value </span><span class="s2">for </span><span class="s1">b </span><span class="s2">in </span><span class="s1">self.bindparams}</span>
+
+    <span class="s1">@util.preload_module(</span><span class="s5">&quot;sqlalchemy.sql.elements&quot;</span><span class="s1">)</span>
+    <span class="s2">def </span><span class="s1">_apply_params_to_element(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">original_cache_key: CacheKey</span><span class="s3">, </span><span class="s1">target_element: ColumnElement[Any]</span>
+    <span class="s1">) -&gt; ColumnElement[Any]:</span>
+        <span class="s2">if </span><span class="s1">target_element._is_immutable </span><span class="s2">or </span><span class="s1">original_cache_key </span><span class="s2">is </span><span class="s1">self:</span>
+            <span class="s2">return </span><span class="s1">target_element</span>
+
+        <span class="s1">elements = util.preloaded.sql_elements</span>
+        <span class="s2">return </span><span class="s1">elements._OverrideBinds(</span>
+            <span class="s1">target_element</span><span class="s3">, </span><span class="s1">self.bindparams</span><span class="s3">, </span><span class="s1">original_cache_key.bindparams</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_ad_hoc_cache_key_from_args(</span>
+    <span class="s1">tokens: Tuple[Any</span><span class="s3">, </span><span class="s1">...]</span><span class="s3">,</span>
+    <span class="s1">traverse_args: Iterable[Tuple[str</span><span class="s3">, </span><span class="s1">InternalTraversal]]</span><span class="s3">,</span>
+    <span class="s1">args: Iterable[Any]</span><span class="s3">,</span>
+<span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+    <span class="s6">&quot;&quot;&quot;a quick cache key generator used by reflection.flexi_cache.&quot;&quot;&quot;</span>
+    <span class="s1">bindparams: List[BindParameter[Any]] = []</span>
+
+    <span class="s1">_anon_map = anon_map()</span>
+
+    <span class="s1">tup = tokens</span>
+
+    <span class="s2">for </span><span class="s1">(attrname</span><span class="s3">, </span><span class="s1">sym)</span><span class="s3">, </span><span class="s1">arg </span><span class="s2">in </span><span class="s1">zip(traverse_args</span><span class="s3">, </span><span class="s1">args):</span>
+        <span class="s1">key = sym.name</span>
+        <span class="s1">visit_key = key.replace(</span><span class="s5">&quot;dp_&quot;</span><span class="s3">, </span><span class="s5">&quot;visit_&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">arg </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">tup += (attrname</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+            <span class="s2">continue</span>
+
+        <span class="s1">meth = getattr(_cache_key_traversal_visitor</span><span class="s3">, </span><span class="s1">visit_key)</span>
+        <span class="s2">if </span><span class="s1">meth </span><span class="s2">is </span><span class="s1">CACHE_IN_PLACE:</span>
+            <span class="s1">tup += (attrname</span><span class="s3">, </span><span class="s1">arg)</span>
+        <span class="s2">elif </span><span class="s1">meth </span><span class="s2">in </span><span class="s1">(</span>
+            <span class="s1">CALL_GEN_CACHE_KEY</span><span class="s3">,</span>
+            <span class="s1">STATIC_CACHE_KEY</span><span class="s3">,</span>
+            <span class="s1">ANON_NAME</span><span class="s3">,</span>
+            <span class="s1">PROPAGATE_ATTRS</span><span class="s3">,</span>
+        <span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">NotImplementedError(</span>
+                <span class="s5">f&quot;Haven't implemented symbol </span><span class="s7">{</span><span class="s1">meth</span><span class="s7">} </span><span class="s5">for ad-hoc key from args&quot;</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">tup += meth(attrname</span><span class="s3">, </span><span class="s1">arg</span><span class="s3">, </span><span class="s2">None</span><span class="s3">, </span><span class="s1">_anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+    <span class="s2">return </span><span class="s1">tup</span>
+
+
+<span class="s2">class </span><span class="s1">_CacheKeyTraversal(HasTraversalDispatch):</span>
+    <span class="s0"># very common elements are inlined into the main _get_cache_key() method</span>
+    <span class="s0"># to produce a dramatic savings in Python function call overhead</span>
+
+    <span class="s1">visit_has_cache_key = visit_clauseelement = CALL_GEN_CACHE_KEY</span>
+    <span class="s1">visit_clauseelement_list = InternalTraversal.dp_clauseelement_list</span>
+    <span class="s1">visit_annotations_key = InternalTraversal.dp_annotations_key</span>
+    <span class="s1">visit_clauseelement_tuple = InternalTraversal.dp_clauseelement_tuple</span>
+    <span class="s1">visit_memoized_select_entities = (</span>
+        <span class="s1">InternalTraversal.dp_memoized_select_entities</span>
+    <span class="s1">)</span>
+
+    <span class="s1">visit_string = visit_boolean = visit_operator = visit_plain_obj = (</span>
+        <span class="s1">CACHE_IN_PLACE</span>
+    <span class="s1">)</span>
+    <span class="s1">visit_statement_hint_list = CACHE_IN_PLACE</span>
+    <span class="s1">visit_type = STATIC_CACHE_KEY</span>
+    <span class="s1">visit_anon_name = ANON_NAME</span>
+
+    <span class="s1">visit_propagate_attrs = PROPAGATE_ATTRS</span>
+
+    <span class="s2">def </span><span class="s1">visit_with_context_options(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">tuple((fn.__code__</span><span class="s3">, </span><span class="s1">c_key) </span><span class="s2">for </span><span class="s1">fn</span><span class="s3">, </span><span class="s1">c_key </span><span class="s2">in </span><span class="s1">obj)</span>
+
+    <span class="s2">def </span><span class="s1">visit_inspectable(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">(attrname</span><span class="s3">, </span><span class="s1">inspect(obj)._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams))</span>
+
+    <span class="s2">def </span><span class="s1">visit_string_list(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">tuple(obj)</span>
+
+    <span class="s2">def </span><span class="s1">visit_multi(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">(</span>
+                <span class="s1">obj._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                <span class="s2">if </span><span class="s1">isinstance(obj</span><span class="s3">, </span><span class="s1">HasCacheKey)</span>
+                <span class="s2">else </span><span class="s1">obj</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_multi_list(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">(</span>
+                    <span class="s1">elem._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                    <span class="s2">if </span><span class="s1">isinstance(elem</span><span class="s3">, </span><span class="s1">HasCacheKey)</span>
+                    <span class="s2">else </span><span class="s1">elem</span>
+                <span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">obj</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_has_cache_key_tuples(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">if not </span><span class="s1">obj:</span>
+            <span class="s2">return </span><span class="s1">()</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">tuple(</span>
+                    <span class="s1">elem._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                    <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">tup_elem</span>
+                <span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">tup_elem </span><span class="s2">in </span><span class="s1">obj</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_has_cache_key_list(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">if not </span><span class="s1">obj:</span>
+            <span class="s2">return </span><span class="s1">()</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(elem._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams) </span><span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">obj)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_executable_options(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">if not </span><span class="s1">obj:</span>
+            <span class="s2">return </span><span class="s1">()</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">elem._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                <span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">obj</span>
+                <span class="s2">if </span><span class="s1">elem._is_has_cache_key</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_inspectable_list(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">self.visit_has_cache_key_list(</span>
+            <span class="s1">attrname</span><span class="s3">, </span><span class="s1">[inspect(o) </span><span class="s2">for </span><span class="s1">o </span><span class="s2">in </span><span class="s1">obj]</span><span class="s3">, </span><span class="s1">parent</span><span class="s3">, </span><span class="s1">anon_map</span><span class="s3">, </span><span class="s1">bindparams</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_tuples(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">self.visit_has_cache_key_tuples(</span>
+            <span class="s1">attrname</span><span class="s3">, </span><span class="s1">obj</span><span class="s3">, </span><span class="s1">parent</span><span class="s3">, </span><span class="s1">anon_map</span><span class="s3">, </span><span class="s1">bindparams</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_fromclause_ordered_set(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">if not </span><span class="s1">obj:</span>
+            <span class="s2">return </span><span class="s1">()</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple([elem._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams) </span><span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">obj])</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_clauseelement_unordered_set(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">if not </span><span class="s1">obj:</span>
+            <span class="s2">return </span><span class="s1">()</span>
+        <span class="s1">cache_keys = [</span>
+            <span class="s1">elem._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams) </span><span class="s2">for </span><span class="s1">elem </span><span class="s2">in </span><span class="s1">obj</span>
+        <span class="s1">]</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">sorted(cache_keys)</span>
+            <span class="s1">)</span><span class="s3">,  </span><span class="s0"># cache keys all start with (id_, class)</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_named_ddl_element(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">(attrname</span><span class="s3">, </span><span class="s1">obj.name)</span>
+
+    <span class="s2">def </span><span class="s1">visit_prefix_sequence(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">if not </span><span class="s1">obj:</span>
+            <span class="s2">return </span><span class="s1">()</span>
+
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">[</span>
+                    <span class="s1">(clause._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span><span class="s3">, </span><span class="s1">strval)</span>
+                    <span class="s2">for </span><span class="s1">clause</span><span class="s3">, </span><span class="s1">strval </span><span class="s2">in </span><span class="s1">obj</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_setup_join_tuple(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">tuple(</span>
+            <span class="s1">(</span>
+                <span class="s1">target._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span><span class="s3">,</span>
+                <span class="s1">(</span>
+                    <span class="s1">onclause._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                    <span class="s2">if </span><span class="s1">onclause </span><span class="s2">is not None</span>
+                    <span class="s2">else None</span>
+                <span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">(</span>
+                    <span class="s1">from_._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                    <span class="s2">if </span><span class="s1">from_ </span><span class="s2">is not None</span>
+                    <span class="s2">else None</span>
+                <span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">tuple([(key</span><span class="s3">, </span><span class="s1">flags[key]) </span><span class="s2">for </span><span class="s1">key </span><span class="s2">in </span><span class="s1">sorted(flags)])</span><span class="s3">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">(target</span><span class="s3">, </span><span class="s1">onclause</span><span class="s3">, </span><span class="s1">from_</span><span class="s3">, </span><span class="s1">flags) </span><span class="s2">in </span><span class="s1">obj</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_table_hint_list(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">if not </span><span class="s1">obj:</span>
+            <span class="s2">return </span><span class="s1">()</span>
+
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">[</span>
+                    <span class="s1">(</span>
+                        <span class="s1">clause._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span><span class="s3">,</span>
+                        <span class="s1">dialect_name</span><span class="s3">,</span>
+                        <span class="s1">text</span><span class="s3">,</span>
+                    <span class="s1">)</span>
+                    <span class="s2">for </span><span class="s1">(clause</span><span class="s3">, </span><span class="s1">dialect_name)</span><span class="s3">, </span><span class="s1">text </span><span class="s2">in </span><span class="s1">obj.items()</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_plain_dict(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">(attrname</span><span class="s3">, </span><span class="s1">tuple([(key</span><span class="s3">, </span><span class="s1">obj[key]) </span><span class="s2">for </span><span class="s1">key </span><span class="s2">in </span><span class="s1">sorted(obj)]))</span>
+
+    <span class="s2">def </span><span class="s1">visit_dialect_options(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">(</span>
+                    <span class="s1">dialect_name</span><span class="s3">,</span>
+                    <span class="s1">tuple(</span>
+                        <span class="s1">[</span>
+                            <span class="s1">(key</span><span class="s3">, </span><span class="s1">obj[dialect_name][key])</span>
+                            <span class="s2">for </span><span class="s1">key </span><span class="s2">in </span><span class="s1">sorted(obj[dialect_name])</span>
+                        <span class="s1">]</span>
+                    <span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">dialect_name </span><span class="s2">in </span><span class="s1">sorted(obj)</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_string_clauseelement_dict(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">(key</span><span class="s3">, </span><span class="s1">obj[key]._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams))</span>
+                <span class="s2">for </span><span class="s1">key </span><span class="s2">in </span><span class="s1">sorted(obj)</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_string_multi_dict(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">(</span>
+                    <span class="s1">key</span><span class="s3">,</span>
+                    <span class="s1">(</span>
+                        <span class="s1">value._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                        <span class="s2">if </span><span class="s1">isinstance(value</span><span class="s3">, </span><span class="s1">HasCacheKey)</span>
+                        <span class="s2">else </span><span class="s1">value</span>
+                    <span class="s1">)</span><span class="s3">,</span>
+                <span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">key</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">[(key</span><span class="s3">, </span><span class="s1">obj[key]) </span><span class="s2">for </span><span class="s1">key </span><span class="s2">in </span><span class="s1">sorted(obj)]</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_fromclause_canonical_column_collection(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s0"># inlining into the internals of ColumnCollection</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">col._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                <span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">col</span><span class="s3">, </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">obj._collection</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_unknown_structure(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s1">anon_map[NO_CACHE] = </span><span class="s2">True</span>
+        <span class="s2">return </span><span class="s1">()</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_ordered_values(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">(</span>
+                    <span class="s1">(</span>
+                        <span class="s1">key._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                        <span class="s2">if </span><span class="s1">hasattr(key</span><span class="s3">, </span><span class="s5">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+                        <span class="s2">else </span><span class="s1">key</span>
+                    <span class="s1">)</span><span class="s3">,</span>
+                    <span class="s1">value._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span><span class="s3">,</span>
+                <span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">key</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">obj</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_values(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s0"># in py37 we can assume two dictionaries created in the same</span>
+        <span class="s0"># insert ordering will retain that sorting</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">attrname</span><span class="s3">,</span>
+            <span class="s1">tuple(</span>
+                <span class="s1">(</span>
+                    <span class="s1">(</span>
+                        <span class="s1">k._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span>
+                        <span class="s2">if </span><span class="s1">hasattr(k</span><span class="s3">, </span><span class="s5">&quot;__clause_element__&quot;</span><span class="s1">)</span>
+                        <span class="s2">else </span><span class="s1">k</span>
+                    <span class="s1">)</span><span class="s3">,</span>
+                    <span class="s1">obj[k]._gen_cache_key(anon_map</span><span class="s3">, </span><span class="s1">bindparams)</span><span class="s3">,</span>
+                <span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">obj</span>
+            <span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">visit_dml_multi_values(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">attrname: str</span><span class="s3">,</span>
+        <span class="s1">obj: Any</span><span class="s3">,</span>
+        <span class="s1">parent: Any</span><span class="s3">,</span>
+        <span class="s1">anon_map: anon_map</span><span class="s3">,</span>
+        <span class="s1">bindparams: List[BindParameter[Any]]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; Tuple[Any</span><span class="s3">, </span><span class="s1">...]:</span>
+        <span class="s0"># multivalues are simply not cacheable right now</span>
+        <span class="s1">anon_map[NO_CACHE] = </span><span class="s2">True</span>
+        <span class="s2">return </span><span class="s1">()</span>
+
+
+<span class="s1">_cache_key_traversal_visitor = _CacheKeyTraversal()</span>
+</pre>
+</body>
+</html>

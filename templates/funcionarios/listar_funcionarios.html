@@ -1,0 +1,36 @@
+{% extends 'modelo_base2.html' %}
+
+{% block conteudo %}
+    <h2>Lista de Funcionários</h2>
+
+    <table class="tabela-funcionarios">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Nome</th>
+                <th>CPF</th>
+                <th>Email</th>
+                <th>Telefone</th>
+                <th>Cargo</th>
+                <th>Ações</th> <!-- Coluna extra para ações -->
+            </tr>
+        </thead>
+        <tbody>
+            {% for funcionario in funcionarios %}
+                <tr>
+                    <td>{{ funcionario.id_funcionario }}</td>
+                    <td>{{ funcionario.nome_funcionario }}</td>
+                    <td>{{ funcionario.cpf_funcionario }}</td>
+                    <td>{{ funcionario.email_funcionario }}</td>
+                    <td>{{ funcionario.telefone_funcionario }}</td>
+                    <td>{{ funcionario.cargo_funcionario }}</td>
+                    <td>
+                        <a href="{{ url_for('editar_funcionario', id=funcionario.id_funcionario) }}" class="btn2 editar">Editar</a>
+                        <a href="{{ url_for('deletar_funcionario', id=funcionario.id_funcionario) }}" class="btn2 deletar" onclick="return confirm('Tem certeza que deseja deletar?')">Deletar</a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+<a href="{{ url_for('gerenciar_funcionarios') }}" class="btn3 voltar">Voltar</a>
+{% endblock %}

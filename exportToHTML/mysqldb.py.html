@@ -1,0 +1,326 @@
+<html>
+<head>
+<title>mysqldb.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+mysqldb.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/mysql/mysqldb.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">&quot;&quot;&quot; 
+ 
+.. dialect:: mysql+mysqldb 
+    :name: mysqlclient (maintained fork of MySQL-Python) 
+    :dbapi: mysqldb 
+    :connectstring: mysql+mysqldb://&lt;user&gt;:&lt;password&gt;@&lt;host&gt;[:&lt;port&gt;]/&lt;dbname&gt; 
+    :url: https://pypi.org/project/mysqlclient/ 
+ 
+Driver Status 
+------------- 
+ 
+The mysqlclient DBAPI is a maintained fork of the 
+`MySQL-Python &lt;https://sourceforge.net/projects/mysql-python&gt;`_ DBAPI 
+that is no longer maintained.  `mysqlclient`_ supports Python 2 and Python 3 
+and is very stable. 
+ 
+.. _mysqlclient: https://github.com/PyMySQL/mysqlclient-python 
+ 
+.. _mysqldb_unicode: 
+ 
+Unicode 
+------- 
+ 
+Please see :ref:`mysql_unicode` for current recommendations on unicode 
+handling. 
+ 
+.. _mysqldb_ssl: 
+ 
+SSL Connections 
+---------------- 
+ 
+The mysqlclient and PyMySQL DBAPIs accept an additional dictionary under the 
+key &quot;ssl&quot;, which may be specified using the 
+:paramref:`_sa.create_engine.connect_args` dictionary:: 
+ 
+    engine = create_engine( 
+        &quot;mysql+mysqldb://scott:tiger@192.168.0.134/test&quot;, 
+        connect_args={ 
+            &quot;ssl&quot;: { 
+                &quot;ca&quot;: &quot;/home/gord/client-ssl/ca.pem&quot;, 
+                &quot;cert&quot;: &quot;/home/gord/client-ssl/client-cert.pem&quot;, 
+                &quot;key&quot;: &quot;/home/gord/client-ssl/client-key.pem&quot; 
+            } 
+        } 
+    ) 
+ 
+For convenience, the following keys may also be specified inline within the URL 
+where they will be interpreted into the &quot;ssl&quot; dictionary automatically: 
+&quot;ssl_ca&quot;, &quot;ssl_cert&quot;, &quot;ssl_key&quot;, &quot;ssl_capath&quot;, &quot;ssl_cipher&quot;, 
+&quot;ssl_check_hostname&quot;. An example is as follows:: 
+ 
+    connection_uri = ( 
+        &quot;mysql+mysqldb://scott:tiger@192.168.0.134/test&quot; 
+        &quot;?ssl_ca=/home/gord/client-ssl/ca.pem&quot; 
+        &quot;&amp;ssl_cert=/home/gord/client-ssl/client-cert.pem&quot; 
+        &quot;&amp;ssl_key=/home/gord/client-ssl/client-key.pem&quot; 
+    ) 
+ 
+.. seealso:: 
+ 
+    :ref:`pymysql_ssl` in the PyMySQL dialect 
+ 
+ 
+Using MySQLdb with Google Cloud SQL 
+----------------------------------- 
+ 
+Google Cloud SQL now recommends use of the MySQLdb dialect.  Connect 
+using a URL like the following:: 
+ 
+    mysql+mysqldb://root@/&lt;dbname&gt;?unix_socket=/cloudsql/&lt;projectid&gt;:&lt;instancename&gt; 
+ 
+Server Side Cursors 
+------------------- 
+ 
+The mysqldb dialect supports server-side cursors. See :ref:`mysql_ss_cursors`. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">import </span><span class="s1">re</span>
+
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">MySQLCompiler</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">MySQLDialect</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">MySQLExecutionContext</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">MySQLIdentifierPreparer</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">TEXT</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">sql</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+
+
+<span class="s3">class </span><span class="s1">MySQLExecutionContext_mysqldb(MySQLExecutionContext):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">MySQLCompiler_mysqldb(MySQLCompiler):</span>
+    <span class="s3">pass</span>
+
+
+<span class="s3">class </span><span class="s1">MySQLDialect_mysqldb(MySQLDialect):</span>
+    <span class="s1">driver = </span><span class="s4">&quot;mysqldb&quot;</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+    <span class="s1">supports_unicode_statements = </span><span class="s3">True</span>
+    <span class="s1">supports_sane_rowcount = </span><span class="s3">True</span>
+    <span class="s1">supports_sane_multi_rowcount = </span><span class="s3">True</span>
+
+    <span class="s1">supports_native_decimal = </span><span class="s3">True</span>
+
+    <span class="s1">default_paramstyle = </span><span class="s4">&quot;format&quot;</span>
+    <span class="s1">execution_ctx_cls = MySQLExecutionContext_mysqldb</span>
+    <span class="s1">statement_compiler = MySQLCompiler_mysqldb</span>
+    <span class="s1">preparer = MySQLIdentifierPreparer</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">super().__init__(**kwargs)</span>
+        <span class="s1">self._mysql_dbapi_version = (</span>
+            <span class="s1">self._parse_dbapi_version(self.dbapi.__version__)</span>
+            <span class="s3">if </span><span class="s1">self.dbapi </span><span class="s3">is not None and </span><span class="s1">hasattr(self.dbapi</span><span class="s5">, </span><span class="s4">&quot;__version__&quot;</span><span class="s1">)</span>
+            <span class="s3">else </span><span class="s1">(</span><span class="s6">0</span><span class="s5">, </span><span class="s6">0</span><span class="s5">, </span><span class="s6">0</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_parse_dbapi_version(self</span><span class="s5">, </span><span class="s1">version):</span>
+        <span class="s1">m = re.match(</span><span class="s4">r&quot;(\d+)\.(\d+)(?:\.(\d+))?&quot;</span><span class="s5">, </span><span class="s1">version)</span>
+        <span class="s3">if </span><span class="s1">m:</span>
+            <span class="s3">return </span><span class="s1">tuple(int(x) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">m.group(</span><span class="s6">1</span><span class="s5">, </span><span class="s6">2</span><span class="s5">, </span><span class="s6">3</span><span class="s1">) </span><span class="s3">if </span><span class="s1">x </span><span class="s3">is not None</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">(</span><span class="s6">0</span><span class="s5">, </span><span class="s6">0</span><span class="s5">, </span><span class="s6">0</span><span class="s1">)</span>
+
+    <span class="s1">@util.langhelpers.memoized_property</span>
+    <span class="s3">def </span><span class="s1">supports_server_side_cursors(self):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">cursors = __import__(</span><span class="s4">&quot;MySQLdb.cursors&quot;</span><span class="s1">).cursors</span>
+            <span class="s1">self._sscursor = cursors.SSCursor</span>
+            <span class="s3">return True</span>
+        <span class="s3">except </span><span class="s1">(ImportError</span><span class="s5">, </span><span class="s1">AttributeError):</span>
+            <span class="s3">return False</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">return </span><span class="s1">__import__(</span><span class="s4">&quot;MySQLdb&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">on_connect(self):</span>
+        <span class="s1">super_ = super().on_connect()</span>
+
+        <span class="s3">def </span><span class="s1">on_connect(conn):</span>
+            <span class="s3">if </span><span class="s1">super_ </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">super_(conn)</span>
+
+            <span class="s1">charset_name = conn.character_set_name()</span>
+
+            <span class="s3">if </span><span class="s1">charset_name </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">cursor = conn.cursor()</span>
+                <span class="s1">cursor.execute(</span><span class="s4">&quot;SET NAMES %s&quot; </span><span class="s1">% charset_name)</span>
+                <span class="s1">cursor.close()</span>
+
+        <span class="s3">return </span><span class="s1">on_connect</span>
+
+    <span class="s3">def </span><span class="s1">do_ping(self</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s1">dbapi_connection.ping()</span>
+        <span class="s3">return True</span>
+
+    <span class="s3">def </span><span class="s1">do_executemany(self</span><span class="s5">, </span><span class="s1">cursor</span><span class="s5">, </span><span class="s1">statement</span><span class="s5">, </span><span class="s1">parameters</span><span class="s5">, </span><span class="s1">context=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s1">rowcount = cursor.executemany(statement</span><span class="s5">, </span><span class="s1">parameters)</span>
+        <span class="s3">if </span><span class="s1">context </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">context._rowcount = rowcount</span>
+
+    <span class="s3">def </span><span class="s1">_check_unicode_returns(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s0"># work around issue fixed in</span>
+        <span class="s0"># https://github.com/farcepest/MySQLdb1/commit/cd44524fef63bd3fcb71947392326e9742d520e8</span>
+        <span class="s0"># specific issue w/ the utf8mb4_bin collation and unicode returns</span>
+
+        <span class="s1">collation = connection.exec_driver_sql(</span>
+            <span class="s4">&quot;show collation where %s = 'utf8mb4' and %s = 'utf8mb4_bin'&quot;</span>
+            <span class="s1">% (</span>
+                <span class="s1">self.identifier_preparer.quote(</span><span class="s4">&quot;Charset&quot;</span><span class="s1">)</span><span class="s5">,</span>
+                <span class="s1">self.identifier_preparer.quote(</span><span class="s4">&quot;Collation&quot;</span><span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">).scalar()</span>
+        <span class="s1">has_utf8mb4_bin = self.server_version_info &gt; (</span><span class="s6">5</span><span class="s5">,</span><span class="s1">) </span><span class="s3">and </span><span class="s1">collation</span>
+        <span class="s3">if </span><span class="s1">has_utf8mb4_bin:</span>
+            <span class="s1">additional_tests = [</span>
+                <span class="s1">sql.collate(</span>
+                    <span class="s1">sql.cast(</span>
+                        <span class="s1">sql.literal_column(</span><span class="s4">&quot;'test collated returns'&quot;</span><span class="s1">)</span><span class="s5">,</span>
+                        <span class="s1">TEXT(charset=</span><span class="s4">&quot;utf8mb4&quot;</span><span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s4">&quot;utf8mb4_bin&quot;</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">additional_tests = []</span>
+        <span class="s3">return </span><span class="s1">super()._check_unicode_returns(connection</span><span class="s5">, </span><span class="s1">additional_tests)</span>
+
+    <span class="s3">def </span><span class="s1">create_connect_args(self</span><span class="s5">, </span><span class="s1">url</span><span class="s5">, </span><span class="s1">_translate_args=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">_translate_args </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">_translate_args = dict(</span>
+                <span class="s1">database=</span><span class="s4">&quot;db&quot;</span><span class="s5">, </span><span class="s1">username=</span><span class="s4">&quot;user&quot;</span><span class="s5">, </span><span class="s1">password=</span><span class="s4">&quot;passwd&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">opts = url.translate_connect_args(**_translate_args)</span>
+        <span class="s1">opts.update(url.query)</span>
+
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s4">&quot;compress&quot;</span><span class="s5">, </span><span class="s1">bool)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s4">&quot;connect_timeout&quot;</span><span class="s5">, </span><span class="s1">int)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s4">&quot;read_timeout&quot;</span><span class="s5">, </span><span class="s1">int)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s4">&quot;write_timeout&quot;</span><span class="s5">, </span><span class="s1">int)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s4">&quot;client_flag&quot;</span><span class="s5">, </span><span class="s1">int)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s4">&quot;local_infile&quot;</span><span class="s5">, </span><span class="s1">bool)</span>
+        <span class="s0"># Note: using either of the below will cause all strings to be</span>
+        <span class="s0"># returned as Unicode, both in raw SQL operations and with column</span>
+        <span class="s0"># types like String and MSString.</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s4">&quot;use_unicode&quot;</span><span class="s5">, </span><span class="s1">bool)</span>
+        <span class="s1">util.coerce_kw_type(opts</span><span class="s5">, </span><span class="s4">&quot;charset&quot;</span><span class="s5">, </span><span class="s1">str)</span>
+
+        <span class="s0"># Rich values 'cursorclass' and 'conv' are not supported via</span>
+        <span class="s0"># query string.</span>
+
+        <span class="s1">ssl = {}</span>
+        <span class="s1">keys = [</span>
+            <span class="s1">(</span><span class="s4">&quot;ssl_ca&quot;</span><span class="s5">, </span><span class="s1">str)</span><span class="s5">,</span>
+            <span class="s1">(</span><span class="s4">&quot;ssl_key&quot;</span><span class="s5">, </span><span class="s1">str)</span><span class="s5">,</span>
+            <span class="s1">(</span><span class="s4">&quot;ssl_cert&quot;</span><span class="s5">, </span><span class="s1">str)</span><span class="s5">,</span>
+            <span class="s1">(</span><span class="s4">&quot;ssl_capath&quot;</span><span class="s5">, </span><span class="s1">str)</span><span class="s5">,</span>
+            <span class="s1">(</span><span class="s4">&quot;ssl_cipher&quot;</span><span class="s5">, </span><span class="s1">str)</span><span class="s5">,</span>
+            <span class="s1">(</span><span class="s4">&quot;ssl_check_hostname&quot;</span><span class="s5">, </span><span class="s1">bool)</span><span class="s5">,</span>
+        <span class="s1">]</span>
+        <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">kw_type </span><span class="s3">in </span><span class="s1">keys:</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">opts:</span>
+                <span class="s1">ssl[key[</span><span class="s6">4</span><span class="s1">:]] = opts[key]</span>
+                <span class="s1">util.coerce_kw_type(ssl</span><span class="s5">, </span><span class="s1">key[</span><span class="s6">4</span><span class="s1">:]</span><span class="s5">, </span><span class="s1">kw_type)</span>
+                <span class="s3">del </span><span class="s1">opts[key]</span>
+        <span class="s3">if </span><span class="s1">ssl:</span>
+            <span class="s1">opts[</span><span class="s4">&quot;ssl&quot;</span><span class="s1">] = ssl</span>
+
+        <span class="s0"># FOUND_ROWS must be set in CLIENT_FLAGS to enable</span>
+        <span class="s0"># supports_sane_rowcount.</span>
+        <span class="s1">client_flag = opts.get(</span><span class="s4">&quot;client_flag&quot;</span><span class="s5">, </span><span class="s6">0</span><span class="s1">)</span>
+
+        <span class="s1">client_flag_found_rows = self._found_rows_client_flag()</span>
+        <span class="s3">if </span><span class="s1">client_flag_found_rows </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">client_flag |= client_flag_found_rows</span>
+            <span class="s1">opts[</span><span class="s4">&quot;client_flag&quot;</span><span class="s1">] = client_flag</span>
+        <span class="s3">return </span><span class="s1">[[]</span><span class="s5">, </span><span class="s1">opts]</span>
+
+    <span class="s3">def </span><span class="s1">_found_rows_client_flag(self):</span>
+        <span class="s3">if </span><span class="s1">self.dbapi </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">CLIENT_FLAGS = __import__(</span>
+                    <span class="s1">self.dbapi.__name__ + </span><span class="s4">&quot;.constants.CLIENT&quot;</span>
+                <span class="s1">).constants.CLIENT</span>
+            <span class="s3">except </span><span class="s1">(AttributeError</span><span class="s5">, </span><span class="s1">ImportError):</span>
+                <span class="s3">return None</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">CLIENT_FLAGS.FOUND_ROWS</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">_extract_error_code(self</span><span class="s5">, </span><span class="s1">exception):</span>
+        <span class="s3">return </span><span class="s1">exception.args[</span><span class="s6">0</span><span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">_detect_charset(self</span><span class="s5">, </span><span class="s1">connection):</span>
+        <span class="s2">&quot;&quot;&quot;Sniff out the character set in use for connection results.&quot;&quot;&quot;</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s0"># note: the SQL here would be</span>
+            <span class="s0"># &quot;SHOW VARIABLES LIKE 'character_set%%'&quot;</span>
+            <span class="s1">cset_name = connection.connection.character_set_name</span>
+        <span class="s3">except </span><span class="s1">AttributeError:</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">&quot;No 'character_set_name' can be detected with &quot;</span>
+                <span class="s4">&quot;this MySQL-Python version; &quot;</span>
+                <span class="s4">&quot;please upgrade to a recent version of MySQL-Python.  &quot;</span>
+                <span class="s4">&quot;Assuming latin1.&quot;</span>
+            <span class="s1">)</span>
+            <span class="s3">return </span><span class="s4">&quot;latin1&quot;</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">cset_name()</span>
+
+    <span class="s3">def </span><span class="s1">get_isolation_level_values(self</span><span class="s5">, </span><span class="s1">dbapi_connection):</span>
+        <span class="s3">return </span><span class="s1">(</span>
+            <span class="s4">&quot;SERIALIZABLE&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;READ UNCOMMITTED&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;READ COMMITTED&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;REPEATABLE READ&quot;</span><span class="s5">,</span>
+            <span class="s4">&quot;AUTOCOMMIT&quot;</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">set_isolation_level(self</span><span class="s5">, </span><span class="s1">dbapi_connection</span><span class="s5">, </span><span class="s1">level):</span>
+        <span class="s3">if </span><span class="s1">level == </span><span class="s4">&quot;AUTOCOMMIT&quot;</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.autocommit(</span><span class="s3">True</span><span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">dbapi_connection.autocommit(</span><span class="s3">False</span><span class="s1">)</span>
+            <span class="s1">super().set_isolation_level(dbapi_connection</span><span class="s5">, </span><span class="s1">level)</span>
+
+
+<span class="s1">dialect = MySQLDialect_mysqldb</span>
+</pre>
+</body>
+</html>

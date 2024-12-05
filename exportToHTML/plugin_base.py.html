@@ -1,0 +1,803 @@
+<html>
+<head>
+<title>plugin_base.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #96bf7d;}
+.s4 { color: #cc7832;}
+.s5 { color: #717ed3; font-style: italic;}
+.s6 { color: #d7539b; font-weight: bold;}
+.s7 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+plugin_base.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># testing/plugin/plugin_base.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">abc</span>
+<span class="s2">from </span><span class="s1">argparse </span><span class="s2">import </span><span class="s1">Namespace</span>
+<span class="s2">import </span><span class="s1">configparser</span>
+<span class="s2">import </span><span class="s1">logging</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">from </span><span class="s1">pathlib </span><span class="s2">import </span><span class="s1">Path</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+
+<span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">asyncio</span>
+
+<span class="s3">&quot;&quot;&quot;Testing extensions. 
+ 
+this module is designed to work as a testing-framework-agnostic library, 
+created so that multiple test frameworks can be supported at once 
+(mostly so that we can migrate to new ones). The current target 
+is pytest. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s0"># flag which indicates we are in the SQLAlchemy testing suite,</span>
+<span class="s0"># and not that of Alembic or a third party dialect.</span>
+<span class="s1">bootstrapped_as_sqlalchemy = </span><span class="s2">False</span>
+
+<span class="s1">log = logging.getLogger(</span><span class="s3">&quot;sqlalchemy.testing.plugin_base&quot;</span><span class="s1">)</span>
+
+<span class="s0"># late imports</span>
+<span class="s1">fixtures = </span><span class="s2">None</span>
+<span class="s1">engines = </span><span class="s2">None</span>
+<span class="s1">exclusions = </span><span class="s2">None</span>
+<span class="s1">warnings = </span><span class="s2">None</span>
+<span class="s1">profiling = </span><span class="s2">None</span>
+<span class="s1">provision = </span><span class="s2">None</span>
+<span class="s1">assertions = </span><span class="s2">None</span>
+<span class="s1">requirements = </span><span class="s2">None</span>
+<span class="s1">config = </span><span class="s2">None</span>
+<span class="s1">testing = </span><span class="s2">None</span>
+<span class="s1">util = </span><span class="s2">None</span>
+<span class="s1">file_config = </span><span class="s2">None</span>
+
+<span class="s1">logging = </span><span class="s2">None</span>
+<span class="s1">include_tags = set()</span>
+<span class="s1">exclude_tags = set()</span>
+<span class="s1">options: Namespace = </span><span class="s2">None  </span><span class="s0"># type: ignore</span>
+
+
+<span class="s2">def </span><span class="s1">setup_options(make_option):</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--log-info&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">callback=_log</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;turn on info logging for &lt;LOG&gt; (multiple OK)&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--log-debug&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">callback=_log</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;turn on debug logging for &lt;LOG&gt; (multiple OK)&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--db&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;append&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;db&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Use prefab database uri. Multiple OK, &quot;</span>
+        <span class="s3">&quot;first one is run by default.&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--dbs&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">zeroarg_callback=_list_dbs</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;List available prefab dbs&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--dburi&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;append&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;dburi&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Database uri.  Multiple OK, first one is run by default.&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--dbdriver&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;append&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;dbdriver&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Additional database drivers to include in tests.  &quot;</span>
+        <span class="s3">&quot;These are linked to the existing database URLs by the &quot;</span>
+        <span class="s3">&quot;provisioning system.&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--dropfirst&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;store_true&quot;</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;dropfirst&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Drop all tables in the target database first&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--disable-asyncio&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;store_true&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;disable test / fixtures / provisoning running in asyncio&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--backend-only&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">zeroarg_callback=_set_tag_include(</span><span class="s3">&quot;backend&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">help=(</span>
+            <span class="s3">&quot;Run only tests marked with __backend__ or __sparse_backend__; &quot;</span>
+            <span class="s3">&quot;this is now equivalent to the pytest -m backend mark expression&quot;</span>
+        <span class="s1">)</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--nomemory&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">zeroarg_callback=_set_tag_exclude(</span><span class="s3">&quot;memory_intensive&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Don't run memory profiling tests; &quot;</span>
+        <span class="s3">&quot;this is now equivalent to the pytest -m 'not memory_intensive' &quot;</span>
+        <span class="s3">&quot;mark expression&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--notimingintensive&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">zeroarg_callback=_set_tag_exclude(</span><span class="s3">&quot;timing_intensive&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Don't run timing intensive tests; &quot;</span>
+        <span class="s3">&quot;this is now equivalent to the pytest -m 'not timing_intensive' &quot;</span>
+        <span class="s3">&quot;mark expression&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--nomypy&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">zeroarg_callback=_set_tag_exclude(</span><span class="s3">&quot;mypy&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Don't run mypy typing tests; &quot;</span>
+        <span class="s3">&quot;this is now equivalent to the pytest -m 'not mypy' mark expression&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--profile-sort&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">default=</span><span class="s3">&quot;cumulative&quot;</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;profilesort&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Type of sort for profiling standard output&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--profile-dump&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;profiledump&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Filename where a single profile run will be dumped&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--low-connections&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;store_true&quot;</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;low_connections&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Use a low number of distinct connections - &quot;</span>
+        <span class="s3">&quot;i.e. for Oracle TNS&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--write-idents&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;write_idents&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;write out generated follower idents to &lt;file&gt;, &quot;</span>
+        <span class="s3">&quot;when -n&lt;num&gt; is used&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--requirements&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">callback=_requirements_opt</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;requirements class for testing, overrides setup.cfg&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--include-tag&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">callback=_include_tag</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Include tests with tag &lt;tag&gt;; &quot;</span>
+        <span class="s3">&quot;legacy, use pytest -m 'tag' instead&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--exclude-tag&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;callback&quot;</span><span class="s4">,</span>
+        <span class="s1">callback=_exclude_tag</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Exclude tests with tag &lt;tag&gt;; &quot;</span>
+        <span class="s3">&quot;legacy, use pytest -m 'not tag' instead&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--write-profiles&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;store_true&quot;</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;write_profiles&quot;</span><span class="s4">,</span>
+        <span class="s1">default=</span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Write/update failing profiling data.&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--force-write-profiles&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;store_true&quot;</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;force_write_profiles&quot;</span><span class="s4">,</span>
+        <span class="s1">default=</span><span class="s2">False</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Unconditionally write/update profiling data.&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--dump-pyannotate&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;dump_pyannotate&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Run pyannotate and dump json info to given file&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--mypy-extra-test-path&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;append&quot;</span><span class="s4">,</span>
+        <span class="s1">default=[]</span><span class="s4">,</span>
+        <span class="s1">dest=</span><span class="s3">&quot;mypy_extra_test_paths&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;Additional test directories to add to the mypy tests. &quot;</span>
+        <span class="s3">&quot;This is used only when running mypy tests. Multiple OK&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s0"># db specific options</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--postgresql-templatedb&quot;</span><span class="s4">,</span>
+        <span class="s1">type=str</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;name of template database to use for PostgreSQL &quot;</span>
+        <span class="s3">&quot;CREATE DATABASE (defaults to current database)&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">make_option(</span>
+        <span class="s3">&quot;--oracledb-thick-mode&quot;</span><span class="s4">,</span>
+        <span class="s1">action=</span><span class="s3">&quot;store_true&quot;</span><span class="s4">,</span>
+        <span class="s1">help=</span><span class="s3">&quot;enables the 'thick mode' when testing with oracle+oracledb&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">configure_follower(follower_ident):</span>
+    <span class="s5">&quot;&quot;&quot;Configure required state for a follower. 
+ 
+    This invokes in the parent process and typically includes 
+    database creation. 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">provision</span>
+
+    <span class="s1">provision.FOLLOWER_IDENT = follower_ident</span>
+
+
+<span class="s2">def </span><span class="s1">memoize_important_follower_config(dict_):</span>
+    <span class="s5">&quot;&quot;&quot;Store important configuration we will need to send to a follower. 
+ 
+    This invokes in the parent process after normal config is set up. 
+ 
+    Hook is currently not used. 
+ 
+    &quot;&quot;&quot;</span>
+
+
+<span class="s2">def </span><span class="s1">restore_important_follower_config(dict_):</span>
+    <span class="s5">&quot;&quot;&quot;Restore important configuration needed by a follower. 
+ 
+    This invokes in the follower process. 
+ 
+    Hook is currently not used. 
+ 
+    &quot;&quot;&quot;</span>
+
+
+<span class="s2">def </span><span class="s1">read_config(root_path):</span>
+    <span class="s2">global </span><span class="s1">file_config</span>
+    <span class="s1">file_config = configparser.ConfigParser()</span>
+    <span class="s1">file_config.read(</span>
+        <span class="s1">[str(root_path / </span><span class="s3">&quot;setup.cfg&quot;</span><span class="s1">)</span><span class="s4">, </span><span class="s1">str(root_path / </span><span class="s3">&quot;test.cfg&quot;</span><span class="s1">)]</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">pre_begin(opt):</span>
+    <span class="s5">&quot;&quot;&quot;things to set up early, before coverage might be setup.&quot;&quot;&quot;</span>
+    <span class="s2">global </span><span class="s1">options</span>
+    <span class="s1">options = opt</span>
+    <span class="s2">for </span><span class="s1">fn </span><span class="s2">in </span><span class="s1">pre_configure:</span>
+        <span class="s1">fn(options</span><span class="s4">, </span><span class="s1">file_config)</span>
+
+
+<span class="s2">def </span><span class="s1">set_coverage_flag(value):</span>
+    <span class="s1">options.has_coverage = value</span>
+
+
+<span class="s2">def </span><span class="s1">post_begin():</span>
+    <span class="s5">&quot;&quot;&quot;things to set up later, once we know coverage is running.&quot;&quot;&quot;</span>
+    <span class="s0"># Lazy setup of other options (post coverage)</span>
+    <span class="s2">for </span><span class="s1">fn </span><span class="s2">in </span><span class="s1">post_configure:</span>
+        <span class="s1">fn(options</span><span class="s4">, </span><span class="s1">file_config)</span>
+
+    <span class="s0"># late imports, has to happen after config.</span>
+    <span class="s2">global </span><span class="s1">util</span><span class="s4">, </span><span class="s1">fixtures</span><span class="s4">, </span><span class="s1">engines</span><span class="s4">, </span><span class="s1">exclusions</span><span class="s4">, </span><span class="s1">assertions</span><span class="s4">, </span><span class="s1">provision</span>
+    <span class="s2">global </span><span class="s1">warnings</span><span class="s4">, </span><span class="s1">profiling</span><span class="s4">, </span><span class="s1">config</span><span class="s4">, </span><span class="s1">testing</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy </span><span class="s2">import </span><span class="s1">testing  </span><span class="s0"># noqa</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">fixtures</span><span class="s4">, </span><span class="s1">engines</span><span class="s4">, </span><span class="s1">exclusions  </span><span class="s0"># noqa</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">assertions</span><span class="s4">, </span><span class="s1">warnings</span><span class="s4">, </span><span class="s1">profiling  </span><span class="s0"># noqa</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">config</span><span class="s4">, </span><span class="s1">provision  </span><span class="s0"># noqa</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy </span><span class="s2">import </span><span class="s1">util  </span><span class="s0"># noqa</span>
+
+    <span class="s1">warnings.setup_filters()</span>
+
+
+<span class="s2">def </span><span class="s1">_log(opt_str</span><span class="s4">, </span><span class="s1">value</span><span class="s4">, </span><span class="s1">parser):</span>
+    <span class="s2">global </span><span class="s1">logging</span>
+    <span class="s2">if not </span><span class="s1">logging:</span>
+        <span class="s2">import </span><span class="s1">logging</span>
+
+        <span class="s1">logging.basicConfig()</span>
+
+    <span class="s2">if </span><span class="s1">opt_str.endswith(</span><span class="s3">&quot;-info&quot;</span><span class="s1">):</span>
+        <span class="s1">logging.getLogger(value).setLevel(logging.INFO)</span>
+    <span class="s2">elif </span><span class="s1">opt_str.endswith(</span><span class="s3">&quot;-debug&quot;</span><span class="s1">):</span>
+        <span class="s1">logging.getLogger(value).setLevel(logging.DEBUG)</span>
+
+
+<span class="s2">def </span><span class="s1">_list_dbs(*args):</span>
+    <span class="s2">if </span><span class="s1">file_config </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s0"># assume the current working directory is the one containing the</span>
+        <span class="s0"># setup file</span>
+        <span class="s1">read_config(Path.cwd())</span>
+    <span class="s1">print(</span><span class="s3">&quot;Available --db options (use --dburi to override)&quot;</span><span class="s1">)</span>
+    <span class="s2">for </span><span class="s1">macro </span><span class="s2">in </span><span class="s1">sorted(file_config.options(</span><span class="s3">&quot;db&quot;</span><span class="s1">)):</span>
+        <span class="s1">print(</span><span class="s3">&quot;%20s</span><span class="s6">\t</span><span class="s3">%s&quot; </span><span class="s1">% (macro</span><span class="s4">, </span><span class="s1">file_config.get(</span><span class="s3">&quot;db&quot;</span><span class="s4">, </span><span class="s1">macro)))</span>
+    <span class="s1">sys.exit(</span><span class="s7">0</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_requirements_opt(opt_str</span><span class="s4">, </span><span class="s1">value</span><span class="s4">, </span><span class="s1">parser):</span>
+    <span class="s1">_setup_requirements(value)</span>
+
+
+<span class="s2">def </span><span class="s1">_set_tag_include(tag):</span>
+    <span class="s2">def </span><span class="s1">_do_include_tag(opt_str</span><span class="s4">, </span><span class="s1">value</span><span class="s4">, </span><span class="s1">parser):</span>
+        <span class="s1">_include_tag(opt_str</span><span class="s4">, </span><span class="s1">tag</span><span class="s4">, </span><span class="s1">parser)</span>
+
+    <span class="s2">return </span><span class="s1">_do_include_tag</span>
+
+
+<span class="s2">def </span><span class="s1">_set_tag_exclude(tag):</span>
+    <span class="s2">def </span><span class="s1">_do_exclude_tag(opt_str</span><span class="s4">, </span><span class="s1">value</span><span class="s4">, </span><span class="s1">parser):</span>
+        <span class="s1">_exclude_tag(opt_str</span><span class="s4">, </span><span class="s1">tag</span><span class="s4">, </span><span class="s1">parser)</span>
+
+    <span class="s2">return </span><span class="s1">_do_exclude_tag</span>
+
+
+<span class="s2">def </span><span class="s1">_exclude_tag(opt_str</span><span class="s4">, </span><span class="s1">value</span><span class="s4">, </span><span class="s1">parser):</span>
+    <span class="s1">exclude_tags.add(value.replace(</span><span class="s3">&quot;-&quot;</span><span class="s4">, </span><span class="s3">&quot;_&quot;</span><span class="s1">))</span>
+
+
+<span class="s2">def </span><span class="s1">_include_tag(opt_str</span><span class="s4">, </span><span class="s1">value</span><span class="s4">, </span><span class="s1">parser):</span>
+    <span class="s1">include_tags.add(value.replace(</span><span class="s3">&quot;-&quot;</span><span class="s4">, </span><span class="s3">&quot;_&quot;</span><span class="s1">))</span>
+
+
+<span class="s1">pre_configure = []</span>
+<span class="s1">post_configure = []</span>
+
+
+<span class="s2">def </span><span class="s1">pre(fn):</span>
+    <span class="s1">pre_configure.append(fn)</span>
+    <span class="s2">return </span><span class="s1">fn</span>
+
+
+<span class="s2">def </span><span class="s1">post(fn):</span>
+    <span class="s1">post_configure.append(fn)</span>
+    <span class="s2">return </span><span class="s1">fn</span>
+
+
+<span class="s1">@pre</span>
+<span class="s2">def </span><span class="s1">_setup_options(opt</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s2">global </span><span class="s1">options</span>
+    <span class="s1">options = opt</span>
+
+
+<span class="s1">@pre</span>
+<span class="s2">def </span><span class="s1">_register_sqlite_numeric_dialect(opt</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.dialects </span><span class="s2">import </span><span class="s1">registry</span>
+
+    <span class="s1">registry.register(</span>
+        <span class="s3">&quot;sqlite.pysqlite_numeric&quot;</span><span class="s4">,</span>
+        <span class="s3">&quot;sqlalchemy.dialects.sqlite.pysqlite&quot;</span><span class="s4">,</span>
+        <span class="s3">&quot;_SQLiteDialect_pysqlite_numeric&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+    <span class="s1">registry.register(</span>
+        <span class="s3">&quot;sqlite.pysqlite_dollar&quot;</span><span class="s4">,</span>
+        <span class="s3">&quot;sqlalchemy.dialects.sqlite.pysqlite&quot;</span><span class="s4">,</span>
+        <span class="s3">&quot;_SQLiteDialect_pysqlite_dollar&quot;</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s1">@post</span>
+<span class="s2">def </span><span class="s1">__ensure_cext(opt</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s2">if </span><span class="s1">os.environ.get(</span><span class="s3">&quot;REQUIRE_SQLALCHEMY_CEXT&quot;</span><span class="s4">, </span><span class="s3">&quot;0&quot;</span><span class="s1">) == </span><span class="s3">&quot;1&quot;</span><span class="s1">:</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.util </span><span class="s2">import </span><span class="s1">has_compiled_ext</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">has_compiled_ext(raise_=</span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">ImportError </span><span class="s2">as </span><span class="s1">err:</span>
+            <span class="s2">raise </span><span class="s1">AssertionError(</span>
+                <span class="s3">&quot;REQUIRE_SQLALCHEMY_CEXT is set but can't import the &quot;</span>
+                <span class="s3">&quot;cython extensions&quot;</span>
+            <span class="s1">) </span><span class="s2">from </span><span class="s1">err</span>
+
+
+<span class="s1">@post</span>
+<span class="s2">def </span><span class="s1">_init_symbols(options</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">config</span>
+
+    <span class="s1">config._fixture_functions = _fixture_fn_class()</span>
+
+
+<span class="s1">@pre</span>
+<span class="s2">def </span><span class="s1">_set_disable_asyncio(opt</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s2">if </span><span class="s1">opt.disable_asyncio:</span>
+        <span class="s1">asyncio.ENABLE_ASYNCIO = </span><span class="s2">False</span>
+
+
+<span class="s1">@post</span>
+<span class="s2">def </span><span class="s1">_engine_uri(options</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy </span><span class="s2">import </span><span class="s1">testing</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">config</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">provision</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.engine </span><span class="s2">import </span><span class="s1">url </span><span class="s2">as </span><span class="s1">sa_url</span>
+
+    <span class="s2">if </span><span class="s1">options.dburi:</span>
+        <span class="s1">db_urls = list(options.dburi)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">db_urls = []</span>
+
+    <span class="s1">extra_drivers = options.dbdriver </span><span class="s2">or </span><span class="s1">[]</span>
+
+    <span class="s2">if </span><span class="s1">options.db:</span>
+        <span class="s2">for </span><span class="s1">db_token </span><span class="s2">in </span><span class="s1">options.db:</span>
+            <span class="s2">for </span><span class="s1">db </span><span class="s2">in </span><span class="s1">re.split(</span><span class="s3">r&quot;[,\s]+&quot;</span><span class="s4">, </span><span class="s1">db_token):</span>
+                <span class="s2">if </span><span class="s1">db </span><span class="s2">not in </span><span class="s1">file_config.options(</span><span class="s3">&quot;db&quot;</span><span class="s1">):</span>
+                    <span class="s2">raise </span><span class="s1">RuntimeError(</span>
+                        <span class="s3">&quot;Unknown URI specifier '%s'.  &quot;</span>
+                        <span class="s3">&quot;Specify --dbs for known uris.&quot; </span><span class="s1">% db</span>
+                    <span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">db_urls.append(file_config.get(</span><span class="s3">&quot;db&quot;</span><span class="s4">, </span><span class="s1">db))</span>
+
+    <span class="s2">if not </span><span class="s1">db_urls:</span>
+        <span class="s1">db_urls.append(file_config.get(</span><span class="s3">&quot;db&quot;</span><span class="s4">, </span><span class="s3">&quot;default&quot;</span><span class="s1">))</span>
+
+    <span class="s1">config._current = </span><span class="s2">None</span>
+
+    <span class="s2">if </span><span class="s1">options.write_idents </span><span class="s2">and </span><span class="s1">provision.FOLLOWER_IDENT:</span>
+        <span class="s2">for </span><span class="s1">db_url </span><span class="s2">in </span><span class="s1">[sa_url.make_url(db_url) </span><span class="s2">for </span><span class="s1">db_url </span><span class="s2">in </span><span class="s1">db_urls]:</span>
+            <span class="s2">with </span><span class="s1">open(options.write_idents</span><span class="s4">, </span><span class="s3">&quot;a&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">file_:</span>
+                <span class="s1">file_.write(</span>
+                    <span class="s3">f&quot;</span><span class="s6">{</span><span class="s1">provision.FOLLOWER_IDENT</span><span class="s6">} </span><span class="s3">&quot;</span>
+                    <span class="s3">f&quot;</span><span class="s6">{</span><span class="s1">db_url.render_as_string(hide_password=</span><span class="s2">False</span><span class="s1">)</span><span class="s6">}\n</span><span class="s3">&quot;</span>
+                <span class="s1">)</span>
+
+    <span class="s1">expanded_urls = list(provision.generate_db_urls(db_urls</span><span class="s4">, </span><span class="s1">extra_drivers))</span>
+
+    <span class="s2">for </span><span class="s1">db_url </span><span class="s2">in </span><span class="s1">expanded_urls:</span>
+        <span class="s1">log.info(</span><span class="s3">&quot;Adding database URL: %s&quot;</span><span class="s4">, </span><span class="s1">db_url)</span>
+
+        <span class="s1">cfg = provision.setup_config(</span>
+            <span class="s1">db_url</span><span class="s4">, </span><span class="s1">options</span><span class="s4">, </span><span class="s1">file_config</span><span class="s4">, </span><span class="s1">provision.FOLLOWER_IDENT</span>
+        <span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">config._current:</span>
+            <span class="s1">cfg.set_as_current(cfg</span><span class="s4">, </span><span class="s1">testing)</span>
+
+
+<span class="s1">@post</span>
+<span class="s2">def </span><span class="s1">_requirements(options</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s1">requirement_cls = file_config.get(</span><span class="s3">&quot;sqla_testing&quot;</span><span class="s4">, </span><span class="s3">&quot;requirement_cls&quot;</span><span class="s1">)</span>
+    <span class="s1">_setup_requirements(requirement_cls)</span>
+
+
+<span class="s2">def </span><span class="s1">_setup_requirements(argument):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">config</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy </span><span class="s2">import </span><span class="s1">testing</span>
+
+    <span class="s1">modname</span><span class="s4">, </span><span class="s1">clsname = argument.split(</span><span class="s3">&quot;:&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># importlib.import_module() only introduced in 2.7, a little</span>
+    <span class="s0"># late</span>
+    <span class="s1">mod = __import__(modname)</span>
+    <span class="s2">for </span><span class="s1">component </span><span class="s2">in </span><span class="s1">modname.split(</span><span class="s3">&quot;.&quot;</span><span class="s1">)[</span><span class="s7">1</span><span class="s1">:]:</span>
+        <span class="s1">mod = getattr(mod</span><span class="s4">, </span><span class="s1">component)</span>
+    <span class="s1">req_cls = getattr(mod</span><span class="s4">, </span><span class="s1">clsname)</span>
+
+    <span class="s1">config.requirements = testing.requires = req_cls()</span>
+
+    <span class="s1">config.bootstrapped_as_sqlalchemy = bootstrapped_as_sqlalchemy</span>
+
+
+<span class="s1">@post</span>
+<span class="s2">def </span><span class="s1">_prep_testing_database(options</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">config</span>
+
+    <span class="s2">if </span><span class="s1">options.dropfirst:</span>
+        <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">provision</span>
+
+        <span class="s2">for </span><span class="s1">cfg </span><span class="s2">in </span><span class="s1">config.Config.all_configs():</span>
+            <span class="s1">provision.drop_all_schema_objects(cfg</span><span class="s4">, </span><span class="s1">cfg.db)</span>
+
+
+<span class="s1">@post</span>
+<span class="s2">def </span><span class="s1">_post_setup_options(opt</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">config</span>
+
+    <span class="s1">config.options = options</span>
+    <span class="s1">config.file_config = file_config</span>
+
+
+<span class="s1">@post</span>
+<span class="s2">def </span><span class="s1">_setup_profiling(options</span><span class="s4">, </span><span class="s1">file_config):</span>
+    <span class="s2">from </span><span class="s1">sqlalchemy.testing </span><span class="s2">import </span><span class="s1">profiling</span>
+
+    <span class="s1">profiling._profile_stats = profiling.ProfileStatsFile(</span>
+        <span class="s1">file_config.get(</span><span class="s3">&quot;sqla_testing&quot;</span><span class="s4">, </span><span class="s3">&quot;profile_file&quot;</span><span class="s1">)</span><span class="s4">,</span>
+        <span class="s1">sort=options.profilesort</span><span class="s4">,</span>
+        <span class="s1">dump=options.profiledump</span><span class="s4">,</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">want_class(name</span><span class="s4">, </span><span class="s1">cls):</span>
+    <span class="s2">if not </span><span class="s1">issubclass(cls</span><span class="s4">, </span><span class="s1">fixtures.TestBase):</span>
+        <span class="s2">return False</span>
+    <span class="s2">elif </span><span class="s1">name.startswith(</span><span class="s3">&quot;_&quot;</span><span class="s1">):</span>
+        <span class="s2">return False</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return True</span>
+
+
+<span class="s2">def </span><span class="s1">want_method(cls</span><span class="s4">, </span><span class="s1">fn):</span>
+    <span class="s2">if not </span><span class="s1">fn.__name__.startswith(</span><span class="s3">&quot;test_&quot;</span><span class="s1">):</span>
+        <span class="s2">return False</span>
+    <span class="s2">elif </span><span class="s1">fn.__module__ </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">return False</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return True</span>
+
+
+<span class="s2">def </span><span class="s1">generate_sub_tests(cls</span><span class="s4">, </span><span class="s1">module</span><span class="s4">, </span><span class="s1">markers):</span>
+    <span class="s2">if </span><span class="s3">&quot;backend&quot; </span><span class="s2">in </span><span class="s1">markers </span><span class="s2">or </span><span class="s3">&quot;sparse_backend&quot; </span><span class="s2">in </span><span class="s1">markers:</span>
+        <span class="s1">sparse = </span><span class="s3">&quot;sparse_backend&quot; </span><span class="s2">in </span><span class="s1">markers</span>
+        <span class="s2">for </span><span class="s1">cfg </span><span class="s2">in </span><span class="s1">_possible_configs_for_cls(cls</span><span class="s4">, </span><span class="s1">sparse=sparse):</span>
+            <span class="s1">orig_name = cls.__name__</span>
+
+            <span class="s0"># we can have special chars in these names except for the</span>
+            <span class="s0"># pytest junit plugin, which is tripped up by the brackets</span>
+            <span class="s0"># and periods, so sanitize</span>
+
+            <span class="s1">alpha_name = re.sub(</span><span class="s3">r&quot;[_\[\]\.]+&quot;</span><span class="s4">, </span><span class="s3">&quot;_&quot;</span><span class="s4">, </span><span class="s1">cfg.name)</span>
+            <span class="s1">alpha_name = re.sub(</span><span class="s3">r&quot;_+$&quot;</span><span class="s4">, </span><span class="s3">&quot;&quot;</span><span class="s4">, </span><span class="s1">alpha_name)</span>
+            <span class="s1">name = </span><span class="s3">&quot;%s_%s&quot; </span><span class="s1">% (cls.__name__</span><span class="s4">, </span><span class="s1">alpha_name)</span>
+            <span class="s1">subcls = type(</span>
+                <span class="s1">name</span><span class="s4">,</span>
+                <span class="s1">(cls</span><span class="s4">,</span><span class="s1">)</span><span class="s4">,</span>
+                <span class="s1">{</span><span class="s3">&quot;_sa_orig_cls_name&quot;</span><span class="s1">: orig_name</span><span class="s4">, </span><span class="s3">&quot;__only_on_config__&quot;</span><span class="s1">: cfg}</span><span class="s4">,</span>
+            <span class="s1">)</span>
+            <span class="s1">setattr(module</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">subcls)</span>
+            <span class="s2">yield </span><span class="s1">subcls</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">yield </span><span class="s1">cls</span>
+
+
+<span class="s2">def </span><span class="s1">start_test_class_outside_fixtures(cls):</span>
+    <span class="s1">_do_skips(cls)</span>
+    <span class="s1">_setup_engine(cls)</span>
+
+
+<span class="s2">def </span><span class="s1">stop_test_class(cls):</span>
+    <span class="s0"># close sessions, immediate connections, etc.</span>
+    <span class="s1">fixtures.stop_test_class_inside_fixtures(cls)</span>
+
+    <span class="s0"># close outstanding connection pool connections, dispose of</span>
+    <span class="s0"># additional engines</span>
+    <span class="s1">engines.testing_reaper.stop_test_class_inside_fixtures()</span>
+
+
+<span class="s2">def </span><span class="s1">stop_test_class_outside_fixtures(cls):</span>
+    <span class="s1">engines.testing_reaper.stop_test_class_outside_fixtures()</span>
+    <span class="s1">provision.stop_test_class_outside_fixtures(config</span><span class="s4">, </span><span class="s1">config.db</span><span class="s4">, </span><span class="s1">cls)</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">if not </span><span class="s1">options.low_connections:</span>
+            <span class="s1">assertions.global_cleanup_assertions()</span>
+    <span class="s2">finally</span><span class="s1">:</span>
+        <span class="s1">_restore_engine()</span>
+
+
+<span class="s2">def </span><span class="s1">_restore_engine():</span>
+    <span class="s2">if </span><span class="s1">config._current:</span>
+        <span class="s1">config._current.reset(testing)</span>
+
+
+<span class="s2">def </span><span class="s1">final_process_cleanup():</span>
+    <span class="s1">engines.testing_reaper.final_cleanup()</span>
+    <span class="s1">assertions.global_cleanup_assertions()</span>
+    <span class="s1">_restore_engine()</span>
+
+
+<span class="s2">def </span><span class="s1">_setup_engine(cls):</span>
+    <span class="s2">if </span><span class="s1">getattr(cls</span><span class="s4">, </span><span class="s3">&quot;__engine_options__&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">opts = dict(cls.__engine_options__)</span>
+        <span class="s1">opts[</span><span class="s3">&quot;scope&quot;</span><span class="s1">] = </span><span class="s3">&quot;class&quot;</span>
+        <span class="s1">eng = engines.testing_engine(options=opts)</span>
+        <span class="s1">config._current.push_engine(eng</span><span class="s4">, </span><span class="s1">testing)</span>
+
+
+<span class="s2">def </span><span class="s1">before_test(test</span><span class="s4">, </span><span class="s1">test_module_name</span><span class="s4">, </span><span class="s1">test_class</span><span class="s4">, </span><span class="s1">test_name):</span>
+    <span class="s0"># format looks like:</span>
+    <span class="s0"># &quot;test.aaa_profiling.test_compiler.CompileTest.test_update_whereclause&quot;</span>
+
+    <span class="s1">name = getattr(test_class</span><span class="s4">, </span><span class="s3">&quot;_sa_orig_cls_name&quot;</span><span class="s4">, </span><span class="s1">test_class.__name__)</span>
+
+    <span class="s1">id_ = </span><span class="s3">&quot;%s.%s.%s&quot; </span><span class="s1">% (test_module_name</span><span class="s4">, </span><span class="s1">name</span><span class="s4">, </span><span class="s1">test_name)</span>
+
+    <span class="s1">profiling._start_current_test(id_)</span>
+
+
+<span class="s2">def </span><span class="s1">after_test(test):</span>
+    <span class="s1">fixtures.after_test()</span>
+    <span class="s1">engines.testing_reaper.after_test()</span>
+
+
+<span class="s2">def </span><span class="s1">after_test_fixtures(test):</span>
+    <span class="s1">engines.testing_reaper.after_test_outside_fixtures(test)</span>
+
+
+<span class="s2">def </span><span class="s1">_possible_configs_for_cls(cls</span><span class="s4">, </span><span class="s1">reasons=</span><span class="s2">None</span><span class="s4">, </span><span class="s1">sparse=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s1">all_configs = set(config.Config.all_configs())</span>
+
+    <span class="s2">if </span><span class="s1">cls.__unsupported_on__:</span>
+        <span class="s1">spec = exclusions.db_spec(*cls.__unsupported_on__)</span>
+        <span class="s2">for </span><span class="s1">config_obj </span><span class="s2">in </span><span class="s1">list(all_configs):</span>
+            <span class="s2">if </span><span class="s1">spec(config_obj):</span>
+                <span class="s1">all_configs.remove(config_obj)</span>
+
+    <span class="s2">if </span><span class="s1">getattr(cls</span><span class="s4">, </span><span class="s3">&quot;__only_on__&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">spec = exclusions.db_spec(*util.to_list(cls.__only_on__))</span>
+        <span class="s2">for </span><span class="s1">config_obj </span><span class="s2">in </span><span class="s1">list(all_configs):</span>
+            <span class="s2">if not </span><span class="s1">spec(config_obj):</span>
+                <span class="s1">all_configs.remove(config_obj)</span>
+
+    <span class="s2">if </span><span class="s1">getattr(cls</span><span class="s4">, </span><span class="s3">&quot;__only_on_config__&quot;</span><span class="s4">, </span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">all_configs.intersection_update([cls.__only_on_config__])</span>
+
+    <span class="s2">if </span><span class="s1">hasattr(cls</span><span class="s4">, </span><span class="s3">&quot;__requires__&quot;</span><span class="s1">):</span>
+        <span class="s1">requirements = config.requirements</span>
+        <span class="s2">for </span><span class="s1">config_obj </span><span class="s2">in </span><span class="s1">list(all_configs):</span>
+            <span class="s2">for </span><span class="s1">requirement </span><span class="s2">in </span><span class="s1">cls.__requires__:</span>
+                <span class="s1">check = getattr(requirements</span><span class="s4">, </span><span class="s1">requirement)</span>
+
+                <span class="s1">skip_reasons = check.matching_config_reasons(config_obj)</span>
+                <span class="s2">if </span><span class="s1">skip_reasons:</span>
+                    <span class="s1">all_configs.remove(config_obj)</span>
+                    <span class="s2">if </span><span class="s1">reasons </span><span class="s2">is not None</span><span class="s1">:</span>
+                        <span class="s1">reasons.extend(skip_reasons)</span>
+                    <span class="s2">break</span>
+
+    <span class="s2">if </span><span class="s1">hasattr(cls</span><span class="s4">, </span><span class="s3">&quot;__prefer_requires__&quot;</span><span class="s1">):</span>
+        <span class="s1">non_preferred = set()</span>
+        <span class="s1">requirements = config.requirements</span>
+        <span class="s2">for </span><span class="s1">config_obj </span><span class="s2">in </span><span class="s1">list(all_configs):</span>
+            <span class="s2">for </span><span class="s1">requirement </span><span class="s2">in </span><span class="s1">cls.__prefer_requires__:</span>
+                <span class="s1">check = getattr(requirements</span><span class="s4">, </span><span class="s1">requirement)</span>
+
+                <span class="s2">if not </span><span class="s1">check.enabled_for_config(config_obj):</span>
+                    <span class="s1">non_preferred.add(config_obj)</span>
+        <span class="s2">if </span><span class="s1">all_configs.difference(non_preferred):</span>
+            <span class="s1">all_configs.difference_update(non_preferred)</span>
+
+    <span class="s2">if </span><span class="s1">sparse:</span>
+        <span class="s0"># pick only one config from each base dialect</span>
+        <span class="s0"># sorted so we get the same backend each time selecting the highest</span>
+        <span class="s0"># server version info.</span>
+        <span class="s1">per_dialect = {}</span>
+        <span class="s2">for </span><span class="s1">cfg </span><span class="s2">in </span><span class="s1">reversed(</span>
+            <span class="s1">sorted(</span>
+                <span class="s1">all_configs</span><span class="s4">,</span>
+                <span class="s1">key=</span><span class="s2">lambda </span><span class="s1">cfg: (</span>
+                    <span class="s1">cfg.db.name</span><span class="s4">,</span>
+                    <span class="s1">cfg.db.driver</span><span class="s4">,</span>
+                    <span class="s1">cfg.db.dialect.server_version_info</span><span class="s4">,</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s1">db = cfg.db.name</span>
+            <span class="s2">if </span><span class="s1">db </span><span class="s2">not in </span><span class="s1">per_dialect:</span>
+                <span class="s1">per_dialect[db] = cfg</span>
+        <span class="s2">return </span><span class="s1">per_dialect.values()</span>
+
+    <span class="s2">return </span><span class="s1">all_configs</span>
+
+
+<span class="s2">def </span><span class="s1">_do_skips(cls):</span>
+    <span class="s1">reasons = []</span>
+    <span class="s1">all_configs = _possible_configs_for_cls(cls</span><span class="s4">, </span><span class="s1">reasons)</span>
+
+    <span class="s2">if </span><span class="s1">getattr(cls</span><span class="s4">, </span><span class="s3">&quot;__skip_if__&quot;</span><span class="s4">, </span><span class="s2">False</span><span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">getattr(cls</span><span class="s4">, </span><span class="s3">&quot;__skip_if__&quot;</span><span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">c():</span>
+                <span class="s1">config.skip_test(</span>
+                    <span class="s3">&quot;'%s' skipped by %s&quot; </span><span class="s1">% (cls.__name__</span><span class="s4">, </span><span class="s1">c.__name__)</span>
+                <span class="s1">)</span>
+
+    <span class="s2">if not </span><span class="s1">all_configs:</span>
+        <span class="s1">msg = </span><span class="s3">&quot;'%s.%s' unsupported on any DB implementation %s%s&quot; </span><span class="s1">% (</span>
+            <span class="s1">cls.__module__</span><span class="s4">,</span>
+            <span class="s1">cls.__name__</span><span class="s4">,</span>
+            <span class="s3">&quot;, &quot;</span><span class="s1">.join(</span>
+                <span class="s3">&quot;'%s(%s)+%s'&quot;</span>
+                <span class="s1">% (</span>
+                    <span class="s1">config_obj.db.name</span><span class="s4">,</span>
+                    <span class="s3">&quot;.&quot;</span><span class="s1">.join(</span>
+                        <span class="s1">str(dig)</span>
+                        <span class="s2">for </span><span class="s1">dig </span><span class="s2">in </span><span class="s1">exclusions._server_version(config_obj.db)</span>
+                    <span class="s1">)</span><span class="s4">,</span>
+                    <span class="s1">config_obj.db.driver</span><span class="s4">,</span>
+                <span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">config_obj </span><span class="s2">in </span><span class="s1">config.Config.all_configs()</span>
+            <span class="s1">)</span><span class="s4">,</span>
+            <span class="s3">&quot;, &quot;</span><span class="s1">.join(reasons)</span><span class="s4">,</span>
+        <span class="s1">)</span>
+        <span class="s1">config.skip_test(msg)</span>
+    <span class="s2">elif </span><span class="s1">hasattr(cls</span><span class="s4">, </span><span class="s3">&quot;__prefer_backends__&quot;</span><span class="s1">):</span>
+        <span class="s1">non_preferred = set()</span>
+        <span class="s1">spec = exclusions.db_spec(*util.to_list(cls.__prefer_backends__))</span>
+        <span class="s2">for </span><span class="s1">config_obj </span><span class="s2">in </span><span class="s1">all_configs:</span>
+            <span class="s2">if not </span><span class="s1">spec(config_obj):</span>
+                <span class="s1">non_preferred.add(config_obj)</span>
+        <span class="s2">if </span><span class="s1">all_configs.difference(non_preferred):</span>
+            <span class="s1">all_configs.difference_update(non_preferred)</span>
+
+    <span class="s2">if </span><span class="s1">config._current </span><span class="s2">not in </span><span class="s1">all_configs:</span>
+        <span class="s1">_setup_config(all_configs.pop()</span><span class="s4">, </span><span class="s1">cls)</span>
+
+
+<span class="s2">def </span><span class="s1">_setup_config(config_obj</span><span class="s4">, </span><span class="s1">ctx):</span>
+    <span class="s1">config._current.push(config_obj</span><span class="s4">, </span><span class="s1">testing)</span>
+
+
+<span class="s2">class </span><span class="s1">FixtureFunctions(abc.ABC):</span>
+    <span class="s1">@abc.abstractmethod</span>
+    <span class="s2">def </span><span class="s1">skip_test_exception(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@abc.abstractmethod</span>
+    <span class="s2">def </span><span class="s1">combinations(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@abc.abstractmethod</span>
+    <span class="s2">def </span><span class="s1">param_ident(self</span><span class="s4">, </span><span class="s1">*args</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@abc.abstractmethod</span>
+    <span class="s2">def </span><span class="s1">fixture(self</span><span class="s4">, </span><span class="s1">*arg</span><span class="s4">, </span><span class="s1">**kw):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">get_current_test_name(self):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@abc.abstractmethod</span>
+    <span class="s2">def </span><span class="s1">mark_base_test_class(self) -&gt; Any:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@abc.abstractproperty</span>
+    <span class="s2">def </span><span class="s1">add_to_marker(self):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s1">_fixture_fn_class = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">set_fixture_functions(fixture_fn_class):</span>
+    <span class="s2">global </span><span class="s1">_fixture_fn_class</span>
+    <span class="s1">_fixture_fn_class = fixture_fn_class</span>
+</pre>
+</body>
+</html>

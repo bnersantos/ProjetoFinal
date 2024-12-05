@@ -1,0 +1,40 @@
+<html>
+<head>
+<title>test_client.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc8b60;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #96bf7d;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+test_client.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">flask.testing </span><span class="s0">import </span><span class="s1">FlaskClient</span>
+
+
+<span class="s0">class </span><span class="s1">FlaskLoginClient(FlaskClient):</span>
+    <span class="s2">&quot;&quot;&quot; 
+    A Flask test client that knows how to log in users 
+    using the Flask-Login extension. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">user = kwargs.pop(</span><span class="s4">&quot;user&quot;</span><span class="s3">, </span><span class="s0">None</span><span class="s1">)</span>
+        <span class="s1">fresh = kwargs.pop(</span><span class="s4">&quot;fresh_login&quot;</span><span class="s3">, </span><span class="s0">True</span><span class="s1">)</span>
+
+        <span class="s1">super().__init__(*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s0">if </span><span class="s1">user:</span>
+            <span class="s0">with </span><span class="s1">self.session_transaction() </span><span class="s0">as </span><span class="s1">sess:</span>
+                <span class="s1">sess[</span><span class="s4">&quot;_user_id&quot;</span><span class="s1">] = user.get_id()</span>
+                <span class="s1">sess[</span><span class="s4">&quot;_fresh&quot;</span><span class="s1">] = fresh</span>
+</pre>
+</body>
+</html>

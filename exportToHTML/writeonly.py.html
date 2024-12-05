@@ -1,0 +1,701 @@
+<html>
+<head>
+<title>writeonly.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #d7539b; font-weight: bold;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+writeonly.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/writeonly.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+
+<span class="s2">&quot;&quot;&quot;Write-only collection API. 
+ 
+This is an alternate mapped attribute style that only supports single-item 
+collection mutation operations.   To read the collection, a select() 
+object must be executed each time. 
+ 
+.. versionadded:: 2.0 
+ 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Collection</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Generic</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterable</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">overload</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Type</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">sqlalchemy.sql </span><span class="s3">import </span><span class="s1">bindparam</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">interfaces</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">relationships</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">strategies</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">NEVER_SET</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">object_mapper</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">PassiveFlag</span>
+<span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">RelationshipDirection</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">inspect</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">log</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">delete</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">insert</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">select</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">update</span>
+<span class="s3">from </span><span class="s1">..sql.dml </span><span class="s3">import </span><span class="s1">Delete</span>
+<span class="s3">from </span><span class="s1">..sql.dml </span><span class="s3">import </span><span class="s1">Insert</span>
+<span class="s3">from </span><span class="s1">..sql.dml </span><span class="s3">import </span><span class="s1">Update</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">QueryableAttribute</span>
+    <span class="s3">from </span><span class="s1">._typing </span><span class="s3">import </span><span class="s1">_InstanceDict</span>
+    <span class="s3">from </span><span class="s1">.attributes </span><span class="s3">import </span><span class="s1">AttributeEventToken</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">LoaderCallableStatus</span>
+    <span class="s3">from </span><span class="s1">.collections </span><span class="s3">import </span><span class="s1">_AdaptedCollectionProtocol</span>
+    <span class="s3">from </span><span class="s1">.collections </span><span class="s3">import </span><span class="s1">CollectionAdapter</span>
+    <span class="s3">from </span><span class="s1">.mapper </span><span class="s3">import </span><span class="s1">Mapper</span>
+    <span class="s3">from </span><span class="s1">.relationships </span><span class="s3">import </span><span class="s1">_RelationshipOrderByArg</span>
+    <span class="s3">from </span><span class="s1">.state </span><span class="s3">import </span><span class="s1">InstanceState</span>
+    <span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">AliasedClass</span>
+    <span class="s3">from </span><span class="s1">..event </span><span class="s3">import </span><span class="s1">_Dispatch</span>
+    <span class="s3">from </span><span class="s1">..sql.selectable </span><span class="s3">import </span><span class="s1">FromClause</span>
+    <span class="s3">from </span><span class="s1">..sql.selectable </span><span class="s3">import </span><span class="s1">Select</span>
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s3">class </span><span class="s1">WriteOnlyHistory(Generic[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Overrides AttributeHistory to receive append/remove events directly.&quot;&quot;&quot;</span>
+
+    <span class="s1">unchanged_items: util.OrderedIdentitySet</span>
+    <span class="s1">added_items: util.OrderedIdentitySet</span>
+    <span class="s1">deleted_items: util.OrderedIdentitySet</span>
+    <span class="s1">_reconcile_collection: bool</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">attr: WriteOnlyAttributeImpl</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[_T]</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag</span><span class="s5">,</span>
+        <span class="s1">apply_to: Optional[WriteOnlyHistory[_T]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">apply_to:</span>
+            <span class="s3">if </span><span class="s1">passive &amp; PassiveFlag.SQL_OK:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s4">f&quot;Attribute </span><span class="s6">{</span><span class="s1">attr</span><span class="s6">} </span><span class="s4">can't load the existing state from the &quot;</span>
+                    <span class="s4">&quot;database for this operation; full iteration is not &quot;</span>
+                    <span class="s4">&quot;permitted.  If this is a delete operation, configure &quot;</span>
+                    <span class="s4">f&quot;passive_deletes=True on the </span><span class="s6">{</span><span class="s1">attr</span><span class="s6">} </span><span class="s4">relationship in &quot;</span>
+                    <span class="s4">&quot;order to resolve this error.&quot;</span>
+                <span class="s1">)</span>
+
+            <span class="s1">self.unchanged_items = apply_to.unchanged_items</span>
+            <span class="s1">self.added_items = apply_to.added_items</span>
+            <span class="s1">self.deleted_items = apply_to.deleted_items</span>
+            <span class="s1">self._reconcile_collection = apply_to._reconcile_collection</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.deleted_items = util.OrderedIdentitySet()</span>
+            <span class="s1">self.added_items = util.OrderedIdentitySet()</span>
+            <span class="s1">self.unchanged_items = util.OrderedIdentitySet()</span>
+            <span class="s1">self._reconcile_collection = </span><span class="s3">False</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">added_plus_unchanged(self) -&gt; List[_T]:</span>
+        <span class="s3">return </span><span class="s1">list(self.added_items.union(self.unchanged_items))</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">all_items(self) -&gt; List[_T]:</span>
+        <span class="s3">return </span><span class="s1">list(</span>
+            <span class="s1">self.added_items.union(self.unchanged_items).union(</span>
+                <span class="s1">self.deleted_items</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">as_history(self) -&gt; attributes.History:</span>
+        <span class="s3">if </span><span class="s1">self._reconcile_collection:</span>
+            <span class="s1">added = self.added_items.difference(self.unchanged_items)</span>
+            <span class="s1">deleted = self.deleted_items.intersection(self.unchanged_items)</span>
+            <span class="s1">unchanged = self.unchanged_items.difference(deleted)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">added</span><span class="s5">, </span><span class="s1">unchanged</span><span class="s5">, </span><span class="s1">deleted = (</span>
+                <span class="s1">self.added_items</span><span class="s5">,</span>
+                <span class="s1">self.unchanged_items</span><span class="s5">,</span>
+                <span class="s1">self.deleted_items</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">attributes.History(list(added)</span><span class="s5">, </span><span class="s1">list(unchanged)</span><span class="s5">, </span><span class="s1">list(deleted))</span>
+
+    <span class="s3">def </span><span class="s1">indexed(self</span><span class="s5">, </span><span class="s1">index: Union[int</span><span class="s5">, </span><span class="s1">slice]) -&gt; Union[List[_T]</span><span class="s5">, </span><span class="s1">_T]:</span>
+        <span class="s3">return </span><span class="s1">list(self.added_items)[index]</span>
+
+    <span class="s3">def </span><span class="s1">add_added(self</span><span class="s5">, </span><span class="s1">value: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.added_items.add(value)</span>
+
+    <span class="s3">def </span><span class="s1">add_removed(self</span><span class="s5">, </span><span class="s1">value: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">value </span><span class="s3">in </span><span class="s1">self.added_items:</span>
+            <span class="s1">self.added_items.remove(value)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.deleted_items.add(value)</span>
+
+
+<span class="s3">class </span><span class="s1">WriteOnlyAttributeImpl(</span>
+    <span class="s1">attributes.HasCollectionAdapter</span><span class="s5">, </span><span class="s1">attributes.AttributeImpl</span>
+<span class="s1">):</span>
+    <span class="s1">uses_objects: bool = </span><span class="s3">True</span>
+    <span class="s1">default_accepts_scalar_loader: bool = </span><span class="s3">False</span>
+    <span class="s1">supports_population: bool = </span><span class="s3">False</span>
+    <span class="s1">_supports_dynamic_iteration: bool = </span><span class="s3">False</span>
+    <span class="s1">collection: bool = </span><span class="s3">False</span>
+    <span class="s1">dynamic: bool = </span><span class="s3">True</span>
+    <span class="s1">order_by: _RelationshipOrderByArg = ()</span>
+    <span class="s1">collection_history_cls: Type[WriteOnlyHistory[Any]] = WriteOnlyHistory</span>
+
+    <span class="s1">query_class: Type[WriteOnlyCollection[Any]]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">class_: Union[Type[Any]</span><span class="s5">, </span><span class="s1">AliasedClass[Any]]</span><span class="s5">,</span>
+        <span class="s1">key: str</span><span class="s5">,</span>
+        <span class="s1">dispatch: _Dispatch[QueryableAttribute[Any]]</span><span class="s5">,</span>
+        <span class="s1">target_mapper: Mapper[_T]</span><span class="s5">,</span>
+        <span class="s1">order_by: _RelationshipOrderByArg</span><span class="s5">,</span>
+        <span class="s1">**kw: Any</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">super().__init__(class_</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">dispatch</span><span class="s5">, </span><span class="s1">**kw)</span>
+        <span class="s1">self.target_mapper = target_mapper</span>
+        <span class="s1">self.query_class = WriteOnlyCollection</span>
+        <span class="s3">if </span><span class="s1">order_by:</span>
+            <span class="s1">self.order_by = tuple(order_by)</span>
+
+    <span class="s3">def </span><span class="s1">get(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_OFF</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Union[util.OrderedIdentitySet</span><span class="s5">, </span><span class="s1">WriteOnlyCollection[Any]]:</span>
+        <span class="s3">if not </span><span class="s1">passive &amp; PassiveFlag.SQL_OK:</span>
+            <span class="s3">return </span><span class="s1">self._get_collection_history(</span>
+                <span class="s1">state</span><span class="s5">, </span><span class="s1">PassiveFlag.PASSIVE_NO_INITIALIZE</span>
+            <span class="s1">).added_items</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.query_class(self</span><span class="s5">, </span><span class="s1">state)</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">get_collection(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">user_data: Literal[</span><span class="s3">None</span><span class="s1">] = ...</span><span class="s5">,</span>
+        <span class="s1">passive: Literal[PassiveFlag.PASSIVE_OFF] = ...</span><span class="s5">,</span>
+    <span class="s1">) -&gt; CollectionAdapter: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">get_collection(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">user_data: _AdaptedCollectionProtocol = ...</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = ...</span><span class="s5">,</span>
+    <span class="s1">) -&gt; CollectionAdapter: ...</span>
+
+    <span class="s1">@overload</span>
+    <span class="s3">def </span><span class="s1">get_collection(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">user_data: Optional[_AdaptedCollectionProtocol] = ...</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = ...</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Union[</span>
+        <span class="s1">Literal[LoaderCallableStatus.PASSIVE_NO_RESULT]</span><span class="s5">, </span><span class="s1">CollectionAdapter</span>
+    <span class="s1">]: ...</span>
+
+    <span class="s3">def </span><span class="s1">get_collection(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">user_data: Optional[_AdaptedCollectionProtocol] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_OFF</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Union[</span>
+        <span class="s1">Literal[LoaderCallableStatus.PASSIVE_NO_RESULT]</span><span class="s5">, </span><span class="s1">CollectionAdapter</span>
+    <span class="s1">]:</span>
+        <span class="s1">data: Collection[Any]</span>
+        <span class="s3">if not </span><span class="s1">passive &amp; PassiveFlag.SQL_OK:</span>
+            <span class="s1">data = self._get_collection_history(state</span><span class="s5">, </span><span class="s1">passive).added_items</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">history = self._get_collection_history(state</span><span class="s5">, </span><span class="s1">passive)</span>
+            <span class="s1">data = history.added_plus_unchanged</span>
+        <span class="s3">return </span><span class="s1">DynamicCollectionAdapter(data)  </span><span class="s0"># type: ignore[return-value]</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_append_token(  </span><span class="s0"># type:ignore[override]</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; attributes.AttributeEventToken:</span>
+        <span class="s3">return </span><span class="s1">attributes.AttributeEventToken(self</span><span class="s5">, </span><span class="s1">attributes.OP_APPEND)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_remove_token(  </span><span class="s0"># type:ignore[override]</span>
+        <span class="s1">self</span><span class="s5">,</span>
+    <span class="s1">) -&gt; attributes.AttributeEventToken:</span>
+        <span class="s3">return </span><span class="s1">attributes.AttributeEventToken(self</span><span class="s5">, </span><span class="s1">attributes.OP_REMOVE)</span>
+
+    <span class="s3">def </span><span class="s1">fire_append_event(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">value: Any</span><span class="s5">,</span>
+        <span class="s1">initiator: Optional[AttributeEventToken]</span><span class="s5">,</span>
+        <span class="s1">collection_history: Optional[WriteOnlyHistory[Any]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">collection_history </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">collection_history = self._modified_event(state</span><span class="s5">, </span><span class="s1">dict_)</span>
+
+        <span class="s1">collection_history.add_added(value)</span>
+
+        <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">self.dispatch.append:</span>
+            <span class="s1">value = fn(state</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">initiator </span><span class="s3">or </span><span class="s1">self._append_token)</span>
+
+        <span class="s3">if </span><span class="s1">self.trackparent </span><span class="s3">and </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.sethasparent(attributes.instance_state(value)</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">fire_remove_event(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">value: Any</span><span class="s5">,</span>
+        <span class="s1">initiator: Optional[AttributeEventToken]</span><span class="s5">,</span>
+        <span class="s1">collection_history: Optional[WriteOnlyHistory[Any]] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">collection_history </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">collection_history = self._modified_event(state</span><span class="s5">, </span><span class="s1">dict_)</span>
+
+        <span class="s1">collection_history.add_removed(value)</span>
+
+        <span class="s3">if </span><span class="s1">self.trackparent </span><span class="s3">and </span><span class="s1">value </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.sethasparent(attributes.instance_state(value)</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s3">False</span><span class="s1">)</span>
+
+        <span class="s3">for </span><span class="s1">fn </span><span class="s3">in </span><span class="s1">self.dispatch.remove:</span>
+            <span class="s1">fn(state</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">initiator </span><span class="s3">or </span><span class="s1">self._remove_token)</span>
+
+    <span class="s3">def </span><span class="s1">_modified_event(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">state: InstanceState[Any]</span><span class="s5">, </span><span class="s1">dict_: _InstanceDict</span>
+    <span class="s1">) -&gt; WriteOnlyHistory[Any]:</span>
+        <span class="s3">if </span><span class="s1">self.key </span><span class="s3">not in </span><span class="s1">state.committed_state:</span>
+            <span class="s1">state.committed_state[self.key] = self.collection_history_cls(</span>
+                <span class="s1">self</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">PassiveFlag.PASSIVE_NO_FETCH</span>
+            <span class="s1">)</span>
+
+        <span class="s1">state._modified_event(dict_</span><span class="s5">, </span><span class="s1">self</span><span class="s5">, </span><span class="s1">NEVER_SET)</span>
+
+        <span class="s0"># this is a hack to allow the entities.ComparableEntity fixture</span>
+        <span class="s0"># to work</span>
+        <span class="s1">dict_[self.key] = </span><span class="s3">True</span>
+        <span class="s3">return </span><span class="s1">state.committed_state[self.key]  </span><span class="s0"># type: ignore[no-any-return]</span>
+
+    <span class="s3">def </span><span class="s1">set(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">value: Any</span><span class="s5">,</span>
+        <span class="s1">initiator: Optional[AttributeEventToken] = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_OFF</span><span class="s5">,</span>
+        <span class="s1">check_old: Any = </span><span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">pop: bool = </span><span class="s3">False</span><span class="s5">,</span>
+        <span class="s1">_adapt: bool = </span><span class="s3">True</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">initiator </span><span class="s3">and </span><span class="s1">initiator.parent_token </span><span class="s3">is </span><span class="s1">self.parent_token:</span>
+            <span class="s3">return</span>
+
+        <span class="s3">if </span><span class="s1">pop </span><span class="s3">and </span><span class="s1">value </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return</span>
+
+        <span class="s1">iterable = value</span>
+        <span class="s1">new_values = list(iterable)</span>
+        <span class="s3">if </span><span class="s1">state.has_identity:</span>
+            <span class="s3">if not </span><span class="s1">self._supports_dynamic_iteration:</span>
+                <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                    <span class="s4">f'Collection &quot;</span><span class="s6">{</span><span class="s1">self</span><span class="s6">}</span><span class="s4">&quot; does not support implicit '</span>
+                    <span class="s4">&quot;iteration; collection replacement operations &quot;</span>
+                    <span class="s4">&quot;can't be used&quot;</span>
+                <span class="s1">)</span>
+            <span class="s1">old_collection = util.IdentitySet(</span>
+                <span class="s1">self.get(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">passive=passive)</span>
+            <span class="s1">)</span>
+
+        <span class="s1">collection_history = self._modified_event(state</span><span class="s5">, </span><span class="s1">dict_)</span>
+        <span class="s3">if not </span><span class="s1">state.has_identity:</span>
+            <span class="s1">old_collection = collection_history.added_items</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">old_collection = old_collection.union(</span>
+                <span class="s1">collection_history.added_items</span>
+            <span class="s1">)</span>
+
+        <span class="s1">constants = old_collection.intersection(new_values)</span>
+        <span class="s1">additions = util.IdentitySet(new_values).difference(constants)</span>
+        <span class="s1">removals = old_collection.difference(constants)</span>
+
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">new_values:</span>
+            <span class="s3">if </span><span class="s1">member </span><span class="s3">in </span><span class="s1">additions:</span>
+                <span class="s1">self.fire_append_event(</span>
+                    <span class="s1">state</span><span class="s5">,</span>
+                    <span class="s1">dict_</span><span class="s5">,</span>
+                    <span class="s1">member</span><span class="s5">,</span>
+                    <span class="s3">None</span><span class="s5">,</span>
+                    <span class="s1">collection_history=collection_history</span><span class="s5">,</span>
+                <span class="s1">)</span>
+
+        <span class="s3">for </span><span class="s1">member </span><span class="s3">in </span><span class="s1">removals:</span>
+            <span class="s1">self.fire_remove_event(</span>
+                <span class="s1">state</span><span class="s5">,</span>
+                <span class="s1">dict_</span><span class="s5">,</span>
+                <span class="s1">member</span><span class="s5">,</span>
+                <span class="s3">None</span><span class="s5">,</span>
+                <span class="s1">collection_history=collection_history</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">delete(self</span><span class="s5">, </span><span class="s1">*args: Any</span><span class="s5">, </span><span class="s1">**kwargs: Any) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">set_committed_value(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">state: InstanceState[Any]</span><span class="s5">, </span><span class="s1">dict_: _InstanceDict</span><span class="s5">, </span><span class="s1">value: Any</span>
+    <span class="s1">) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError(</span>
+            <span class="s4">&quot;Dynamic attributes don't support collection population.&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">get_history(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_NO_FETCH</span><span class="s5">,</span>
+    <span class="s1">) -&gt; attributes.History:</span>
+        <span class="s1">c = self._get_collection_history(state</span><span class="s5">, </span><span class="s1">passive)</span>
+        <span class="s3">return </span><span class="s1">c.as_history()</span>
+
+    <span class="s3">def </span><span class="s1">get_all_pending(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_NO_INITIALIZE</span><span class="s5">,</span>
+    <span class="s1">) -&gt; List[Tuple[InstanceState[Any]</span><span class="s5">, </span><span class="s1">Any]]:</span>
+        <span class="s1">c = self._get_collection_history(state</span><span class="s5">, </span><span class="s1">passive)</span>
+        <span class="s3">return </span><span class="s1">[(attributes.instance_state(x)</span><span class="s5">, </span><span class="s1">x) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">c.all_items]</span>
+
+    <span class="s3">def </span><span class="s1">_get_collection_history(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">state: InstanceState[Any]</span><span class="s5">, </span><span class="s1">passive: PassiveFlag</span>
+    <span class="s1">) -&gt; WriteOnlyHistory[Any]:</span>
+        <span class="s1">c: WriteOnlyHistory[Any]</span>
+        <span class="s3">if </span><span class="s1">self.key </span><span class="s3">in </span><span class="s1">state.committed_state:</span>
+            <span class="s1">c = state.committed_state[self.key]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">c = self.collection_history_cls(</span>
+                <span class="s1">self</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">PassiveFlag.PASSIVE_NO_FETCH</span>
+            <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">state.has_identity </span><span class="s3">and </span><span class="s1">(passive &amp; PassiveFlag.INIT_OK):</span>
+            <span class="s3">return </span><span class="s1">self.collection_history_cls(</span>
+                <span class="s1">self</span><span class="s5">, </span><span class="s1">state</span><span class="s5">, </span><span class="s1">passive</span><span class="s5">, </span><span class="s1">apply_to=c</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">c</span>
+
+    <span class="s3">def </span><span class="s1">append(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">value: Any</span><span class="s5">,</span>
+        <span class="s1">initiator: Optional[AttributeEventToken]</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_NO_FETCH</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">initiator </span><span class="s3">is not </span><span class="s1">self:</span>
+            <span class="s1">self.fire_append_event(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">initiator)</span>
+
+    <span class="s3">def </span><span class="s1">remove(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">value: Any</span><span class="s5">,</span>
+        <span class="s1">initiator: Optional[AttributeEventToken]</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_NO_FETCH</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">initiator </span><span class="s3">is not </span><span class="s1">self:</span>
+            <span class="s1">self.fire_remove_event(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">initiator)</span>
+
+    <span class="s3">def </span><span class="s1">pop(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">state: InstanceState[Any]</span><span class="s5">,</span>
+        <span class="s1">dict_: _InstanceDict</span><span class="s5">,</span>
+        <span class="s1">value: Any</span><span class="s5">,</span>
+        <span class="s1">initiator: Optional[AttributeEventToken]</span><span class="s5">,</span>
+        <span class="s1">passive: PassiveFlag = PassiveFlag.PASSIVE_NO_FETCH</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.remove(state</span><span class="s5">, </span><span class="s1">dict_</span><span class="s5">, </span><span class="s1">value</span><span class="s5">, </span><span class="s1">initiator</span><span class="s5">, </span><span class="s1">passive=passive)</span>
+
+
+<span class="s1">@log.class_logger</span>
+<span class="s1">@relationships.RelationshipProperty.strategy_for(lazy=</span><span class="s4">&quot;write_only&quot;</span><span class="s1">)</span>
+<span class="s3">class </span><span class="s1">WriteOnlyLoader(strategies.AbstractRelationshipLoader</span><span class="s5">, </span><span class="s1">log.Identified):</span>
+    <span class="s1">impl_class = WriteOnlyAttributeImpl</span>
+
+    <span class="s3">def </span><span class="s1">init_class_attribute(self</span><span class="s5">, </span><span class="s1">mapper: Mapper[Any]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.is_class_level = </span><span class="s3">True</span>
+        <span class="s3">if not </span><span class="s1">self.uselist </span><span class="s3">or </span><span class="s1">self.parent_property.direction </span><span class="s3">not in </span><span class="s1">(</span>
+            <span class="s1">interfaces.ONETOMANY</span><span class="s5">,</span>
+            <span class="s1">interfaces.MANYTOMANY</span><span class="s5">,</span>
+        <span class="s1">):</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;On relationship %s, 'dynamic' loaders cannot be used with &quot;</span>
+                <span class="s4">&quot;many-to-one/one-to-one relationships and/or &quot;</span>
+                <span class="s4">&quot;uselist=False.&quot; </span><span class="s1">% self.parent_property</span>
+            <span class="s1">)</span>
+
+        <span class="s1">strategies._register_attribute(  </span><span class="s0"># type: ignore[no-untyped-call]</span>
+            <span class="s1">self.parent_property</span><span class="s5">,</span>
+            <span class="s1">mapper</span><span class="s5">,</span>
+            <span class="s1">useobject=</span><span class="s3">True</span><span class="s5">,</span>
+            <span class="s1">impl_class=self.impl_class</span><span class="s5">,</span>
+            <span class="s1">target_mapper=self.parent_property.mapper</span><span class="s5">,</span>
+            <span class="s1">order_by=self.parent_property.order_by</span><span class="s5">,</span>
+            <span class="s1">query_class=self.parent_property.query_class</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">DynamicCollectionAdapter:</span>
+    <span class="s2">&quot;&quot;&quot;simplified CollectionAdapter for internal API consistency&quot;&quot;&quot;</span>
+
+    <span class="s1">data: Collection[Any]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">data: Collection[Any]):</span>
+        <span class="s1">self.data = data</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; Iterator[Any]:</span>
+        <span class="s3">return </span><span class="s1">iter(self.data)</span>
+
+    <span class="s3">def </span><span class="s1">_reset_empty(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">__len__(self) -&gt; int:</span>
+        <span class="s3">return </span><span class="s1">len(self.data)</span>
+
+    <span class="s3">def </span><span class="s1">__bool__(self) -&gt; bool:</span>
+        <span class="s3">return True</span>
+
+
+<span class="s3">class </span><span class="s1">AbstractCollectionWriter(Generic[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Virtual collection which includes append/remove methods that synchronize 
+    into the attribute event system. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+        <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">instance: _T</span>
+    <span class="s1">_from_obj: Tuple[FromClause</span><span class="s5">, </span><span class="s1">...]</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s5">, </span><span class="s1">attr: WriteOnlyAttributeImpl</span><span class="s5">, </span><span class="s1">state: InstanceState[_T]):</span>
+        <span class="s1">instance = state.obj()</span>
+        <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+            <span class="s3">assert </span><span class="s1">instance</span>
+        <span class="s1">self.instance = instance</span>
+        <span class="s1">self.attr = attr</span>
+
+        <span class="s1">mapper = object_mapper(instance)</span>
+        <span class="s1">prop = mapper._props[self.attr.key]</span>
+
+        <span class="s3">if </span><span class="s1">prop.secondary </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s0"># this is a hack right now.  The Query only knows how to</span>
+            <span class="s0"># make subsequent joins() without a given left-hand side</span>
+            <span class="s0"># from self._from_obj[0].  We need to ensure prop.secondary</span>
+            <span class="s0"># is in the FROM.  So we purposely put the mapper selectable</span>
+            <span class="s0"># in _from_obj[0] to ensure a user-defined join() later on</span>
+            <span class="s0"># doesn't fail, and secondary is then in _from_obj[1].</span>
+
+            <span class="s0"># note also, we are using the official ORM-annotated selectable</span>
+            <span class="s0"># from __clause_element__(), see #7868</span>
+            <span class="s1">self._from_obj = (prop.mapper.__clause_element__()</span><span class="s5">, </span><span class="s1">prop.secondary)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._from_obj = ()</span>
+
+        <span class="s1">self._where_criteria = (</span>
+            <span class="s1">prop._with_parent(instance</span><span class="s5">, </span><span class="s1">alias_secondary=</span><span class="s3">False</span><span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">self.attr.order_by:</span>
+            <span class="s1">self._order_by_clauses = self.attr.order_by</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._order_by_clauses = ()</span>
+
+    <span class="s3">def </span><span class="s1">_add_all_impl(self</span><span class="s5">, </span><span class="s1">iterator: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">for </span><span class="s1">item </span><span class="s3">in </span><span class="s1">iterator:</span>
+            <span class="s1">self.attr.append(</span>
+                <span class="s1">attributes.instance_state(self.instance)</span><span class="s5">,</span>
+                <span class="s1">attributes.instance_dict(self.instance)</span><span class="s5">,</span>
+                <span class="s1">item</span><span class="s5">,</span>
+                <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_remove_impl(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.attr.remove(</span>
+            <span class="s1">attributes.instance_state(self.instance)</span><span class="s5">,</span>
+            <span class="s1">attributes.instance_dict(self.instance)</span><span class="s5">,</span>
+            <span class="s1">item</span><span class="s5">,</span>
+            <span class="s3">None</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">WriteOnlyCollection(AbstractCollectionWriter[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;Write-only collection which can synchronize changes into the 
+    attribute event system. 
+ 
+    The :class:`.WriteOnlyCollection` is used in a mapping by 
+    using the ``&quot;write_only&quot;`` lazy loading strategy with 
+    :func:`_orm.relationship`.     For background on this configuration, 
+    see :ref:`write_only_relationship`. 
+ 
+    .. versionadded:: 2.0 
+ 
+    .. seealso:: 
+ 
+        :ref:`write_only_relationship` 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;instance&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;attr&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_where_criteria&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_from_obj&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_order_by_clauses&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__iter__(self) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">TypeError(</span>
+            <span class="s4">&quot;WriteOnly collections don't support iteration in-place; &quot;</span>
+            <span class="s4">&quot;to query for collection items, use the select() method to &quot;</span>
+            <span class="s4">&quot;produce a SQL statement and execute it with session.scalars().&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">select(self) -&gt; Select[Tuple[_T]]:</span>
+        <span class="s2">&quot;&quot;&quot;Produce a :class:`_sql.Select` construct that represents the 
+        rows within this instance-local :class:`_orm.WriteOnlyCollection`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">stmt = select(self.attr.target_mapper).where(*self._where_criteria)</span>
+        <span class="s3">if </span><span class="s1">self._from_obj:</span>
+            <span class="s1">stmt = stmt.select_from(*self._from_obj)</span>
+        <span class="s3">if </span><span class="s1">self._order_by_clauses:</span>
+            <span class="s1">stmt = stmt.order_by(*self._order_by_clauses)</span>
+        <span class="s3">return </span><span class="s1">stmt</span>
+
+    <span class="s3">def </span><span class="s1">insert(self) -&gt; Insert:</span>
+        <span class="s2">&quot;&quot;&quot;For one-to-many collections, produce a :class:`_dml.Insert` which 
+        will insert new rows in terms of this this instance-local 
+        :class:`_orm.WriteOnlyCollection`. 
+ 
+        This construct is only supported for a :class:`_orm.Relationship` 
+        that does **not** include the :paramref:`_orm.relationship.secondary` 
+        parameter.  For relationships that refer to a many-to-many table, 
+        use ordinary bulk insert techniques to produce new objects, then 
+        use :meth:`_orm.AbstractCollectionWriter.add_all` to associate them 
+        with the collection. 
+ 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">state = inspect(self.instance)</span>
+        <span class="s1">mapper = state.mapper</span>
+        <span class="s1">prop = mapper._props[self.attr.key]</span>
+
+        <span class="s3">if </span><span class="s1">prop.direction </span><span class="s3">is not </span><span class="s1">RelationshipDirection.ONETOMANY:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Write only bulk INSERT only supported for one-to-many &quot;</span>
+                <span class="s4">&quot;collections; for many-to-many, use a separate bulk &quot;</span>
+                <span class="s4">&quot;INSERT along with add_all().&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">dict_: Dict[str</span><span class="s5">, </span><span class="s1">Any] = {}</span>
+
+        <span class="s3">for </span><span class="s1">l</span><span class="s5">, </span><span class="s1">r </span><span class="s3">in </span><span class="s1">prop.synchronize_pairs:</span>
+            <span class="s1">fn = prop._get_attr_w_warn_on_none(</span>
+                <span class="s1">mapper</span><span class="s5">,</span>
+                <span class="s1">state</span><span class="s5">,</span>
+                <span class="s1">state.dict</span><span class="s5">,</span>
+                <span class="s1">l</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">dict_[r.key] = bindparam(</span><span class="s3">None</span><span class="s5">, </span><span class="s1">callable_=fn)</span>
+
+        <span class="s3">return </span><span class="s1">insert(self.attr.target_mapper).values(**dict_)</span>
+
+    <span class="s3">def </span><span class="s1">update(self) -&gt; Update:</span>
+        <span class="s2">&quot;&quot;&quot;Produce a :class:`_dml.Update` which will refer to rows in terms 
+        of this instance-local :class:`_orm.WriteOnlyCollection`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">update(self.attr.target_mapper).where(*self._where_criteria)</span>
+
+    <span class="s3">def </span><span class="s1">delete(self) -&gt; Delete:</span>
+        <span class="s2">&quot;&quot;&quot;Produce a :class:`_dml.Delete` which will refer to rows in terms 
+        of this instance-local :class:`_orm.WriteOnlyCollection`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">delete(self.attr.target_mapper).where(*self._where_criteria)</span>
+
+    <span class="s3">def </span><span class="s1">add_all(self</span><span class="s5">, </span><span class="s1">iterator: Iterable[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Add an iterable of items to this :class:`_orm.WriteOnlyCollection`. 
+ 
+        The given items will be persisted to the database in terms of 
+        the parent instance's collection on the next flush. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._add_all_impl(iterator)</span>
+
+    <span class="s3">def </span><span class="s1">add(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Add an item to this :class:`_orm.WriteOnlyCollection`. 
+ 
+        The given item will be persisted to the database in terms of 
+        the parent instance's collection on the next flush. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._add_all_impl([item])</span>
+
+    <span class="s3">def </span><span class="s1">remove(self</span><span class="s5">, </span><span class="s1">item: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Remove an item from this :class:`_orm.WriteOnlyCollection`. 
+ 
+        The given item will be removed from the parent instance's collection on 
+        the next flush. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._remove_impl(item)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,267 @@
+<html>
+<head>
+<title>enumerated.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #cc8b60;}
+.s3 { color: #cc7832;}
+.s4 { color: #717ed3; font-style: italic;}
+.s5 { color: #96bf7d;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+enumerated.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/mysql/enumerated.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s1">.types </span><span class="s2">import </span><span class="s1">_StringType</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">exc</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">sql</span>
+<span class="s2">from </span><span class="s1">... </span><span class="s2">import </span><span class="s1">util</span>
+<span class="s2">from </span><span class="s1">...sql </span><span class="s2">import </span><span class="s1">sqltypes</span>
+
+
+<span class="s2">class </span><span class="s1">ENUM(sqltypes.NativeForEmulated</span><span class="s3">, </span><span class="s1">sqltypes.Enum</span><span class="s3">, </span><span class="s1">_StringType):</span>
+    <span class="s4">&quot;&quot;&quot;MySQL ENUM type.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;ENUM&quot;</span>
+
+    <span class="s1">native_enum = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">*enums</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s4">&quot;&quot;&quot;Construct an ENUM. 
+ 
+        E.g.:: 
+ 
+          Column('myenum', ENUM(&quot;foo&quot;, &quot;bar&quot;, &quot;baz&quot;)) 
+ 
+        :param enums: The range of valid values for this ENUM.  Values in 
+          enums are not quoted, they will be escaped and surrounded by single 
+          quotes when generating the schema.  This object may also be a 
+          PEP-435-compliant enumerated type. 
+ 
+          .. versionadded: 1.1 added support for PEP-435-compliant enumerated 
+             types. 
+ 
+        :param strict: This flag has no effect. 
+ 
+         .. versionchanged:: The MySQL ENUM type as well as the base Enum 
+            type now validates all Python data values. 
+ 
+        :param charset: Optional, a column-level character set for this string 
+          value.  Takes precedence to 'ascii' or 'unicode' short-hand. 
+ 
+        :param collation: Optional, a column-level collation for this string 
+          value.  Takes precedence to 'binary' short-hand. 
+ 
+        :param ascii: Defaults to False: short-hand for the ``latin1`` 
+          character set, generates ASCII in schema. 
+ 
+        :param unicode: Defaults to False: short-hand for the ``ucs2`` 
+          character set, generates UNICODE in schema. 
+ 
+        :param binary: Defaults to False: short-hand, pick the binary 
+          collation type that matches the column's character set.  Generates 
+          BINARY in schema.  This does not affect the type of data stored, 
+          only the collation of character data. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">kw.pop(</span><span class="s5">&quot;strict&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s1">)</span>
+        <span class="s1">self._enum_init(enums</span><span class="s3">, </span><span class="s1">kw)</span>
+        <span class="s1">_StringType.__init__(self</span><span class="s3">, </span><span class="s1">length=self.length</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">adapt_emulated_to_native(cls</span><span class="s3">, </span><span class="s1">impl</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s4">&quot;&quot;&quot;Produce a MySQL native :class:`.mysql.ENUM` from plain 
+        :class:`.Enum`. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;validate_strings&quot;</span><span class="s3">, </span><span class="s1">impl.validate_strings)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;values_callable&quot;</span><span class="s3">, </span><span class="s1">impl.values_callable)</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;omit_aliases&quot;</span><span class="s3">, </span><span class="s1">impl._omit_aliases)</span>
+        <span class="s2">return </span><span class="s1">cls(**kw)</span>
+
+    <span class="s2">def </span><span class="s1">_object_value_for_elem(self</span><span class="s3">, </span><span class="s1">elem):</span>
+        <span class="s0"># mysql sends back a blank string for any value that</span>
+        <span class="s0"># was persisted that was not in the enums; that is, it does no</span>
+        <span class="s0"># validation on the incoming data, it &quot;truncates&quot; it to be</span>
+        <span class="s0"># the blank string.  Return it straight.</span>
+        <span class="s2">if </span><span class="s1">elem == </span><span class="s5">&quot;&quot;</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">elem</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">super()._object_value_for_elem(elem)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self):</span>
+        <span class="s2">return </span><span class="s1">util.generic_repr(</span>
+            <span class="s1">self</span><span class="s3">, </span><span class="s1">to_inspect=[ENUM</span><span class="s3">, </span><span class="s1">_StringType</span><span class="s3">, </span><span class="s1">sqltypes.Enum]</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">SET(_StringType):</span>
+    <span class="s4">&quot;&quot;&quot;MySQL SET type.&quot;&quot;&quot;</span>
+
+    <span class="s1">__visit_name__ = </span><span class="s5">&quot;SET&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">*values</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s4">&quot;&quot;&quot;Construct a SET. 
+ 
+        E.g.:: 
+ 
+          Column('myset', SET(&quot;foo&quot;, &quot;bar&quot;, &quot;baz&quot;)) 
+ 
+ 
+        The list of potential values is required in the case that this 
+        set will be used to generate DDL for a table, or if the 
+        :paramref:`.SET.retrieve_as_bitwise` flag is set to True. 
+ 
+        :param values: The range of valid values for this SET. The values 
+          are not quoted, they will be escaped and surrounded by single 
+          quotes when generating the schema. 
+ 
+        :param convert_unicode: Same flag as that of 
+         :paramref:`.String.convert_unicode`. 
+ 
+        :param collation: same as that of :paramref:`.String.collation` 
+ 
+        :param charset: same as that of :paramref:`.VARCHAR.charset`. 
+ 
+        :param ascii: same as that of :paramref:`.VARCHAR.ascii`. 
+ 
+        :param unicode: same as that of :paramref:`.VARCHAR.unicode`. 
+ 
+        :param binary: same as that of :paramref:`.VARCHAR.binary`. 
+ 
+        :param retrieve_as_bitwise: if True, the data for the set type will be 
+          persisted and selected using an integer value, where a set is coerced 
+          into a bitwise mask for persistence.  MySQL allows this mode which 
+          has the advantage of being able to store values unambiguously, 
+          such as the blank string ``''``.   The datatype will appear 
+          as the expression ``col + 0`` in a SELECT statement, so that the 
+          value is coerced into an integer value in result sets. 
+          This flag is required if one wishes 
+          to persist a set that can store the blank string ``''`` as a value. 
+ 
+          .. warning:: 
+ 
+            When using :paramref:`.mysql.SET.retrieve_as_bitwise`, it is 
+            essential that the list of set values is expressed in the 
+            **exact same order** as exists on the MySQL database. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.retrieve_as_bitwise = kw.pop(</span><span class="s5">&quot;retrieve_as_bitwise&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">self.values = tuple(values)</span>
+        <span class="s2">if not </span><span class="s1">self.retrieve_as_bitwise </span><span class="s2">and </span><span class="s5">&quot;&quot; </span><span class="s2">in </span><span class="s1">values:</span>
+            <span class="s2">raise </span><span class="s1">exc.ArgumentError(</span>
+                <span class="s5">&quot;Can't use the blank value '' in a SET without &quot;</span>
+                <span class="s5">&quot;setting retrieve_as_bitwise=True&quot;</span>
+            <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">self.retrieve_as_bitwise:</span>
+            <span class="s1">self._bitmap = {</span>
+                <span class="s1">value: </span><span class="s6">2</span><span class="s1">**idx </span><span class="s2">for </span><span class="s1">idx</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">enumerate(self.values)</span>
+            <span class="s1">}</span>
+            <span class="s1">self._bitmap.update(</span>
+                <span class="s1">(</span><span class="s6">2</span><span class="s1">**idx</span><span class="s3">, </span><span class="s1">value) </span><span class="s2">for </span><span class="s1">idx</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">enumerate(self.values)</span>
+            <span class="s1">)</span>
+        <span class="s1">length = max([len(v) </span><span class="s2">for </span><span class="s1">v </span><span class="s2">in </span><span class="s1">values] + [</span><span class="s6">0</span><span class="s1">])</span>
+        <span class="s1">kw.setdefault(</span><span class="s5">&quot;length&quot;</span><span class="s3">, </span><span class="s1">length)</span>
+        <span class="s1">super().__init__(**kw)</span>
+
+    <span class="s2">def </span><span class="s1">column_expression(self</span><span class="s3">, </span><span class="s1">colexpr):</span>
+        <span class="s2">if </span><span class="s1">self.retrieve_as_bitwise:</span>
+            <span class="s2">return </span><span class="s1">sql.type_coerce(</span>
+                <span class="s1">sql.type_coerce(colexpr</span><span class="s3">, </span><span class="s1">sqltypes.Integer) + </span><span class="s6">0</span><span class="s3">, </span><span class="s1">self</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">colexpr</span>
+
+    <span class="s2">def </span><span class="s1">result_processor(self</span><span class="s3">, </span><span class="s1">dialect</span><span class="s3">, </span><span class="s1">coltype):</span>
+        <span class="s2">if </span><span class="s1">self.retrieve_as_bitwise:</span>
+
+            <span class="s2">def </span><span class="s1">process(value):</span>
+                <span class="s2">if </span><span class="s1">value </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s1">value = int(value)</span>
+
+                    <span class="s2">return </span><span class="s1">set(util.map_bits(self._bitmap.__getitem__</span><span class="s3">, </span><span class="s1">value))</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">return None</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">super_convert = super().result_processor(dialect</span><span class="s3">, </span><span class="s1">coltype)</span>
+
+            <span class="s2">def </span><span class="s1">process(value):</span>
+                <span class="s2">if </span><span class="s1">isinstance(value</span><span class="s3">, </span><span class="s1">str):</span>
+                    <span class="s0"># MySQLdb returns a string, let's parse</span>
+                    <span class="s2">if </span><span class="s1">super_convert:</span>
+                        <span class="s1">value = super_convert(value)</span>
+                    <span class="s2">return </span><span class="s1">set(re.findall(</span><span class="s5">r&quot;[^,]+&quot;</span><span class="s3">, </span><span class="s1">value))</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s0"># mysql-connector-python does a naive</span>
+                    <span class="s0"># split(&quot;,&quot;) which throws in an empty string</span>
+                    <span class="s2">if </span><span class="s1">value </span><span class="s2">is not None</span><span class="s1">:</span>
+                        <span class="s1">value.discard(</span><span class="s5">&quot;&quot;</span><span class="s1">)</span>
+                    <span class="s2">return </span><span class="s1">value</span>
+
+        <span class="s2">return </span><span class="s1">process</span>
+
+    <span class="s2">def </span><span class="s1">bind_processor(self</span><span class="s3">, </span><span class="s1">dialect):</span>
+        <span class="s1">super_convert = super().bind_processor(dialect)</span>
+        <span class="s2">if </span><span class="s1">self.retrieve_as_bitwise:</span>
+
+            <span class="s2">def </span><span class="s1">process(value):</span>
+                <span class="s2">if </span><span class="s1">value </span><span class="s2">is None</span><span class="s1">:</span>
+                    <span class="s2">return None</span>
+                <span class="s2">elif </span><span class="s1">isinstance(value</span><span class="s3">, </span><span class="s1">(int</span><span class="s3">, </span><span class="s1">str)):</span>
+                    <span class="s2">if </span><span class="s1">super_convert:</span>
+                        <span class="s2">return </span><span class="s1">super_convert(value)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s2">return </span><span class="s1">value</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">int_value = </span><span class="s6">0</span>
+                    <span class="s2">for </span><span class="s1">v </span><span class="s2">in </span><span class="s1">value:</span>
+                        <span class="s1">int_value |= self._bitmap[v]</span>
+                    <span class="s2">return </span><span class="s1">int_value</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+
+            <span class="s2">def </span><span class="s1">process(value):</span>
+                <span class="s0"># accept strings and int (actually bitflag) values directly</span>
+                <span class="s2">if </span><span class="s1">value </span><span class="s2">is not None and not </span><span class="s1">isinstance(value</span><span class="s3">, </span><span class="s1">(int</span><span class="s3">, </span><span class="s1">str)):</span>
+                    <span class="s1">value = </span><span class="s5">&quot;,&quot;</span><span class="s1">.join(value)</span>
+
+                <span class="s2">if </span><span class="s1">super_convert:</span>
+                    <span class="s2">return </span><span class="s1">super_convert(value)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">return </span><span class="s1">value</span>
+
+        <span class="s2">return </span><span class="s1">process</span>
+
+    <span class="s2">def </span><span class="s1">adapt(self</span><span class="s3">, </span><span class="s1">impltype</span><span class="s3">, </span><span class="s1">**kw):</span>
+        <span class="s1">kw[</span><span class="s5">&quot;retrieve_as_bitwise&quot;</span><span class="s1">] = self.retrieve_as_bitwise</span>
+        <span class="s2">return </span><span class="s1">util.constructor_copy(self</span><span class="s3">, </span><span class="s1">impltype</span><span class="s3">, </span><span class="s1">*self.values</span><span class="s3">, </span><span class="s1">**kw)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self):</span>
+        <span class="s2">return </span><span class="s1">util.generic_repr(</span>
+            <span class="s1">self</span><span class="s3">,</span>
+            <span class="s1">to_inspect=[SET</span><span class="s3">, </span><span class="s1">_StringType]</span><span class="s3">,</span>
+            <span class="s1">additional_kw=[</span>
+                <span class="s1">(</span><span class="s5">&quot;retrieve_as_bitwise&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">]</span><span class="s3">,</span>
+        <span class="s1">)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,1327 @@
+<html>
+<head>
+<title>dependency.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #cc7832;}
+.s5 { color: #96bf7d;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+dependency.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># orm/dependency.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+
+<span class="s2">&quot;&quot;&quot;Relationship dependencies. 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">attributes</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">sync</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">unitofwork</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">mapperutil</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">MANYTOMANY</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">MANYTOONE</span>
+<span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">ONETOMANY</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc </span><span class="s3">as </span><span class="s1">sa_exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">sql</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+
+
+<span class="s3">class </span><span class="s1">DependencyProcessor:</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">prop):</span>
+        <span class="s1">self.prop = prop</span>
+        <span class="s1">self.cascade = prop.cascade</span>
+        <span class="s1">self.mapper = prop.mapper</span>
+        <span class="s1">self.parent = prop.parent</span>
+        <span class="s1">self.secondary = prop.secondary</span>
+        <span class="s1">self.direction = prop.direction</span>
+        <span class="s1">self.post_update = prop.post_update</span>
+        <span class="s1">self.passive_deletes = prop.passive_deletes</span>
+        <span class="s1">self.passive_updates = prop.passive_updates</span>
+        <span class="s1">self.enable_typechecks = prop.enable_typechecks</span>
+        <span class="s3">if </span><span class="s1">self.passive_deletes:</span>
+            <span class="s1">self._passive_delete_flag = attributes.PASSIVE_NO_INITIALIZE</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._passive_delete_flag = attributes.PASSIVE_OFF</span>
+        <span class="s3">if </span><span class="s1">self.passive_updates:</span>
+            <span class="s1">self._passive_update_flag = attributes.PASSIVE_NO_INITIALIZE</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._passive_update_flag = attributes.PASSIVE_OFF</span>
+
+        <span class="s1">self.sort_key = </span><span class="s5">&quot;%s_%s&quot; </span><span class="s1">% (self.parent._sort_key</span><span class="s4">, </span><span class="s1">prop.key)</span>
+        <span class="s1">self.key = prop.key</span>
+        <span class="s3">if not </span><span class="s1">self.prop.synchronize_pairs:</span>
+            <span class="s3">raise </span><span class="s1">sa_exc.ArgumentError(</span>
+                <span class="s5">&quot;Can't build a DependencyProcessor for relationship %s. &quot;</span>
+                <span class="s5">&quot;No target attributes to populate between parent and &quot;</span>
+                <span class="s5">&quot;child are present&quot; </span><span class="s1">% self.prop</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">from_relationship(cls</span><span class="s4">, </span><span class="s1">prop):</span>
+        <span class="s3">return </span><span class="s1">_direction_to_processor[prop.direction](prop)</span>
+
+    <span class="s3">def </span><span class="s1">hasparent(self</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s2">&quot;&quot;&quot;return True if the given object instance has a parent, 
+        according to the ``InstrumentedAttribute`` handled by this 
+        ``DependencyProcessor``. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.parent.class_manager.get_impl(self.key).hasparent(state)</span>
+
+    <span class="s3">def </span><span class="s1">per_property_preprocessors(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s2">&quot;&quot;&quot;establish actions and dependencies related to a flush. 
+ 
+        These actions will operate on all relevant states in 
+        the aggregate. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">uow.register_preprocessor(self</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">per_property_flush_actions(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s1">after_save = unitofwork.ProcessAll(uow</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)</span>
+        <span class="s1">before_delete = unitofwork.ProcessAll(uow</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)</span>
+
+        <span class="s1">parent_saves = unitofwork.SaveUpdateAll(</span>
+            <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.parent.primary_base_mapper</span>
+        <span class="s1">)</span>
+        <span class="s1">child_saves = unitofwork.SaveUpdateAll(</span>
+            <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.mapper.primary_base_mapper</span>
+        <span class="s1">)</span>
+
+        <span class="s1">parent_deletes = unitofwork.DeleteAll(</span>
+            <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.parent.primary_base_mapper</span>
+        <span class="s1">)</span>
+        <span class="s1">child_deletes = unitofwork.DeleteAll(</span>
+            <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.mapper.primary_base_mapper</span>
+        <span class="s1">)</span>
+
+        <span class="s1">self.per_property_dependencies(</span>
+            <span class="s1">uow</span><span class="s4">,</span>
+            <span class="s1">parent_saves</span><span class="s4">,</span>
+            <span class="s1">child_saves</span><span class="s4">,</span>
+            <span class="s1">parent_deletes</span><span class="s4">,</span>
+            <span class="s1">child_deletes</span><span class="s4">,</span>
+            <span class="s1">after_save</span><span class="s4">,</span>
+            <span class="s1">before_delete</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">per_state_flush_actions(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">isdelete):</span>
+        <span class="s2">&quot;&quot;&quot;establish actions and dependencies related to a flush. 
+ 
+        These actions will operate on all relevant states 
+        individually.    This occurs only if there are cycles 
+        in the 'aggregated' version of events. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">child_base_mapper = self.mapper.primary_base_mapper</span>
+        <span class="s1">child_saves = unitofwork.SaveUpdateAll(uow</span><span class="s4">, </span><span class="s1">child_base_mapper)</span>
+        <span class="s1">child_deletes = unitofwork.DeleteAll(uow</span><span class="s4">, </span><span class="s1">child_base_mapper)</span>
+
+        <span class="s0"># locate and disable the aggregate processors</span>
+        <span class="s0"># for this dependency</span>
+
+        <span class="s3">if </span><span class="s1">isdelete:</span>
+            <span class="s1">before_delete = unitofwork.ProcessAll(uow</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)</span>
+            <span class="s1">before_delete.disabled = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">after_save = unitofwork.ProcessAll(uow</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)</span>
+            <span class="s1">after_save.disabled = </span><span class="s3">True</span>
+
+        <span class="s0"># check if the &quot;child&quot; side is part of the cycle</span>
+
+        <span class="s3">if </span><span class="s1">child_saves </span><span class="s3">not in </span><span class="s1">uow.cycles:</span>
+            <span class="s0"># based on the current dependencies we use, the saves/</span>
+            <span class="s0"># deletes should always be in the 'cycles' collection</span>
+            <span class="s0"># together.   if this changes, we will have to break up</span>
+            <span class="s0"># this method a bit more.</span>
+            <span class="s3">assert </span><span class="s1">child_deletes </span><span class="s3">not in </span><span class="s1">uow.cycles</span>
+
+            <span class="s0"># child side is not part of the cycle, so we will link per-state</span>
+            <span class="s0"># actions to the aggregate &quot;saves&quot;, &quot;deletes&quot; actions</span>
+            <span class="s1">child_actions = [(child_saves</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span><span class="s4">, </span><span class="s1">(child_deletes</span><span class="s4">, </span><span class="s3">True</span><span class="s1">)]</span>
+            <span class="s1">child_in_cycles = </span><span class="s3">False</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">child_in_cycles = </span><span class="s3">True</span>
+
+        <span class="s0"># check if the &quot;parent&quot; side is part of the cycle</span>
+        <span class="s3">if not </span><span class="s1">isdelete:</span>
+            <span class="s1">parent_saves = unitofwork.SaveUpdateAll(</span>
+                <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.parent.base_mapper</span>
+            <span class="s1">)</span>
+            <span class="s1">parent_deletes = before_delete = </span><span class="s3">None</span>
+            <span class="s3">if </span><span class="s1">parent_saves </span><span class="s3">in </span><span class="s1">uow.cycles:</span>
+                <span class="s1">parent_in_cycles = </span><span class="s3">True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">parent_deletes = unitofwork.DeleteAll(uow</span><span class="s4">, </span><span class="s1">self.parent.base_mapper)</span>
+            <span class="s1">parent_saves = after_save = </span><span class="s3">None</span>
+            <span class="s3">if </span><span class="s1">parent_deletes </span><span class="s3">in </span><span class="s1">uow.cycles:</span>
+                <span class="s1">parent_in_cycles = </span><span class="s3">True</span>
+
+        <span class="s0"># now create actions /dependencies for each state.</span>
+
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s0"># detect if there's anything changed or loaded</span>
+            <span class="s0"># by a preprocessor on this state/attribute.   In the</span>
+            <span class="s0"># case of deletes we may try to load missing items here as well.</span>
+            <span class="s1">sum_ = state.manager[self.key].impl.get_all_pending(</span>
+                <span class="s1">state</span><span class="s4">,</span>
+                <span class="s1">state.dict</span><span class="s4">,</span>
+                <span class="s1">(</span>
+                    <span class="s1">self._passive_delete_flag</span>
+                    <span class="s3">if </span><span class="s1">isdelete</span>
+                    <span class="s3">else </span><span class="s1">attributes.PASSIVE_NO_INITIALIZE</span>
+                <span class="s1">)</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if not </span><span class="s1">sum_:</span>
+                <span class="s3">continue</span>
+
+            <span class="s3">if </span><span class="s1">isdelete:</span>
+                <span class="s1">before_delete = unitofwork.ProcessState(uow</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s1">state)</span>
+                <span class="s3">if </span><span class="s1">parent_in_cycles:</span>
+                    <span class="s1">parent_deletes = unitofwork.DeleteState(uow</span><span class="s4">, </span><span class="s1">state)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">after_save = unitofwork.ProcessState(uow</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s1">state)</span>
+                <span class="s3">if </span><span class="s1">parent_in_cycles:</span>
+                    <span class="s1">parent_saves = unitofwork.SaveUpdateState(uow</span><span class="s4">, </span><span class="s1">state)</span>
+
+            <span class="s3">if </span><span class="s1">child_in_cycles:</span>
+                <span class="s1">child_actions = []</span>
+                <span class="s3">for </span><span class="s1">child_state</span><span class="s4">, </span><span class="s1">child </span><span class="s3">in </span><span class="s1">sum_:</span>
+                    <span class="s3">if </span><span class="s1">child_state </span><span class="s3">not in </span><span class="s1">uow.states:</span>
+                        <span class="s1">child_action = (</span><span class="s3">None</span><span class="s4">, </span><span class="s3">None</span><span class="s1">)</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">(deleted</span><span class="s4">, </span><span class="s1">listonly) = uow.states[child_state]</span>
+                        <span class="s3">if </span><span class="s1">deleted:</span>
+                            <span class="s1">child_action = (</span>
+                                <span class="s1">unitofwork.DeleteState(uow</span><span class="s4">, </span><span class="s1">child_state)</span><span class="s4">,</span>
+                                <span class="s3">True</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+                        <span class="s3">else</span><span class="s1">:</span>
+                            <span class="s1">child_action = (</span>
+                                <span class="s1">unitofwork.SaveUpdateState(uow</span><span class="s4">, </span><span class="s1">child_state)</span><span class="s4">,</span>
+                                <span class="s3">False</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+                    <span class="s1">child_actions.append(child_action)</span>
+
+            <span class="s0"># establish dependencies between our possibly per-state</span>
+            <span class="s0"># parent action and our possibly per-state child action.</span>
+            <span class="s3">for </span><span class="s1">child_action</span><span class="s4">, </span><span class="s1">childisdelete </span><span class="s3">in </span><span class="s1">child_actions:</span>
+                <span class="s1">self.per_state_dependencies(</span>
+                    <span class="s1">uow</span><span class="s4">,</span>
+                    <span class="s1">parent_saves</span><span class="s4">,</span>
+                    <span class="s1">parent_deletes</span><span class="s4">,</span>
+                    <span class="s1">child_action</span><span class="s4">,</span>
+                    <span class="s1">after_save</span><span class="s4">,</span>
+                    <span class="s1">before_delete</span><span class="s4">,</span>
+                    <span class="s1">isdelete</span><span class="s4">,</span>
+                    <span class="s1">childisdelete</span><span class="s4">,</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">presort_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">presort_saves(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">process_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">process_saves(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">prop_has_changes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">isdelete):</span>
+        <span class="s3">if not </span><span class="s1">isdelete </span><span class="s3">or </span><span class="s1">self.passive_deletes:</span>
+            <span class="s1">passive = (</span>
+                <span class="s1">attributes.PASSIVE_NO_INITIALIZE</span>
+                <span class="s1">| attributes.INCLUDE_PENDING_MUTATIONS</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">self.direction </span><span class="s3">is </span><span class="s1">MANYTOONE:</span>
+            <span class="s0"># here, we were hoping to optimize having to fetch many-to-one</span>
+            <span class="s0"># for history and ignore it, if there's no further cascades</span>
+            <span class="s0"># to take place.  however there are too many less common conditions</span>
+            <span class="s0"># that still take place and tests in test_relationships /</span>
+            <span class="s0"># test_cascade etc. will still fail.</span>
+            <span class="s1">passive = attributes.PASSIVE_NO_FETCH_RELATED</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">passive = (</span>
+                <span class="s1">attributes.PASSIVE_OFF | attributes.INCLUDE_PENDING_MUTATIONS</span>
+            <span class="s1">)</span>
+
+        <span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s0"># TODO: add a high speed method</span>
+            <span class="s0"># to InstanceState which returns:  attribute</span>
+            <span class="s0"># has a non-None value, or had one</span>
+            <span class="s1">history = uowcommit.get_attribute_history(s</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">passive)</span>
+            <span class="s3">if </span><span class="s1">history </span><span class="s3">and not </span><span class="s1">history.empty():</span>
+                <span class="s3">return True</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">(</span>
+                <span class="s1">states</span>
+                <span class="s3">and not </span><span class="s1">self.prop._is_self_referential</span>
+                <span class="s3">and </span><span class="s1">self.mapper </span><span class="s3">in </span><span class="s1">uowcommit.mappers</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_verify_canload(self</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s3">if </span><span class="s1">self.prop.uselist </span><span class="s3">and </span><span class="s1">state </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">exc.FlushError(</span>
+                <span class="s5">&quot;Can't flush None value found in &quot;</span>
+                <span class="s5">&quot;collection %s&quot; </span><span class="s1">% (self.prop</span><span class="s4">,</span><span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">state </span><span class="s3">is not None and not </span><span class="s1">self.mapper._canload(</span>
+            <span class="s1">state</span><span class="s4">, </span><span class="s1">allow_subtypes=</span><span class="s3">not </span><span class="s1">self.enable_typechecks</span>
+        <span class="s1">):</span>
+            <span class="s3">if </span><span class="s1">self.mapper._canload(state</span><span class="s4">, </span><span class="s1">allow_subtypes=</span><span class="s3">True</span><span class="s1">):</span>
+                <span class="s3">raise </span><span class="s1">exc.FlushError(</span>
+                    <span class="s5">&quot;Attempting to flush an item of type &quot;</span>
+                    <span class="s5">&quot;%(x)s as a member of collection &quot;</span>
+                    <span class="s5">'&quot;%(y)s&quot;. Expected an object of type '</span>
+                    <span class="s5">&quot;%(z)s or a polymorphic subclass of &quot;</span>
+                    <span class="s5">&quot;this type. If %(x)s is a subclass of &quot;</span>
+                    <span class="s5">'%(z)s, configure mapper &quot;%(zm)s&quot; to '</span>
+                    <span class="s5">&quot;load this subtype polymorphically, or &quot;</span>
+                    <span class="s5">&quot;set enable_typechecks=False to allow &quot;</span>
+                    <span class="s5">&quot;any subtype to be accepted for flush. &quot;</span>
+                    <span class="s1">% {</span>
+                        <span class="s5">&quot;x&quot;</span><span class="s1">: state.class_</span><span class="s4">,</span>
+                        <span class="s5">&quot;y&quot;</span><span class="s1">: self.prop</span><span class="s4">,</span>
+                        <span class="s5">&quot;z&quot;</span><span class="s1">: self.mapper.class_</span><span class="s4">,</span>
+                        <span class="s5">&quot;zm&quot;</span><span class="s1">: self.mapper</span><span class="s4">,</span>
+                    <span class="s1">}</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">exc.FlushError(</span>
+                    <span class="s5">&quot;Attempting to flush an item of type &quot;</span>
+                    <span class="s5">&quot;%(x)s as a member of collection &quot;</span>
+                    <span class="s5">'&quot;%(y)s&quot;. Expected an object of type '</span>
+                    <span class="s5">&quot;%(z)s or a polymorphic subclass of &quot;</span>
+                    <span class="s5">&quot;this type.&quot;</span>
+                    <span class="s1">% {</span>
+                        <span class="s5">&quot;x&quot;</span><span class="s1">: state.class_</span><span class="s4">,</span>
+                        <span class="s5">&quot;y&quot;</span><span class="s1">: self.prop</span><span class="s4">,</span>
+                        <span class="s5">&quot;z&quot;</span><span class="s1">: self.mapper.class_</span><span class="s4">,</span>
+                    <span class="s1">}</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_synchronize(self</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s1">associationrow</span><span class="s4">, </span><span class="s1">clearkeys</span><span class="s4">, </span><span class="s1">uowcommit):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">_get_reversed_processed_set(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s3">if not </span><span class="s1">self.prop._reverse_property:</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">process_key = tuple(</span>
+            <span class="s1">sorted([self.key] + [p.key </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">self.prop._reverse_property])</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">uow.memo((</span><span class="s5">&quot;reverse_key&quot;</span><span class="s4">, </span><span class="s1">process_key)</span><span class="s4">, </span><span class="s1">set)</span>
+
+    <span class="s3">def </span><span class="s1">_post_update(self</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">related</span><span class="s4">, </span><span class="s1">is_m2o_delete=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">related:</span>
+            <span class="s3">if not </span><span class="s1">is_m2o_delete </span><span class="s3">or </span><span class="s1">x </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">uowcommit.register_post_update(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">[r </span><span class="s3">for </span><span class="s1">l</span><span class="s4">, </span><span class="s1">r </span><span class="s3">in </span><span class="s1">self.prop.synchronize_pairs]</span>
+                <span class="s1">)</span>
+                <span class="s3">break</span>
+
+    <span class="s3">def </span><span class="s1">_pks_changed(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">__repr__(self):</span>
+        <span class="s3">return </span><span class="s5">&quot;%s(%s)&quot; </span><span class="s1">% (self.__class__.__name__</span><span class="s4">, </span><span class="s1">self.prop)</span>
+
+
+<span class="s3">class </span><span class="s1">OneToManyDP(DependencyProcessor):</span>
+    <span class="s3">def </span><span class="s1">per_property_dependencies(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">uow</span><span class="s4">,</span>
+        <span class="s1">parent_saves</span><span class="s4">,</span>
+        <span class="s1">child_saves</span><span class="s4">,</span>
+        <span class="s1">parent_deletes</span><span class="s4">,</span>
+        <span class="s1">child_deletes</span><span class="s4">,</span>
+        <span class="s1">after_save</span><span class="s4">,</span>
+        <span class="s1">before_delete</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">self.post_update:</span>
+            <span class="s1">child_post_updates = unitofwork.PostUpdateAll(</span>
+                <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.mapper.primary_base_mapper</span><span class="s4">, </span><span class="s3">False</span>
+            <span class="s1">)</span>
+            <span class="s1">child_pre_updates = unitofwork.PostUpdateAll(</span>
+                <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.mapper.primary_base_mapper</span><span class="s4">, </span><span class="s3">True</span>
+            <span class="s1">)</span>
+
+            <span class="s1">uow.dependencies.update(</span>
+                <span class="s1">[</span>
+                    <span class="s1">(child_saves</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                    <span class="s1">(parent_saves</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                    <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">child_post_updates)</span><span class="s4">,</span>
+                    <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">child_pre_updates)</span><span class="s4">,</span>
+                    <span class="s1">(child_pre_updates</span><span class="s4">, </span><span class="s1">parent_deletes)</span><span class="s4">,</span>
+                    <span class="s1">(child_pre_updates</span><span class="s4">, </span><span class="s1">child_deletes)</span><span class="s4">,</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">uow.dependencies.update(</span>
+                <span class="s1">[</span>
+                    <span class="s1">(parent_saves</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                    <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">child_saves)</span><span class="s4">,</span>
+                    <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">child_deletes)</span><span class="s4">,</span>
+                    <span class="s1">(child_saves</span><span class="s4">, </span><span class="s1">parent_deletes)</span><span class="s4">,</span>
+                    <span class="s1">(child_deletes</span><span class="s4">, </span><span class="s1">parent_deletes)</span><span class="s4">,</span>
+                    <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">child_saves)</span><span class="s4">,</span>
+                    <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">child_deletes)</span><span class="s4">,</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">per_state_dependencies(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">uow</span><span class="s4">,</span>
+        <span class="s1">save_parent</span><span class="s4">,</span>
+        <span class="s1">delete_parent</span><span class="s4">,</span>
+        <span class="s1">child_action</span><span class="s4">,</span>
+        <span class="s1">after_save</span><span class="s4">,</span>
+        <span class="s1">before_delete</span><span class="s4">,</span>
+        <span class="s1">isdelete</span><span class="s4">,</span>
+        <span class="s1">childisdelete</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">self.post_update:</span>
+            <span class="s1">child_post_updates = unitofwork.PostUpdateAll(</span>
+                <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.mapper.primary_base_mapper</span><span class="s4">, </span><span class="s3">False</span>
+            <span class="s1">)</span>
+            <span class="s1">child_pre_updates = unitofwork.PostUpdateAll(</span>
+                <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.mapper.primary_base_mapper</span><span class="s4">, </span><span class="s3">True</span>
+            <span class="s1">)</span>
+
+            <span class="s0"># TODO: this whole block is not covered</span>
+            <span class="s0"># by any tests</span>
+            <span class="s3">if not </span><span class="s1">isdelete:</span>
+                <span class="s3">if </span><span class="s1">childisdelete:</span>
+                    <span class="s1">uow.dependencies.update(</span>
+                        <span class="s1">[</span>
+                            <span class="s1">(child_action</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                            <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">child_post_updates)</span><span class="s4">,</span>
+                        <span class="s1">]</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">uow.dependencies.update(</span>
+                        <span class="s1">[</span>
+                            <span class="s1">(save_parent</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                            <span class="s1">(child_action</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                            <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">child_post_updates)</span><span class="s4">,</span>
+                        <span class="s1">]</span>
+                    <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">childisdelete:</span>
+                    <span class="s1">uow.dependencies.update(</span>
+                        <span class="s1">[</span>
+                            <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">child_pre_updates)</span><span class="s4">,</span>
+                            <span class="s1">(child_pre_updates</span><span class="s4">, </span><span class="s1">delete_parent)</span><span class="s4">,</span>
+                        <span class="s1">]</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">uow.dependencies.update(</span>
+                        <span class="s1">[</span>
+                            <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">child_pre_updates)</span><span class="s4">,</span>
+                            <span class="s1">(child_pre_updates</span><span class="s4">, </span><span class="s1">delete_parent)</span><span class="s4">,</span>
+                        <span class="s1">]</span>
+                    <span class="s1">)</span>
+        <span class="s3">elif not </span><span class="s1">isdelete:</span>
+            <span class="s1">uow.dependencies.update(</span>
+                <span class="s1">[</span>
+                    <span class="s1">(save_parent</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                    <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">child_action)</span><span class="s4">,</span>
+                    <span class="s1">(save_parent</span><span class="s4">, </span><span class="s1">child_action)</span><span class="s4">,</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">uow.dependencies.update(</span>
+                <span class="s1">[(before_delete</span><span class="s4">, </span><span class="s1">child_action)</span><span class="s4">, </span><span class="s1">(child_action</span><span class="s4">, </span><span class="s1">delete_parent)]</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">presort_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s0"># head object is being deleted, and we manage its list of</span>
+        <span class="s0"># child objects the child objects have to have their</span>
+        <span class="s0"># foreign key to the parent set to NULL</span>
+        <span class="s1">should_null_fks = (</span>
+            <span class="s3">not </span><span class="s1">self.cascade.delete </span><span class="s3">and not </span><span class="s1">self.passive_deletes == </span><span class="s5">&quot;all&quot;</span>
+        <span class="s1">)</span>
+
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s1">history = uowcommit.get_attribute_history(</span>
+                <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">self._passive_delete_flag</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">history:</span>
+                <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.deleted:</span>
+                    <span class="s3">if </span><span class="s1">child </span><span class="s3">is not None and </span><span class="s1">self.hasparent(child) </span><span class="s3">is False</span><span class="s1">:</span>
+                        <span class="s3">if </span><span class="s1">self.cascade.delete_orphan:</span>
+                            <span class="s1">uowcommit.register_object(child</span><span class="s4">, </span><span class="s1">isdelete=</span><span class="s3">True</span><span class="s1">)</span>
+                        <span class="s3">else</span><span class="s1">:</span>
+                            <span class="s1">uowcommit.register_object(child)</span>
+
+                <span class="s3">if </span><span class="s1">should_null_fks:</span>
+                    <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.unchanged:</span>
+                        <span class="s3">if </span><span class="s1">child </span><span class="s3">is not None</span><span class="s1">:</span>
+                            <span class="s1">uowcommit.register_object(</span>
+                                <span class="s1">child</span><span class="s4">, </span><span class="s1">operation=</span><span class="s5">&quot;delete&quot;</span><span class="s4">, </span><span class="s1">prop=self.prop</span>
+                            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">presort_saves(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s1">children_added = uowcommit.memo((</span><span class="s5">&quot;children_added&quot;</span><span class="s4">, </span><span class="s1">self)</span><span class="s4">, </span><span class="s1">set)</span>
+
+        <span class="s1">should_null_fks = (</span>
+            <span class="s3">not </span><span class="s1">self.cascade.delete_orphan</span>
+            <span class="s3">and not </span><span class="s1">self.passive_deletes == </span><span class="s5">&quot;all&quot;</span>
+        <span class="s1">)</span>
+
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s1">pks_changed = self._pks_changed(uowcommit</span><span class="s4">, </span><span class="s1">state)</span>
+
+            <span class="s3">if not </span><span class="s1">pks_changed </span><span class="s3">or </span><span class="s1">self.passive_updates:</span>
+                <span class="s1">passive = (</span>
+                    <span class="s1">attributes.PASSIVE_NO_INITIALIZE</span>
+                    <span class="s1">| attributes.INCLUDE_PENDING_MUTATIONS</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">passive = (</span>
+                    <span class="s1">attributes.PASSIVE_OFF</span>
+                    <span class="s1">| attributes.INCLUDE_PENDING_MUTATIONS</span>
+                <span class="s1">)</span>
+
+            <span class="s1">history = uowcommit.get_attribute_history(state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">passive)</span>
+            <span class="s3">if </span><span class="s1">history:</span>
+                <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.added:</span>
+                    <span class="s3">if </span><span class="s1">child </span><span class="s3">is not None</span><span class="s1">:</span>
+                        <span class="s1">uowcommit.register_object(</span>
+                            <span class="s1">child</span><span class="s4">,</span>
+                            <span class="s1">cancel_delete=</span><span class="s3">True</span><span class="s4">,</span>
+                            <span class="s1">operation=</span><span class="s5">&quot;add&quot;</span><span class="s4">,</span>
+                            <span class="s1">prop=self.prop</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+
+                <span class="s1">children_added.update(history.added)</span>
+
+                <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.deleted:</span>
+                    <span class="s3">if not </span><span class="s1">self.cascade.delete_orphan:</span>
+                        <span class="s3">if </span><span class="s1">should_null_fks:</span>
+                            <span class="s1">uowcommit.register_object(</span>
+                                <span class="s1">child</span><span class="s4">,</span>
+                                <span class="s1">isdelete=</span><span class="s3">False</span><span class="s4">,</span>
+                                <span class="s1">operation=</span><span class="s5">&quot;delete&quot;</span><span class="s4">,</span>
+                                <span class="s1">prop=self.prop</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+                    <span class="s3">elif </span><span class="s1">self.hasparent(child) </span><span class="s3">is False</span><span class="s1">:</span>
+                        <span class="s1">uowcommit.register_object(</span>
+                            <span class="s1">child</span><span class="s4">,</span>
+                            <span class="s1">isdelete=</span><span class="s3">True</span><span class="s4">,</span>
+                            <span class="s1">operation=</span><span class="s5">&quot;delete&quot;</span><span class="s4">,</span>
+                            <span class="s1">prop=self.prop</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+                        <span class="s3">for </span><span class="s1">c</span><span class="s4">, </span><span class="s1">m</span><span class="s4">, </span><span class="s1">st_</span><span class="s4">, </span><span class="s1">dct_ </span><span class="s3">in </span><span class="s1">self.mapper.cascade_iterator(</span>
+                            <span class="s5">&quot;delete&quot;</span><span class="s4">, </span><span class="s1">child</span>
+                        <span class="s1">):</span>
+                            <span class="s1">uowcommit.register_object(st_</span><span class="s4">, </span><span class="s1">isdelete=</span><span class="s3">True</span><span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">pks_changed:</span>
+                <span class="s3">if </span><span class="s1">history:</span>
+                    <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.unchanged:</span>
+                        <span class="s3">if </span><span class="s1">child </span><span class="s3">is not None</span><span class="s1">:</span>
+                            <span class="s1">uowcommit.register_object(</span>
+                                <span class="s1">child</span><span class="s4">,</span>
+                                <span class="s3">False</span><span class="s4">,</span>
+                                <span class="s1">self.passive_updates</span><span class="s4">,</span>
+                                <span class="s1">operation=</span><span class="s5">&quot;pk change&quot;</span><span class="s4">,</span>
+                                <span class="s1">prop=self.prop</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">process_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s0"># head object is being deleted, and we manage its list of</span>
+        <span class="s0"># child objects the child objects have to have their foreign</span>
+        <span class="s0"># key to the parent set to NULL this phase can be called</span>
+        <span class="s0"># safely for any cascade but is unnecessary if delete cascade</span>
+        <span class="s0"># is on.</span>
+
+        <span class="s3">if </span><span class="s1">self.post_update </span><span class="s3">or not </span><span class="s1">self.passive_deletes == </span><span class="s5">&quot;all&quot;</span><span class="s1">:</span>
+            <span class="s1">children_added = uowcommit.memo((</span><span class="s5">&quot;children_added&quot;</span><span class="s4">, </span><span class="s1">self)</span><span class="s4">, </span><span class="s1">set)</span>
+
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+                <span class="s1">history = uowcommit.get_attribute_history(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">self._passive_delete_flag</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">history:</span>
+                    <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.deleted:</span>
+                        <span class="s3">if </span><span class="s1">(</span>
+                            <span class="s1">child </span><span class="s3">is not None</span>
+                            <span class="s3">and </span><span class="s1">self.hasparent(child) </span><span class="s3">is False</span>
+                        <span class="s1">):</span>
+                            <span class="s1">self._synchronize(</span>
+                                <span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s3">False</span>
+                            <span class="s1">)</span>
+                            <span class="s3">if </span><span class="s1">self.post_update </span><span class="s3">and </span><span class="s1">child:</span>
+                                <span class="s1">self._post_update(child</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">[state])</span>
+
+                    <span class="s3">if </span><span class="s1">self.post_update </span><span class="s3">or not </span><span class="s1">self.cascade.delete:</span>
+                        <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">set(history.unchanged).difference(</span>
+                            <span class="s1">children_added</span>
+                        <span class="s1">):</span>
+                            <span class="s3">if </span><span class="s1">child </span><span class="s3">is not None</span><span class="s1">:</span>
+                                <span class="s1">self._synchronize(</span>
+                                    <span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s3">False</span>
+                                <span class="s1">)</span>
+                                <span class="s3">if </span><span class="s1">self.post_update </span><span class="s3">and </span><span class="s1">child:</span>
+                                    <span class="s1">self._post_update(</span>
+                                        <span class="s1">child</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">[state]</span>
+                                    <span class="s1">)</span>
+
+                    <span class="s0"># technically, we can even remove each child from the</span>
+                    <span class="s0"># collection here too.  but this would be a somewhat</span>
+                    <span class="s0"># inconsistent behavior since it wouldn't happen</span>
+                    <span class="s0"># if the old parent wasn't deleted but child was moved.</span>
+
+    <span class="s3">def </span><span class="s1">process_saves(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s1">should_null_fks = (</span>
+            <span class="s3">not </span><span class="s1">self.cascade.delete_orphan</span>
+            <span class="s3">and not </span><span class="s1">self.passive_deletes == </span><span class="s5">&quot;all&quot;</span>
+        <span class="s1">)</span>
+
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s1">history = uowcommit.get_attribute_history(</span>
+                <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">attributes.PASSIVE_NO_INITIALIZE</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">history:</span>
+                <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.added:</span>
+                    <span class="s1">self._synchronize(</span>
+                        <span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s3">False</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">child </span><span class="s3">is not None and </span><span class="s1">self.post_update:</span>
+                        <span class="s1">self._post_update(child</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">[state])</span>
+
+                <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.deleted:</span>
+                    <span class="s3">if </span><span class="s1">(</span>
+                        <span class="s1">should_null_fks</span>
+                        <span class="s3">and not </span><span class="s1">self.cascade.delete_orphan</span>
+                        <span class="s3">and not </span><span class="s1">self.hasparent(child)</span>
+                    <span class="s1">):</span>
+                        <span class="s1">self._synchronize(</span>
+                            <span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s3">False</span>
+                        <span class="s1">)</span>
+
+                <span class="s3">if </span><span class="s1">self._pks_changed(uowcommit</span><span class="s4">, </span><span class="s1">state):</span>
+                    <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.unchanged:</span>
+                        <span class="s1">self._synchronize(</span>
+                            <span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s3">True</span>
+                        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_synchronize(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s1">associationrow</span><span class="s4">, </span><span class="s1">clearkeys</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">pks_changed</span>
+    <span class="s1">):</span>
+        <span class="s1">source = state</span>
+        <span class="s1">dest = child</span>
+        <span class="s1">self._verify_canload(child)</span>
+        <span class="s3">if </span><span class="s1">dest </span><span class="s3">is None or </span><span class="s1">(</span>
+            <span class="s3">not </span><span class="s1">self.post_update </span><span class="s3">and </span><span class="s1">uowcommit.is_deleted(dest)</span>
+        <span class="s1">):</span>
+            <span class="s3">return</span>
+        <span class="s3">if </span><span class="s1">clearkeys:</span>
+            <span class="s1">sync.clear(dest</span><span class="s4">, </span><span class="s1">self.mapper</span><span class="s4">, </span><span class="s1">self.prop.synchronize_pairs)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">sync.populate(</span>
+                <span class="s1">source</span><span class="s4">,</span>
+                <span class="s1">self.parent</span><span class="s4">,</span>
+                <span class="s1">dest</span><span class="s4">,</span>
+                <span class="s1">self.mapper</span><span class="s4">,</span>
+                <span class="s1">self.prop.synchronize_pairs</span><span class="s4">,</span>
+                <span class="s1">uowcommit</span><span class="s4">,</span>
+                <span class="s1">self.passive_updates </span><span class="s3">and </span><span class="s1">pks_changed</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_pks_changed(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s3">return </span><span class="s1">sync.source_modified(</span>
+            <span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">self.parent</span><span class="s4">, </span><span class="s1">self.prop.synchronize_pairs</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">ManyToOneDP(DependencyProcessor):</span>
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s4">, </span><span class="s1">prop):</span>
+        <span class="s1">DependencyProcessor.__init__(self</span><span class="s4">, </span><span class="s1">prop)</span>
+        <span class="s3">for </span><span class="s1">mapper </span><span class="s3">in </span><span class="s1">self.mapper.self_and_descendants:</span>
+            <span class="s1">mapper._dependency_processors.append(DetectKeySwitch(prop))</span>
+
+    <span class="s3">def </span><span class="s1">per_property_dependencies(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">uow</span><span class="s4">,</span>
+        <span class="s1">parent_saves</span><span class="s4">,</span>
+        <span class="s1">child_saves</span><span class="s4">,</span>
+        <span class="s1">parent_deletes</span><span class="s4">,</span>
+        <span class="s1">child_deletes</span><span class="s4">,</span>
+        <span class="s1">after_save</span><span class="s4">,</span>
+        <span class="s1">before_delete</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">self.post_update:</span>
+            <span class="s1">parent_post_updates = unitofwork.PostUpdateAll(</span>
+                <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.parent.primary_base_mapper</span><span class="s4">, </span><span class="s3">False</span>
+            <span class="s1">)</span>
+            <span class="s1">parent_pre_updates = unitofwork.PostUpdateAll(</span>
+                <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.parent.primary_base_mapper</span><span class="s4">, </span><span class="s3">True</span>
+            <span class="s1">)</span>
+
+            <span class="s1">uow.dependencies.update(</span>
+                <span class="s1">[</span>
+                    <span class="s1">(child_saves</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                    <span class="s1">(parent_saves</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                    <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">parent_post_updates)</span><span class="s4">,</span>
+                    <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">parent_pre_updates)</span><span class="s4">,</span>
+                    <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">parent_pre_updates)</span><span class="s4">,</span>
+                    <span class="s1">(parent_pre_updates</span><span class="s4">, </span><span class="s1">child_deletes)</span><span class="s4">,</span>
+                    <span class="s1">(parent_pre_updates</span><span class="s4">, </span><span class="s1">parent_deletes)</span><span class="s4">,</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">uow.dependencies.update(</span>
+                <span class="s1">[</span>
+                    <span class="s1">(child_saves</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                    <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">parent_saves)</span><span class="s4">,</span>
+                    <span class="s1">(parent_saves</span><span class="s4">, </span><span class="s1">child_deletes)</span><span class="s4">,</span>
+                    <span class="s1">(parent_deletes</span><span class="s4">, </span><span class="s1">child_deletes)</span><span class="s4">,</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">per_state_dependencies(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">uow</span><span class="s4">,</span>
+        <span class="s1">save_parent</span><span class="s4">,</span>
+        <span class="s1">delete_parent</span><span class="s4">,</span>
+        <span class="s1">child_action</span><span class="s4">,</span>
+        <span class="s1">after_save</span><span class="s4">,</span>
+        <span class="s1">before_delete</span><span class="s4">,</span>
+        <span class="s1">isdelete</span><span class="s4">,</span>
+        <span class="s1">childisdelete</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">self.post_update:</span>
+            <span class="s3">if not </span><span class="s1">isdelete:</span>
+                <span class="s1">parent_post_updates = unitofwork.PostUpdateAll(</span>
+                    <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.parent.primary_base_mapper</span><span class="s4">, </span><span class="s3">False</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">childisdelete:</span>
+                    <span class="s1">uow.dependencies.update(</span>
+                        <span class="s1">[</span>
+                            <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">parent_post_updates)</span><span class="s4">,</span>
+                            <span class="s1">(parent_post_updates</span><span class="s4">, </span><span class="s1">child_action)</span><span class="s4">,</span>
+                        <span class="s1">]</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">uow.dependencies.update(</span>
+                        <span class="s1">[</span>
+                            <span class="s1">(save_parent</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                            <span class="s1">(child_action</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                            <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">parent_post_updates)</span><span class="s4">,</span>
+                        <span class="s1">]</span>
+                    <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">parent_pre_updates = unitofwork.PostUpdateAll(</span>
+                    <span class="s1">uow</span><span class="s4">, </span><span class="s1">self.parent.primary_base_mapper</span><span class="s4">, </span><span class="s3">True</span>
+                <span class="s1">)</span>
+
+                <span class="s1">uow.dependencies.update(</span>
+                    <span class="s1">[</span>
+                        <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">parent_pre_updates)</span><span class="s4">,</span>
+                        <span class="s1">(parent_pre_updates</span><span class="s4">, </span><span class="s1">delete_parent)</span><span class="s4">,</span>
+                        <span class="s1">(parent_pre_updates</span><span class="s4">, </span><span class="s1">child_action)</span><span class="s4">,</span>
+                    <span class="s1">]</span>
+                <span class="s1">)</span>
+
+        <span class="s3">elif not </span><span class="s1">isdelete:</span>
+            <span class="s3">if not </span><span class="s1">childisdelete:</span>
+                <span class="s1">uow.dependencies.update(</span>
+                    <span class="s1">[(child_action</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">, </span><span class="s1">(after_save</span><span class="s4">, </span><span class="s1">save_parent)]</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">uow.dependencies.update([(after_save</span><span class="s4">, </span><span class="s1">save_parent)])</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">childisdelete:</span>
+                <span class="s1">uow.dependencies.update([(delete_parent</span><span class="s4">, </span><span class="s1">child_action)])</span>
+
+    <span class="s3">def </span><span class="s1">presort_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">if </span><span class="s1">self.cascade.delete </span><span class="s3">or </span><span class="s1">self.cascade.delete_orphan:</span>
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+                <span class="s1">history = uowcommit.get_attribute_history(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">self._passive_delete_flag</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">history:</span>
+                    <span class="s3">if </span><span class="s1">self.cascade.delete_orphan:</span>
+                        <span class="s1">todelete = history.sum()</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">todelete = history.non_deleted()</span>
+                    <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">todelete:</span>
+                        <span class="s3">if </span><span class="s1">child </span><span class="s3">is None</span><span class="s1">:</span>
+                            <span class="s3">continue</span>
+                        <span class="s1">uowcommit.register_object(</span>
+                            <span class="s1">child</span><span class="s4">,</span>
+                            <span class="s1">isdelete=</span><span class="s3">True</span><span class="s4">,</span>
+                            <span class="s1">operation=</span><span class="s5">&quot;delete&quot;</span><span class="s4">,</span>
+                            <span class="s1">prop=self.prop</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+                        <span class="s1">t = self.mapper.cascade_iterator(</span><span class="s5">&quot;delete&quot;</span><span class="s4">, </span><span class="s1">child)</span>
+                        <span class="s3">for </span><span class="s1">c</span><span class="s4">, </span><span class="s1">m</span><span class="s4">, </span><span class="s1">st_</span><span class="s4">, </span><span class="s1">dct_ </span><span class="s3">in </span><span class="s1">t:</span>
+                            <span class="s1">uowcommit.register_object(st_</span><span class="s4">, </span><span class="s1">isdelete=</span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">presort_saves(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s1">uowcommit.register_object(state</span><span class="s4">, </span><span class="s1">operation=</span><span class="s5">&quot;add&quot;</span><span class="s4">, </span><span class="s1">prop=self.prop)</span>
+            <span class="s3">if </span><span class="s1">self.cascade.delete_orphan:</span>
+                <span class="s1">history = uowcommit.get_attribute_history(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">self._passive_delete_flag</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">history:</span>
+                    <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.deleted:</span>
+                        <span class="s3">if </span><span class="s1">self.hasparent(child) </span><span class="s3">is False</span><span class="s1">:</span>
+                            <span class="s1">uowcommit.register_object(</span>
+                                <span class="s1">child</span><span class="s4">,</span>
+                                <span class="s1">isdelete=</span><span class="s3">True</span><span class="s4">,</span>
+                                <span class="s1">operation=</span><span class="s5">&quot;delete&quot;</span><span class="s4">,</span>
+                                <span class="s1">prop=self.prop</span><span class="s4">,</span>
+                            <span class="s1">)</span>
+
+                            <span class="s1">t = self.mapper.cascade_iterator(</span><span class="s5">&quot;delete&quot;</span><span class="s4">, </span><span class="s1">child)</span>
+                            <span class="s3">for </span><span class="s1">c</span><span class="s4">, </span><span class="s1">m</span><span class="s4">, </span><span class="s1">st_</span><span class="s4">, </span><span class="s1">dct_ </span><span class="s3">in </span><span class="s1">t:</span>
+                                <span class="s1">uowcommit.register_object(st_</span><span class="s4">, </span><span class="s1">isdelete=</span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">process_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">self.post_update</span>
+            <span class="s3">and not </span><span class="s1">self.cascade.delete_orphan</span>
+            <span class="s3">and not </span><span class="s1">self.passive_deletes == </span><span class="s5">&quot;all&quot;</span>
+        <span class="s1">):</span>
+            <span class="s0"># post_update means we have to update our</span>
+            <span class="s0"># row to not reference the child object</span>
+            <span class="s0"># before we can DELETE the row</span>
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+                <span class="s1">self._synchronize(state</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s1">uowcommit)</span>
+                <span class="s3">if </span><span class="s1">state </span><span class="s3">and </span><span class="s1">self.post_update:</span>
+                    <span class="s1">history = uowcommit.get_attribute_history(</span>
+                        <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">self._passive_delete_flag</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">history:</span>
+                        <span class="s1">self._post_update(</span>
+                            <span class="s1">state</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">history.sum()</span><span class="s4">, </span><span class="s1">is_m2o_delete=</span><span class="s3">True</span>
+                        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">process_saves(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s1">history = uowcommit.get_attribute_history(</span>
+                <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">attributes.PASSIVE_NO_INITIALIZE</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">history:</span>
+                <span class="s3">if </span><span class="s1">history.added:</span>
+                    <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.added:</span>
+                        <span class="s1">self._synchronize(</span>
+                            <span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s5">&quot;add&quot;</span>
+                        <span class="s1">)</span>
+                <span class="s3">elif </span><span class="s1">history.deleted:</span>
+                    <span class="s1">self._synchronize(</span>
+                        <span class="s1">state</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">None</span><span class="s4">, </span><span class="s3">True</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s5">&quot;delete&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">self.post_update:</span>
+                    <span class="s1">self._post_update(state</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">history.sum())</span>
+
+    <span class="s3">def </span><span class="s1">_synchronize(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">state</span><span class="s4">,</span>
+        <span class="s1">child</span><span class="s4">,</span>
+        <span class="s1">associationrow</span><span class="s4">,</span>
+        <span class="s1">clearkeys</span><span class="s4">,</span>
+        <span class="s1">uowcommit</span><span class="s4">,</span>
+        <span class="s1">operation=</span><span class="s3">None</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">state </span><span class="s3">is None or </span><span class="s1">(</span>
+            <span class="s3">not </span><span class="s1">self.post_update </span><span class="s3">and </span><span class="s1">uowcommit.is_deleted(state)</span>
+        <span class="s1">):</span>
+            <span class="s3">return</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">operation </span><span class="s3">is not None</span>
+            <span class="s3">and </span><span class="s1">child </span><span class="s3">is not None</span>
+            <span class="s3">and not </span><span class="s1">uowcommit.session._contains_state(child)</span>
+        <span class="s1">):</span>
+            <span class="s1">util.warn(</span>
+                <span class="s5">&quot;Object of type %s not in session, %s &quot;</span>
+                <span class="s5">&quot;operation along '%s' won't proceed&quot;</span>
+                <span class="s1">% (mapperutil.state_class_str(child)</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">self.prop)</span>
+            <span class="s1">)</span>
+            <span class="s3">return</span>
+
+        <span class="s3">if </span><span class="s1">clearkeys </span><span class="s3">or </span><span class="s1">child </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">sync.clear(state</span><span class="s4">, </span><span class="s1">self.parent</span><span class="s4">, </span><span class="s1">self.prop.synchronize_pairs)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._verify_canload(child)</span>
+            <span class="s1">sync.populate(</span>
+                <span class="s1">child</span><span class="s4">,</span>
+                <span class="s1">self.mapper</span><span class="s4">,</span>
+                <span class="s1">state</span><span class="s4">,</span>
+                <span class="s1">self.parent</span><span class="s4">,</span>
+                <span class="s1">self.prop.synchronize_pairs</span><span class="s4">,</span>
+                <span class="s1">uowcommit</span><span class="s4">,</span>
+                <span class="s3">False</span><span class="s4">,</span>
+            <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">DetectKeySwitch(DependencyProcessor):</span>
+    <span class="s2">&quot;&quot;&quot;For many-to-one relationships with no one-to-many backref, 
+    searches for parents through the unit of work when a primary 
+    key has changed and updates them. 
+ 
+    Theoretically, this approach could be expanded to support transparent 
+    deletion of objects referenced via many-to-one as well, although 
+    the current attribute system doesn't do enough bookkeeping for this 
+    to be efficient. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">per_property_preprocessors(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s3">if </span><span class="s1">self.prop._reverse_property:</span>
+            <span class="s3">if </span><span class="s1">self.passive_updates:</span>
+                <span class="s3">return</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if False in </span><span class="s1">(</span>
+                    <span class="s1">prop.passive_updates</span>
+                    <span class="s3">for </span><span class="s1">prop </span><span class="s3">in </span><span class="s1">self.prop._reverse_property</span>
+                <span class="s1">):</span>
+                    <span class="s3">return</span>
+
+        <span class="s1">uow.register_preprocessor(self</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">per_property_flush_actions(self</span><span class="s4">, </span><span class="s1">uow):</span>
+        <span class="s1">parent_saves = unitofwork.SaveUpdateAll(uow</span><span class="s4">, </span><span class="s1">self.parent.base_mapper)</span>
+        <span class="s1">after_save = unitofwork.ProcessAll(uow</span><span class="s4">, </span><span class="s1">self</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s3">False</span><span class="s1">)</span>
+        <span class="s1">uow.dependencies.update([(parent_saves</span><span class="s4">, </span><span class="s1">after_save)])</span>
+
+    <span class="s3">def </span><span class="s1">per_state_flush_actions(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">isdelete):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">presort_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">presort_saves(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">if not </span><span class="s1">self.passive_updates:</span>
+            <span class="s0"># for non-passive updates, register in the preprocess stage</span>
+            <span class="s0"># so that mapper save_obj() gets a hold of changes</span>
+            <span class="s1">self._process_key_switches(states</span><span class="s4">, </span><span class="s1">uow)</span>
+
+    <span class="s3">def </span><span class="s1">prop_has_changes(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">states</span><span class="s4">, </span><span class="s1">isdelete):</span>
+        <span class="s3">if not </span><span class="s1">isdelete </span><span class="s3">and </span><span class="s1">self.passive_updates:</span>
+            <span class="s1">d = self._key_switchers(uow</span><span class="s4">, </span><span class="s1">states)</span>
+            <span class="s3">return </span><span class="s1">bool(d)</span>
+
+        <span class="s3">return False</span>
+
+    <span class="s3">def </span><span class="s1">process_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">assert False</span>
+
+    <span class="s3">def </span><span class="s1">process_saves(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s0"># for passive updates, register objects in the process stage</span>
+        <span class="s0"># so that we avoid ManyToOneDP's registering the object without</span>
+        <span class="s0"># the listonly flag in its own preprocess stage (results in UPDATE)</span>
+        <span class="s0"># statements being emitted</span>
+        <span class="s3">assert </span><span class="s1">self.passive_updates</span>
+        <span class="s1">self._process_key_switches(states</span><span class="s4">, </span><span class="s1">uowcommit)</span>
+
+    <span class="s3">def </span><span class="s1">_key_switchers(self</span><span class="s4">, </span><span class="s1">uow</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s1">switched</span><span class="s4">, </span><span class="s1">notswitched = uow.memo(</span>
+            <span class="s1">(</span><span class="s5">&quot;pk_switchers&quot;</span><span class="s4">, </span><span class="s1">self)</span><span class="s4">, </span><span class="s3">lambda</span><span class="s1">: (set()</span><span class="s4">, </span><span class="s1">set())</span>
+        <span class="s1">)</span>
+
+        <span class="s1">allstates = switched.union(notswitched)</span>
+        <span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s3">if </span><span class="s1">s </span><span class="s3">not in </span><span class="s1">allstates:</span>
+                <span class="s3">if </span><span class="s1">self._pks_changed(uow</span><span class="s4">, </span><span class="s1">s):</span>
+                    <span class="s1">switched.add(s)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">notswitched.add(s)</span>
+        <span class="s3">return </span><span class="s1">switched</span>
+
+    <span class="s3">def </span><span class="s1">_process_key_switches(self</span><span class="s4">, </span><span class="s1">deplist</span><span class="s4">, </span><span class="s1">uowcommit):</span>
+        <span class="s1">switchers = self._key_switchers(uowcommit</span><span class="s4">, </span><span class="s1">deplist)</span>
+        <span class="s3">if </span><span class="s1">switchers:</span>
+            <span class="s0"># if primary key values have actually changed somewhere, perform</span>
+            <span class="s0"># a linear search through the UOW in search of a parent.</span>
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">uowcommit.session.identity_map.all_states():</span>
+                <span class="s3">if not </span><span class="s1">issubclass(state.class_</span><span class="s4">, </span><span class="s1">self.parent.class_):</span>
+                    <span class="s3">continue</span>
+                <span class="s1">dict_ = state.dict</span>
+                <span class="s1">related = state.get_impl(self.key).get(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">dict_</span><span class="s4">, </span><span class="s1">passive=self._passive_update_flag</span>
+                <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">(</span>
+                    <span class="s1">related </span><span class="s3">is not </span><span class="s1">attributes.PASSIVE_NO_RESULT</span>
+                    <span class="s3">and </span><span class="s1">related </span><span class="s3">is not None</span>
+                <span class="s1">):</span>
+                    <span class="s3">if </span><span class="s1">self.prop.uselist:</span>
+                        <span class="s3">if not </span><span class="s1">related:</span>
+                            <span class="s3">continue</span>
+                        <span class="s1">related_obj = related[</span><span class="s6">0</span><span class="s1">]</span>
+                    <span class="s3">else</span><span class="s1">:</span>
+                        <span class="s1">related_obj = related</span>
+                    <span class="s1">related_state = attributes.instance_state(related_obj)</span>
+                    <span class="s3">if </span><span class="s1">related_state </span><span class="s3">in </span><span class="s1">switchers:</span>
+                        <span class="s1">uowcommit.register_object(</span>
+                            <span class="s1">state</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s1">self.passive_updates</span>
+                        <span class="s1">)</span>
+                        <span class="s1">sync.populate(</span>
+                            <span class="s1">related_state</span><span class="s4">,</span>
+                            <span class="s1">self.mapper</span><span class="s4">,</span>
+                            <span class="s1">state</span><span class="s4">,</span>
+                            <span class="s1">self.parent</span><span class="s4">,</span>
+                            <span class="s1">self.prop.synchronize_pairs</span><span class="s4">,</span>
+                            <span class="s1">uowcommit</span><span class="s4">,</span>
+                            <span class="s1">self.passive_updates</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_pks_changed(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s3">return </span><span class="s1">bool(state.key) </span><span class="s3">and </span><span class="s1">sync.source_modified(</span>
+            <span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">self.mapper</span><span class="s4">, </span><span class="s1">self.prop.synchronize_pairs</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">ManyToManyDP(DependencyProcessor):</span>
+    <span class="s3">def </span><span class="s1">per_property_dependencies(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">uow</span><span class="s4">,</span>
+        <span class="s1">parent_saves</span><span class="s4">,</span>
+        <span class="s1">child_saves</span><span class="s4">,</span>
+        <span class="s1">parent_deletes</span><span class="s4">,</span>
+        <span class="s1">child_deletes</span><span class="s4">,</span>
+        <span class="s1">after_save</span><span class="s4">,</span>
+        <span class="s1">before_delete</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s1">uow.dependencies.update(</span>
+            <span class="s1">[</span>
+                <span class="s1">(parent_saves</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                <span class="s1">(child_saves</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">,</span>
+                <span class="s1">(after_save</span><span class="s4">, </span><span class="s1">child_deletes)</span><span class="s4">,</span>
+                <span class="s0"># a rowswitch on the parent from  deleted to saved</span>
+                <span class="s0"># can make this one occur, as the &quot;save&quot; may remove</span>
+                <span class="s0"># an element from the</span>
+                <span class="s0"># &quot;deleted&quot; list before we have a chance to</span>
+                <span class="s0"># process its child rows</span>
+                <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">parent_saves)</span><span class="s4">,</span>
+                <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">parent_deletes)</span><span class="s4">,</span>
+                <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">child_deletes)</span><span class="s4">,</span>
+                <span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">child_saves)</span><span class="s4">,</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">per_state_dependencies(</span>
+        <span class="s1">self</span><span class="s4">,</span>
+        <span class="s1">uow</span><span class="s4">,</span>
+        <span class="s1">save_parent</span><span class="s4">,</span>
+        <span class="s1">delete_parent</span><span class="s4">,</span>
+        <span class="s1">child_action</span><span class="s4">,</span>
+        <span class="s1">after_save</span><span class="s4">,</span>
+        <span class="s1">before_delete</span><span class="s4">,</span>
+        <span class="s1">isdelete</span><span class="s4">,</span>
+        <span class="s1">childisdelete</span><span class="s4">,</span>
+    <span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">isdelete:</span>
+            <span class="s3">if </span><span class="s1">childisdelete:</span>
+                <span class="s1">uow.dependencies.update(</span>
+                    <span class="s1">[(save_parent</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">, </span><span class="s1">(after_save</span><span class="s4">, </span><span class="s1">child_action)]</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">uow.dependencies.update(</span>
+                    <span class="s1">[(save_parent</span><span class="s4">, </span><span class="s1">after_save)</span><span class="s4">, </span><span class="s1">(child_action</span><span class="s4">, </span><span class="s1">after_save)]</span>
+                <span class="s1">)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">uow.dependencies.update(</span>
+                <span class="s1">[(before_delete</span><span class="s4">, </span><span class="s1">child_action)</span><span class="s4">, </span><span class="s1">(before_delete</span><span class="s4">, </span><span class="s1">delete_parent)]</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">presort_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s0"># TODO: no tests fail if this whole</span>
+        <span class="s0"># thing is removed !!!!</span>
+        <span class="s3">if not </span><span class="s1">self.passive_deletes:</span>
+            <span class="s0"># if no passive deletes, load history on</span>
+            <span class="s0"># the collection, so that prop_has_changes()</span>
+            <span class="s0"># returns True</span>
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+                <span class="s1">uowcommit.get_attribute_history(</span>
+                    <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">self._passive_delete_flag</span>
+                <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">presort_saves(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s3">if not </span><span class="s1">self.passive_updates:</span>
+            <span class="s0"># if no passive updates, load history on</span>
+            <span class="s0"># each collection where parent has changed PK,</span>
+            <span class="s0"># so that prop_has_changes() returns True</span>
+            <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+                <span class="s3">if </span><span class="s1">self._pks_changed(uowcommit</span><span class="s4">, </span><span class="s1">state):</span>
+                    <span class="s1">history = uowcommit.get_attribute_history(</span>
+                        <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">attributes.PASSIVE_OFF</span>
+                    <span class="s1">)</span>
+
+        <span class="s3">if not </span><span class="s1">self.cascade.delete_orphan:</span>
+            <span class="s3">return</span>
+
+        <span class="s0"># check for child items removed from the collection</span>
+        <span class="s0"># if delete_orphan check is turned on.</span>
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s1">history = uowcommit.get_attribute_history(</span>
+                <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">attributes.PASSIVE_NO_INITIALIZE</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">history:</span>
+                <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.deleted:</span>
+                    <span class="s3">if </span><span class="s1">self.hasparent(child) </span><span class="s3">is False</span><span class="s1">:</span>
+                        <span class="s1">uowcommit.register_object(</span>
+                            <span class="s1">child</span><span class="s4">,</span>
+                            <span class="s1">isdelete=</span><span class="s3">True</span><span class="s4">,</span>
+                            <span class="s1">operation=</span><span class="s5">&quot;delete&quot;</span><span class="s4">,</span>
+                            <span class="s1">prop=self.prop</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+                        <span class="s3">for </span><span class="s1">c</span><span class="s4">, </span><span class="s1">m</span><span class="s4">, </span><span class="s1">st_</span><span class="s4">, </span><span class="s1">dct_ </span><span class="s3">in </span><span class="s1">self.mapper.cascade_iterator(</span>
+                            <span class="s5">&quot;delete&quot;</span><span class="s4">, </span><span class="s1">child</span>
+                        <span class="s1">):</span>
+                            <span class="s1">uowcommit.register_object(st_</span><span class="s4">, </span><span class="s1">isdelete=</span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">process_deletes(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s1">secondary_delete = []</span>
+        <span class="s1">secondary_insert = []</span>
+        <span class="s1">secondary_update = []</span>
+
+        <span class="s1">processed = self._get_reversed_processed_set(uowcommit)</span>
+        <span class="s1">tmp = set()</span>
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s0"># this history should be cached already, as</span>
+            <span class="s0"># we loaded it in preprocess_deletes</span>
+            <span class="s1">history = uowcommit.get_attribute_history(</span>
+                <span class="s1">state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">self._passive_delete_flag</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">history:</span>
+                <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.non_added():</span>
+                    <span class="s3">if </span><span class="s1">child </span><span class="s3">is None or </span><span class="s1">(</span>
+                        <span class="s1">processed </span><span class="s3">is not None and </span><span class="s1">(state</span><span class="s4">, </span><span class="s1">child) </span><span class="s3">in </span><span class="s1">processed</span>
+                    <span class="s1">):</span>
+                        <span class="s3">continue</span>
+                    <span class="s1">associationrow = {}</span>
+                    <span class="s3">if not </span><span class="s1">self._synchronize(</span>
+                        <span class="s1">state</span><span class="s4">,</span>
+                        <span class="s1">child</span><span class="s4">,</span>
+                        <span class="s1">associationrow</span><span class="s4">,</span>
+                        <span class="s3">False</span><span class="s4">,</span>
+                        <span class="s1">uowcommit</span><span class="s4">,</span>
+                        <span class="s5">&quot;delete&quot;</span><span class="s4">,</span>
+                    <span class="s1">):</span>
+                        <span class="s3">continue</span>
+                    <span class="s1">secondary_delete.append(associationrow)</span>
+
+                <span class="s1">tmp.update((c</span><span class="s4">, </span><span class="s1">state) </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">history.non_added())</span>
+
+        <span class="s3">if </span><span class="s1">processed </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">processed.update(tmp)</span>
+
+        <span class="s1">self._run_crud(</span>
+            <span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">secondary_insert</span><span class="s4">, </span><span class="s1">secondary_update</span><span class="s4">, </span><span class="s1">secondary_delete</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">process_saves(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">states):</span>
+        <span class="s1">secondary_delete = []</span>
+        <span class="s1">secondary_insert = []</span>
+        <span class="s1">secondary_update = []</span>
+
+        <span class="s1">processed = self._get_reversed_processed_set(uowcommit)</span>
+        <span class="s1">tmp = set()</span>
+
+        <span class="s3">for </span><span class="s1">state </span><span class="s3">in </span><span class="s1">states:</span>
+            <span class="s1">need_cascade_pks = </span><span class="s3">not </span><span class="s1">self.passive_updates </span><span class="s3">and </span><span class="s1">self._pks_changed(</span>
+                <span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">state</span>
+            <span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">need_cascade_pks:</span>
+                <span class="s1">passive = (</span>
+                    <span class="s1">attributes.PASSIVE_OFF</span>
+                    <span class="s1">| attributes.INCLUDE_PENDING_MUTATIONS</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">passive = (</span>
+                    <span class="s1">attributes.PASSIVE_NO_INITIALIZE</span>
+                    <span class="s1">| attributes.INCLUDE_PENDING_MUTATIONS</span>
+                <span class="s1">)</span>
+            <span class="s1">history = uowcommit.get_attribute_history(state</span><span class="s4">, </span><span class="s1">self.key</span><span class="s4">, </span><span class="s1">passive)</span>
+            <span class="s3">if </span><span class="s1">history:</span>
+                <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.added:</span>
+                    <span class="s3">if </span><span class="s1">processed </span><span class="s3">is not None and </span><span class="s1">(state</span><span class="s4">, </span><span class="s1">child) </span><span class="s3">in </span><span class="s1">processed:</span>
+                        <span class="s3">continue</span>
+                    <span class="s1">associationrow = {}</span>
+                    <span class="s3">if not </span><span class="s1">self._synchronize(</span>
+                        <span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s1">associationrow</span><span class="s4">, </span><span class="s3">False</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s5">&quot;add&quot;</span>
+                    <span class="s1">):</span>
+                        <span class="s3">continue</span>
+                    <span class="s1">secondary_insert.append(associationrow)</span>
+                <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.deleted:</span>
+                    <span class="s3">if </span><span class="s1">processed </span><span class="s3">is not None and </span><span class="s1">(state</span><span class="s4">, </span><span class="s1">child) </span><span class="s3">in </span><span class="s1">processed:</span>
+                        <span class="s3">continue</span>
+                    <span class="s1">associationrow = {}</span>
+                    <span class="s3">if not </span><span class="s1">self._synchronize(</span>
+                        <span class="s1">state</span><span class="s4">,</span>
+                        <span class="s1">child</span><span class="s4">,</span>
+                        <span class="s1">associationrow</span><span class="s4">,</span>
+                        <span class="s3">False</span><span class="s4">,</span>
+                        <span class="s1">uowcommit</span><span class="s4">,</span>
+                        <span class="s5">&quot;delete&quot;</span><span class="s4">,</span>
+                    <span class="s1">):</span>
+                        <span class="s3">continue</span>
+                    <span class="s1">secondary_delete.append(associationrow)</span>
+
+                <span class="s1">tmp.update((c</span><span class="s4">, </span><span class="s1">state) </span><span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">history.added + history.deleted)</span>
+
+                <span class="s3">if </span><span class="s1">need_cascade_pks:</span>
+                    <span class="s3">for </span><span class="s1">child </span><span class="s3">in </span><span class="s1">history.unchanged:</span>
+                        <span class="s1">associationrow = {}</span>
+                        <span class="s1">sync.update(</span>
+                            <span class="s1">state</span><span class="s4">,</span>
+                            <span class="s1">self.parent</span><span class="s4">,</span>
+                            <span class="s1">associationrow</span><span class="s4">,</span>
+                            <span class="s5">&quot;old_&quot;</span><span class="s4">,</span>
+                            <span class="s1">self.prop.synchronize_pairs</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+                        <span class="s1">sync.update(</span>
+                            <span class="s1">child</span><span class="s4">,</span>
+                            <span class="s1">self.mapper</span><span class="s4">,</span>
+                            <span class="s1">associationrow</span><span class="s4">,</span>
+                            <span class="s5">&quot;old_&quot;</span><span class="s4">,</span>
+                            <span class="s1">self.prop.secondary_synchronize_pairs</span><span class="s4">,</span>
+                        <span class="s1">)</span>
+
+                        <span class="s1">secondary_update.append(associationrow)</span>
+
+        <span class="s3">if </span><span class="s1">processed </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">processed.update(tmp)</span>
+
+        <span class="s1">self._run_crud(</span>
+            <span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">secondary_insert</span><span class="s4">, </span><span class="s1">secondary_update</span><span class="s4">, </span><span class="s1">secondary_delete</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_run_crud(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">secondary_insert</span><span class="s4">, </span><span class="s1">secondary_update</span><span class="s4">, </span><span class="s1">secondary_delete</span>
+    <span class="s1">):</span>
+        <span class="s1">connection = uowcommit.transaction.connection(self.mapper)</span>
+
+        <span class="s3">if </span><span class="s1">secondary_delete:</span>
+            <span class="s1">associationrow = secondary_delete[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s1">statement = self.secondary.delete().where(</span>
+                <span class="s1">sql.and_(</span>
+                    <span class="s1">*[</span>
+                        <span class="s1">c == sql.bindparam(c.key</span><span class="s4">, </span><span class="s1">type_=c.type)</span>
+                        <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">self.secondary.c</span>
+                        <span class="s3">if </span><span class="s1">c.key </span><span class="s3">in </span><span class="s1">associationrow</span>
+                    <span class="s1">]</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">result = connection.execute(statement</span><span class="s4">, </span><span class="s1">secondary_delete)</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">result.supports_sane_multi_rowcount()</span>
+            <span class="s1">) </span><span class="s3">and </span><span class="s1">result.rowcount != len(secondary_delete):</span>
+                <span class="s3">raise </span><span class="s1">exc.StaleDataError(</span>
+                    <span class="s5">&quot;DELETE statement on table '%s' expected to delete &quot;</span>
+                    <span class="s5">&quot;%d row(s); Only %d were matched.&quot;</span>
+                    <span class="s1">% (</span>
+                        <span class="s1">self.secondary.description</span><span class="s4">,</span>
+                        <span class="s1">len(secondary_delete)</span><span class="s4">,</span>
+                        <span class="s1">result.rowcount</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">secondary_update:</span>
+            <span class="s1">associationrow = secondary_update[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s1">statement = self.secondary.update().where(</span>
+                <span class="s1">sql.and_(</span>
+                    <span class="s1">*[</span>
+                        <span class="s1">c == sql.bindparam(</span><span class="s5">&quot;old_&quot; </span><span class="s1">+ c.key</span><span class="s4">, </span><span class="s1">type_=c.type)</span>
+                        <span class="s3">for </span><span class="s1">c </span><span class="s3">in </span><span class="s1">self.secondary.c</span>
+                        <span class="s3">if </span><span class="s1">c.key </span><span class="s3">in </span><span class="s1">associationrow</span>
+                    <span class="s1">]</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">result = connection.execute(statement</span><span class="s4">, </span><span class="s1">secondary_update)</span>
+
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s1">result.supports_sane_multi_rowcount()</span>
+            <span class="s1">) </span><span class="s3">and </span><span class="s1">result.rowcount != len(secondary_update):</span>
+                <span class="s3">raise </span><span class="s1">exc.StaleDataError(</span>
+                    <span class="s5">&quot;UPDATE statement on table '%s' expected to update &quot;</span>
+                    <span class="s5">&quot;%d row(s); Only %d were matched.&quot;</span>
+                    <span class="s1">% (</span>
+                        <span class="s1">self.secondary.description</span><span class="s4">,</span>
+                        <span class="s1">len(secondary_update)</span><span class="s4">,</span>
+                        <span class="s1">result.rowcount</span><span class="s4">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">secondary_insert:</span>
+            <span class="s1">statement = self.secondary.insert()</span>
+            <span class="s1">connection.execute(statement</span><span class="s4">, </span><span class="s1">secondary_insert)</span>
+
+    <span class="s3">def </span><span class="s1">_synchronize(</span>
+        <span class="s1">self</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">child</span><span class="s4">, </span><span class="s1">associationrow</span><span class="s4">, </span><span class="s1">clearkeys</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">operation</span>
+    <span class="s1">):</span>
+        <span class="s0"># this checks for None if uselist=True</span>
+        <span class="s1">self._verify_canload(child)</span>
+
+        <span class="s0"># but if uselist=False we get here.   If child is None,</span>
+        <span class="s0"># no association row can be generated, so return.</span>
+        <span class="s3">if </span><span class="s1">child </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+
+        <span class="s3">if </span><span class="s1">child </span><span class="s3">is not None and not </span><span class="s1">uowcommit.session._contains_state(child):</span>
+            <span class="s3">if not </span><span class="s1">child.deleted:</span>
+                <span class="s1">util.warn(</span>
+                    <span class="s5">&quot;Object of type %s not in session, %s &quot;</span>
+                    <span class="s5">&quot;operation along '%s' won't proceed&quot;</span>
+                    <span class="s1">% (mapperutil.state_class_str(child)</span><span class="s4">, </span><span class="s1">operation</span><span class="s4">, </span><span class="s1">self.prop)</span>
+                <span class="s1">)</span>
+            <span class="s3">return False</span>
+
+        <span class="s1">sync.populate_dict(</span>
+            <span class="s1">state</span><span class="s4">, </span><span class="s1">self.parent</span><span class="s4">, </span><span class="s1">associationrow</span><span class="s4">, </span><span class="s1">self.prop.synchronize_pairs</span>
+        <span class="s1">)</span>
+        <span class="s1">sync.populate_dict(</span>
+            <span class="s1">child</span><span class="s4">,</span>
+            <span class="s1">self.mapper</span><span class="s4">,</span>
+            <span class="s1">associationrow</span><span class="s4">,</span>
+            <span class="s1">self.prop.secondary_synchronize_pairs</span><span class="s4">,</span>
+        <span class="s1">)</span>
+
+        <span class="s3">return True</span>
+
+    <span class="s3">def </span><span class="s1">_pks_changed(self</span><span class="s4">, </span><span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">state):</span>
+        <span class="s3">return </span><span class="s1">sync.source_modified(</span>
+            <span class="s1">uowcommit</span><span class="s4">, </span><span class="s1">state</span><span class="s4">, </span><span class="s1">self.parent</span><span class="s4">, </span><span class="s1">self.prop.synchronize_pairs</span>
+        <span class="s1">)</span>
+
+
+<span class="s1">_direction_to_processor = {</span>
+    <span class="s1">ONETOMANY: OneToManyDP</span><span class="s4">,</span>
+    <span class="s1">MANYTOONE: ManyToOneDP</span><span class="s4">,</span>
+    <span class="s1">MANYTOMANY: ManyToManyDP</span><span class="s4">,</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

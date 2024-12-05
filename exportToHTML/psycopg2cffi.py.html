@@ -1,0 +1,83 @@
+<html>
+<head>
+<title>psycopg2cffi.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #96bf7d;}
+.s3 { color: #cc8b60;}
+.s4 { color: #bbb55b;}
+.s5 { color: #cc7832;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+psycopg2cffi.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># dialects/postgresql/psycopg2cffi.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: ignore-errors</span>
+
+<span class="s2">r&quot;&quot;&quot; 
+.. dialect:: postgresql+psycopg2cffi 
+    :name: psycopg2cffi 
+    :dbapi: psycopg2cffi 
+    :connectstring: postgresql+psycopg2cffi://user:password@host:port/dbname[?key=value&amp;key=value...] 
+    :url: https://pypi.org/project/psycopg2cffi/ 
+ 
+``psycopg2cffi`` is an adaptation of ``psycopg2``, using CFFI for the C 
+layer. This makes it suitable for use in e.g. PyPy. Documentation 
+is as per ``psycopg2``. 
+ 
+.. seealso:: 
+ 
+    :mod:`sqlalchemy.dialects.postgresql.psycopg2` 
+ 
+&quot;&quot;&quot;  </span><span class="s0"># noqa</span>
+<span class="s3">from </span><span class="s1">.psycopg2 </span><span class="s3">import </span><span class="s1">PGDialect_psycopg2</span>
+<span class="s3">from </span><span class="s1">... </span><span class="s3">import </span><span class="s1">util</span>
+
+
+<span class="s3">class </span><span class="s1">PGDialect_psycopg2cffi(PGDialect_psycopg2):</span>
+    <span class="s1">driver = </span><span class="s2">&quot;psycopg2cffi&quot;</span>
+    <span class="s1">supports_unicode_statements = </span><span class="s3">True</span>
+    <span class="s1">supports_statement_cache = </span><span class="s3">True</span>
+
+    <span class="s0"># psycopg2cffi's first release is 2.5.0, but reports</span>
+    <span class="s0"># __version__ as 2.4.4.  Subsequent releases seem to have</span>
+    <span class="s0"># fixed this.</span>
+
+    <span class="s1">FEATURE_VERSION_MAP = dict(</span>
+        <span class="s1">native_json=(</span><span class="s4">2</span><span class="s5">, </span><span class="s4">4</span><span class="s5">, </span><span class="s4">4</span><span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">native_jsonb=(</span><span class="s4">2</span><span class="s5">, </span><span class="s4">7</span><span class="s5">, </span><span class="s4">1</span><span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">sane_multi_rowcount=(</span><span class="s4">2</span><span class="s5">, </span><span class="s4">4</span><span class="s5">, </span><span class="s4">4</span><span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">array_oid=(</span><span class="s4">2</span><span class="s5">, </span><span class="s4">4</span><span class="s5">, </span><span class="s4">4</span><span class="s1">)</span><span class="s5">,</span>
+        <span class="s1">hstore_adapter=(</span><span class="s4">2</span><span class="s5">, </span><span class="s4">4</span><span class="s5">, </span><span class="s4">4</span><span class="s1">)</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">import_dbapi(cls):</span>
+        <span class="s3">return </span><span class="s1">__import__(</span><span class="s2">&quot;psycopg2cffi&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_psycopg2_extensions(cls):</span>
+        <span class="s1">root = __import__(</span><span class="s2">&quot;psycopg2cffi&quot;</span><span class="s5">, </span><span class="s1">fromlist=[</span><span class="s2">&quot;extensions&quot;</span><span class="s1">])</span>
+        <span class="s3">return </span><span class="s1">root.extensions</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">_psycopg2_extras(cls):</span>
+        <span class="s1">root = __import__(</span><span class="s2">&quot;psycopg2cffi&quot;</span><span class="s5">, </span><span class="s1">fromlist=[</span><span class="s2">&quot;extras&quot;</span><span class="s1">])</span>
+        <span class="s3">return </span><span class="s1">root.extras</span>
+
+
+<span class="s1">dialect = PGDialect_psycopg2cffi</span>
+</pre>
+</body>
+</html>

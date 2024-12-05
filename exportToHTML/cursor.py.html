@@ -1,0 +1,2204 @@
+<html>
+<head>
+<title>cursor.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5d69bb;}
+.s1 { color: #d8d8d8;}
+.s2 { color: #717ed3; font-style: italic;}
+.s3 { color: #cc8b60;}
+.s4 { color: #96bf7d;}
+.s5 { color: #cc7832;}
+.s6 { color: #bbb55b;}
+</style>
+</head>
+<body bgcolor="#1a1a25">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+cursor.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># engine/cursor.py</span>
+<span class="s0"># Copyright (C) 2005-2024 the SQLAlchemy authors and contributors</span>
+<span class="s0"># &lt;see AUTHORS file&gt;</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of SQLAlchemy and is released under</span>
+<span class="s0"># the MIT License: https://www.opensource.org/licenses/mit-license.php</span>
+<span class="s0"># mypy: allow-untyped-defs, allow-untyped-calls</span>
+
+<span class="s2">&quot;&quot;&quot;Define cursor-specific result set constructs including 
+:class:`.CursorResult`.&quot;&quot;&quot;</span>
+
+
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">import </span><span class="s1">collections</span>
+<span class="s3">import </span><span class="s1">functools</span>
+<span class="s3">import </span><span class="s1">operator</span>
+<span class="s3">import </span><span class="s1">typing</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Any</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">cast</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">ClassVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Dict</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Iterator</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Mapping</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">NoReturn</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Optional</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Sequence</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Tuple</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">TypeVar</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">IteratorResult</span>
+<span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">MergedResult</span>
+<span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">Result</span>
+<span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">ResultMetaData</span>
+<span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">SimpleResultMetaData</span>
+<span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">tuplegetter</span>
+<span class="s3">from </span><span class="s1">.row </span><span class="s3">import </span><span class="s1">Row</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">exc</span>
+<span class="s3">from </span><span class="s1">.. </span><span class="s3">import </span><span class="s1">util</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">elements</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">sqltypes</span>
+<span class="s3">from </span><span class="s1">..sql </span><span class="s3">import </span><span class="s1">util </span><span class="s3">as </span><span class="s1">sql_util</span>
+<span class="s3">from </span><span class="s1">..sql.base </span><span class="s3">import </span><span class="s1">_generative</span>
+<span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">ResultColumnsEntry</span>
+<span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">RM_NAME</span>
+<span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">RM_OBJECTS</span>
+<span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">RM_RENDERED_NAME</span>
+<span class="s3">from </span><span class="s1">..sql.compiler </span><span class="s3">import </span><span class="s1">RM_TYPE</span>
+<span class="s3">from </span><span class="s1">..sql.type_api </span><span class="s3">import </span><span class="s1">TypeEngine</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">compat</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Literal</span>
+<span class="s3">from </span><span class="s1">..util.typing </span><span class="s3">import </span><span class="s1">Self</span>
+
+
+<span class="s3">if </span><span class="s1">typing.TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">.base </span><span class="s3">import </span><span class="s1">Connection</span>
+    <span class="s3">from </span><span class="s1">.default </span><span class="s3">import </span><span class="s1">DefaultExecutionContext</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">_DBAPICursorDescription</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">DBAPICursor</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">Dialect</span>
+    <span class="s3">from </span><span class="s1">.interfaces </span><span class="s3">import </span><span class="s1">ExecutionContext</span>
+    <span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">_KeyIndexType</span>
+    <span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">_KeyMapRecType</span>
+    <span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">_KeyMapType</span>
+    <span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">_KeyType</span>
+    <span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">_ProcessorsType</span>
+    <span class="s3">from </span><span class="s1">.result </span><span class="s3">import </span><span class="s1">_TupleGetterType</span>
+    <span class="s3">from </span><span class="s1">..sql.type_api </span><span class="s3">import </span><span class="s1">_ResultProcessorType</span>
+
+
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s5">, </span><span class="s1">bound=Any)</span>
+
+
+<span class="s0"># metadata entry tuple indexes.</span>
+<span class="s0"># using raw tuple is faster than namedtuple.</span>
+<span class="s0"># these match up to the positions in</span>
+<span class="s0"># _CursorKeyMapRecType</span>
+<span class="s1">MD_INDEX: Literal[</span><span class="s6">0</span><span class="s1">] = </span><span class="s6">0</span>
+<span class="s4">&quot;&quot;&quot;integer index in cursor.description 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s1">MD_RESULT_MAP_INDEX: Literal[</span><span class="s6">1</span><span class="s1">] = </span><span class="s6">1</span>
+<span class="s4">&quot;&quot;&quot;integer index in compiled._result_columns&quot;&quot;&quot;</span>
+
+<span class="s1">MD_OBJECTS: Literal[</span><span class="s6">2</span><span class="s1">] = </span><span class="s6">2</span>
+<span class="s4">&quot;&quot;&quot;other string keys and ColumnElement obj that can match. 
+ 
+This comes from compiler.RM_OBJECTS / compiler.ResultColumnsEntry.objects 
+ 
+&quot;&quot;&quot;</span>
+
+<span class="s1">MD_LOOKUP_KEY: Literal[</span><span class="s6">3</span><span class="s1">] = </span><span class="s6">3</span>
+<span class="s4">&quot;&quot;&quot;string key we usually expect for key-based lookup 
+ 
+this comes from compiler.RM_NAME / compiler.ResultColumnsEntry.name 
+&quot;&quot;&quot;</span>
+
+
+<span class="s1">MD_RENDERED_NAME: Literal[</span><span class="s6">4</span><span class="s1">] = </span><span class="s6">4</span>
+<span class="s4">&quot;&quot;&quot;name that is usually in cursor.description 
+ 
+this comes from compiler.RENDERED_NAME / compiler.ResultColumnsEntry.keyname 
+&quot;&quot;&quot;</span>
+
+
+<span class="s1">MD_PROCESSOR: Literal[</span><span class="s6">5</span><span class="s1">] = </span><span class="s6">5</span>
+<span class="s4">&quot;&quot;&quot;callable to process a result value into a row&quot;&quot;&quot;</span>
+
+<span class="s1">MD_UNTRANSLATED: Literal[</span><span class="s6">6</span><span class="s1">] = </span><span class="s6">6</span>
+<span class="s4">&quot;&quot;&quot;raw name from cursor.description&quot;&quot;&quot;</span>
+
+
+<span class="s1">_CursorKeyMapRecType = Tuple[</span>
+    <span class="s1">Optional[int]</span><span class="s5">,  </span><span class="s0"># MD_INDEX, None means the record is ambiguously named</span>
+    <span class="s1">int</span><span class="s5">,  </span><span class="s0"># MD_RESULT_MAP_INDEX</span>
+    <span class="s1">List[Any]</span><span class="s5">,  </span><span class="s0"># MD_OBJECTS</span>
+    <span class="s1">str</span><span class="s5">,  </span><span class="s0"># MD_LOOKUP_KEY</span>
+    <span class="s1">str</span><span class="s5">,  </span><span class="s0"># MD_RENDERED_NAME</span>
+    <span class="s1">Optional[</span><span class="s4">&quot;_ResultProcessorType[Any]&quot;</span><span class="s1">]</span><span class="s5">,  </span><span class="s0"># MD_PROCESSOR</span>
+    <span class="s1">Optional[str]</span><span class="s5">,  </span><span class="s0"># MD_UNTRANSLATED</span>
+<span class="s1">]</span>
+
+<span class="s1">_CursorKeyMapType = Mapping[</span><span class="s4">&quot;_KeyType&quot;</span><span class="s5">, </span><span class="s1">_CursorKeyMapRecType]</span>
+
+<span class="s0"># same as _CursorKeyMapRecType except the MD_INDEX value is definitely</span>
+<span class="s0"># not None</span>
+<span class="s1">_NonAmbigCursorKeyMapRecType = Tuple[</span>
+    <span class="s1">int</span><span class="s5">,</span>
+    <span class="s1">int</span><span class="s5">,</span>
+    <span class="s1">List[Any]</span><span class="s5">,</span>
+    <span class="s1">str</span><span class="s5">,</span>
+    <span class="s1">str</span><span class="s5">,</span>
+    <span class="s1">Optional[</span><span class="s4">&quot;_ResultProcessorType[Any]&quot;</span><span class="s1">]</span><span class="s5">,</span>
+    <span class="s1">str</span><span class="s5">,</span>
+<span class="s1">]</span>
+
+
+<span class="s3">class </span><span class="s1">CursorResultMetaData(ResultMetaData):</span>
+    <span class="s2">&quot;&quot;&quot;Result metadata for DBAPI cursors.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;_keymap&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_processors&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_keys&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_keymap_by_result_column_idx&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_tuplefilter&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_translated_indexes&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_safe_for_cache&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_unpickled&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_key_to_index&quot;</span><span class="s5">,</span>
+        <span class="s0"># don't need _unique_filters support here for now.  Can be added</span>
+        <span class="s0"># if a need arises.</span>
+    <span class="s1">)</span>
+
+    <span class="s1">_keymap: _CursorKeyMapType</span>
+    <span class="s1">_processors: _ProcessorsType</span>
+    <span class="s1">_keymap_by_result_column_idx: Optional[Dict[int</span><span class="s5">, </span><span class="s1">_KeyMapRecType]]</span>
+    <span class="s1">_unpickled: bool</span>
+    <span class="s1">_safe_for_cache: bool</span>
+    <span class="s1">_translated_indexes: Optional[List[int]]</span>
+
+    <span class="s1">returns_rows: ClassVar[bool] = </span><span class="s3">True</span>
+
+    <span class="s3">def </span><span class="s1">_has_key(self</span><span class="s5">, </span><span class="s1">key: Any) -&gt; bool:</span>
+        <span class="s3">return </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._keymap</span>
+
+    <span class="s3">def </span><span class="s1">_for_freeze(self) -&gt; ResultMetaData:</span>
+        <span class="s3">return </span><span class="s1">SimpleResultMetaData(</span>
+            <span class="s1">self._keys</span><span class="s5">,</span>
+            <span class="s1">extra=[self._keymap[key][MD_OBJECTS] </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">self._keys]</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_make_new_metadata(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">*</span><span class="s5">,</span>
+        <span class="s1">unpickled: bool</span><span class="s5">,</span>
+        <span class="s1">processors: _ProcessorsType</span><span class="s5">,</span>
+        <span class="s1">keys: Sequence[str]</span><span class="s5">,</span>
+        <span class="s1">keymap: _KeyMapType</span><span class="s5">,</span>
+        <span class="s1">tuplefilter: Optional[_TupleGetterType]</span><span class="s5">,</span>
+        <span class="s1">translated_indexes: Optional[List[int]]</span><span class="s5">,</span>
+        <span class="s1">safe_for_cache: bool</span><span class="s5">,</span>
+        <span class="s1">keymap_by_result_column_idx: Any</span><span class="s5">,</span>
+    <span class="s1">) -&gt; CursorResultMetaData:</span>
+        <span class="s1">new_obj = self.__class__.__new__(self.__class__)</span>
+        <span class="s1">new_obj._unpickled = unpickled</span>
+        <span class="s1">new_obj._processors = processors</span>
+        <span class="s1">new_obj._keys = keys</span>
+        <span class="s1">new_obj._keymap = keymap</span>
+        <span class="s1">new_obj._tuplefilter = tuplefilter</span>
+        <span class="s1">new_obj._translated_indexes = translated_indexes</span>
+        <span class="s1">new_obj._safe_for_cache = safe_for_cache</span>
+        <span class="s1">new_obj._keymap_by_result_column_idx = keymap_by_result_column_idx</span>
+        <span class="s1">new_obj._key_to_index = self._make_key_to_index(keymap</span><span class="s5">, </span><span class="s1">MD_INDEX)</span>
+        <span class="s3">return </span><span class="s1">new_obj</span>
+
+    <span class="s3">def </span><span class="s1">_remove_processors(self) -&gt; CursorResultMetaData:</span>
+        <span class="s3">assert not </span><span class="s1">self._tuplefilter</span>
+        <span class="s3">return </span><span class="s1">self._make_new_metadata(</span>
+            <span class="s1">unpickled=self._unpickled</span><span class="s5">,</span>
+            <span class="s1">processors=[</span><span class="s3">None</span><span class="s1">] * len(self._processors)</span><span class="s5">,</span>
+            <span class="s1">tuplefilter=</span><span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">translated_indexes=</span><span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">keymap={</span>
+                <span class="s1">key: value[</span><span class="s6">0</span><span class="s1">:</span><span class="s6">5</span><span class="s1">] + (</span><span class="s3">None</span><span class="s5">,</span><span class="s1">) + value[</span><span class="s6">6</span><span class="s1">:]</span>
+                <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">self._keymap.items()</span>
+            <span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">keys=self._keys</span><span class="s5">,</span>
+            <span class="s1">safe_for_cache=self._safe_for_cache</span><span class="s5">,</span>
+            <span class="s1">keymap_by_result_column_idx=self._keymap_by_result_column_idx</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_splice_horizontally(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">other: CursorResultMetaData</span>
+    <span class="s1">) -&gt; CursorResultMetaData:</span>
+        <span class="s3">assert not </span><span class="s1">self._tuplefilter</span>
+
+        <span class="s1">keymap = dict(self._keymap)</span>
+        <span class="s1">offset = len(self._keys)</span>
+        <span class="s1">keymap.update(</span>
+            <span class="s1">{</span>
+                <span class="s1">key: (</span>
+                    <span class="s0"># int index should be None for ambiguous key</span>
+                    <span class="s1">(</span>
+                        <span class="s1">value[</span><span class="s6">0</span><span class="s1">] + offset</span>
+                        <span class="s3">if </span><span class="s1">value[</span><span class="s6">0</span><span class="s1">] </span><span class="s3">is not None and </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">keymap</span>
+                        <span class="s3">else None</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">value[</span><span class="s6">1</span><span class="s1">] + offset</span><span class="s5">,</span>
+                    <span class="s1">*value[</span><span class="s6">2</span><span class="s1">:]</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">other._keymap.items()</span>
+            <span class="s1">}</span>
+        <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self._make_new_metadata(</span>
+            <span class="s1">unpickled=self._unpickled</span><span class="s5">,</span>
+            <span class="s1">processors=self._processors + other._processors</span><span class="s5">,  </span><span class="s0"># type: ignore</span>
+            <span class="s1">tuplefilter=</span><span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">translated_indexes=</span><span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">keys=self._keys + other._keys</span><span class="s5">,  </span><span class="s0"># type: ignore</span>
+            <span class="s1">keymap=keymap</span><span class="s5">,</span>
+            <span class="s1">safe_for_cache=self._safe_for_cache</span><span class="s5">,</span>
+            <span class="s1">keymap_by_result_column_idx={</span>
+                <span class="s1">metadata_entry[MD_RESULT_MAP_INDEX]: metadata_entry</span>
+                <span class="s3">for </span><span class="s1">metadata_entry </span><span class="s3">in </span><span class="s1">keymap.values()</span>
+            <span class="s1">}</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_reduce(self</span><span class="s5">, </span><span class="s1">keys: Sequence[_KeyIndexType]) -&gt; ResultMetaData:</span>
+        <span class="s1">recs = list(self._metadata_for_keys(keys))</span>
+
+        <span class="s1">indexes = [rec[MD_INDEX] </span><span class="s3">for </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">recs]</span>
+        <span class="s1">new_keys: List[str] = [rec[MD_LOOKUP_KEY] </span><span class="s3">for </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">recs]</span>
+
+        <span class="s3">if </span><span class="s1">self._translated_indexes:</span>
+            <span class="s1">indexes = [self._translated_indexes[idx] </span><span class="s3">for </span><span class="s1">idx </span><span class="s3">in </span><span class="s1">indexes]</span>
+        <span class="s1">tup = tuplegetter(*indexes)</span>
+        <span class="s1">new_recs = [(index</span><span class="s5">,</span><span class="s1">) + rec[</span><span class="s6">1</span><span class="s1">:] </span><span class="s3">for </span><span class="s1">index</span><span class="s5">, </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">enumerate(recs)]</span>
+
+        <span class="s1">keymap = {rec[MD_LOOKUP_KEY]: rec </span><span class="s3">for </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">new_recs}</span>
+        <span class="s0"># TODO: need unit test for:</span>
+        <span class="s0"># result = connection.execute(&quot;raw sql, no columns&quot;).scalars()</span>
+        <span class="s0"># without the &quot;or ()&quot; it's failing because MD_OBJECTS is None</span>
+        <span class="s1">keymap.update(</span>
+            <span class="s1">(e</span><span class="s5">, </span><span class="s1">new_rec)</span>
+            <span class="s3">for </span><span class="s1">new_rec </span><span class="s3">in </span><span class="s1">new_recs</span>
+            <span class="s3">for </span><span class="s1">e </span><span class="s3">in </span><span class="s1">new_rec[MD_OBJECTS] </span><span class="s3">or </span><span class="s1">()</span>
+        <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">self._make_new_metadata(</span>
+            <span class="s1">unpickled=self._unpickled</span><span class="s5">,</span>
+            <span class="s1">processors=self._processors</span><span class="s5">,</span>
+            <span class="s1">keys=new_keys</span><span class="s5">,</span>
+            <span class="s1">tuplefilter=tup</span><span class="s5">,</span>
+            <span class="s1">translated_indexes=indexes</span><span class="s5">,</span>
+            <span class="s1">keymap=keymap</span><span class="s5">,  </span><span class="s0"># type: ignore[arg-type]</span>
+            <span class="s1">safe_for_cache=self._safe_for_cache</span><span class="s5">,</span>
+            <span class="s1">keymap_by_result_column_idx=self._keymap_by_result_column_idx</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_adapt_to_context(self</span><span class="s5">, </span><span class="s1">context: ExecutionContext) -&gt; ResultMetaData:</span>
+        <span class="s2">&quot;&quot;&quot;When using a cached Compiled construct that has a _result_map, 
+        for a new statement that used the cached Compiled, we need to ensure 
+        the keymap has the Column objects from our new statement as keys. 
+        So here we rewrite keymap with new entries for the new columns 
+        as matched to those of the cached statement. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if not </span><span class="s1">context.compiled </span><span class="s3">or not </span><span class="s1">context.compiled._result_columns:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+
+        <span class="s1">compiled_statement = context.compiled.statement</span>
+        <span class="s1">invoked_statement = context.invoked_statement</span>
+
+        <span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+            <span class="s3">assert </span><span class="s1">isinstance(invoked_statement</span><span class="s5">, </span><span class="s1">elements.ClauseElement)</span>
+
+        <span class="s3">if </span><span class="s1">compiled_statement </span><span class="s3">is </span><span class="s1">invoked_statement:</span>
+            <span class="s3">return </span><span class="s1">self</span>
+
+        <span class="s3">assert </span><span class="s1">invoked_statement </span><span class="s3">is not None</span>
+
+        <span class="s0"># this is the most common path for Core statements when</span>
+        <span class="s0"># caching is used.  In ORM use, this codepath is not really used</span>
+        <span class="s0"># as the _result_disable_adapt_to_context execution option is</span>
+        <span class="s0"># set by the ORM.</span>
+
+        <span class="s0"># make a copy and add the columns from the invoked statement</span>
+        <span class="s0"># to the result map.</span>
+
+        <span class="s1">keymap_by_position = self._keymap_by_result_column_idx</span>
+
+        <span class="s3">if </span><span class="s1">keymap_by_position </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s0"># first retrival from cache, this map will not be set up yet,</span>
+            <span class="s0"># initialize lazily</span>
+            <span class="s1">keymap_by_position = self._keymap_by_result_column_idx = {</span>
+                <span class="s1">metadata_entry[MD_RESULT_MAP_INDEX]: metadata_entry</span>
+                <span class="s3">for </span><span class="s1">metadata_entry </span><span class="s3">in </span><span class="s1">self._keymap.values()</span>
+            <span class="s1">}</span>
+
+        <span class="s3">assert not </span><span class="s1">self._tuplefilter</span>
+        <span class="s3">return </span><span class="s1">self._make_new_metadata(</span>
+            <span class="s1">keymap=compat.dict_union(</span>
+                <span class="s1">self._keymap</span><span class="s5">,</span>
+                <span class="s1">{</span>
+                    <span class="s1">new: keymap_by_position[idx]</span>
+                    <span class="s3">for </span><span class="s1">idx</span><span class="s5">, </span><span class="s1">new </span><span class="s3">in </span><span class="s1">enumerate(</span>
+                        <span class="s1">invoked_statement._all_selected_columns</span>
+                    <span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">idx </span><span class="s3">in </span><span class="s1">keymap_by_position</span>
+                <span class="s1">}</span><span class="s5">,</span>
+            <span class="s1">)</span><span class="s5">,</span>
+            <span class="s1">unpickled=self._unpickled</span><span class="s5">,</span>
+            <span class="s1">processors=self._processors</span><span class="s5">,</span>
+            <span class="s1">tuplefilter=</span><span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">translated_indexes=</span><span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">keys=self._keys</span><span class="s5">,</span>
+            <span class="s1">safe_for_cache=self._safe_for_cache</span><span class="s5">,</span>
+            <span class="s1">keymap_by_result_column_idx=self._keymap_by_result_column_idx</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">parent: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">cursor_description: _DBAPICursorDescription</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">context = parent.context</span>
+        <span class="s1">self._tuplefilter = </span><span class="s3">None</span>
+        <span class="s1">self._translated_indexes = </span><span class="s3">None</span>
+        <span class="s1">self._safe_for_cache = self._unpickled = </span><span class="s3">False</span>
+
+        <span class="s3">if </span><span class="s1">context.result_column_struct:</span>
+            <span class="s1">(</span>
+                <span class="s1">result_columns</span><span class="s5">,</span>
+                <span class="s1">cols_are_ordered</span><span class="s5">,</span>
+                <span class="s1">textual_ordered</span><span class="s5">,</span>
+                <span class="s1">ad_hoc_textual</span><span class="s5">,</span>
+                <span class="s1">loose_column_name_matching</span><span class="s5">,</span>
+            <span class="s1">) = context.result_column_struct</span>
+            <span class="s1">num_ctx_cols = len(result_columns)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">result_columns = cols_are_ordered = (  </span><span class="s0"># type: ignore</span>
+                <span class="s1">num_ctx_cols</span>
+            <span class="s1">) = ad_hoc_textual = loose_column_name_matching = (</span>
+                <span class="s1">textual_ordered</span>
+            <span class="s1">) = </span><span class="s3">False</span>
+
+        <span class="s0"># merge cursor.description with the column info</span>
+        <span class="s0"># present in the compiled structure, if any</span>
+        <span class="s1">raw = self._merge_cursor_description(</span>
+            <span class="s1">context</span><span class="s5">,</span>
+            <span class="s1">cursor_description</span><span class="s5">,</span>
+            <span class="s1">result_columns</span><span class="s5">,</span>
+            <span class="s1">num_ctx_cols</span><span class="s5">,</span>
+            <span class="s1">cols_are_ordered</span><span class="s5">,</span>
+            <span class="s1">textual_ordered</span><span class="s5">,</span>
+            <span class="s1">ad_hoc_textual</span><span class="s5">,</span>
+            <span class="s1">loose_column_name_matching</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+        <span class="s0"># processors in key order which are used when building up</span>
+        <span class="s0"># a row</span>
+        <span class="s1">self._processors = [</span>
+            <span class="s1">metadata_entry[MD_PROCESSOR] </span><span class="s3">for </span><span class="s1">metadata_entry </span><span class="s3">in </span><span class="s1">raw</span>
+        <span class="s1">]</span>
+
+        <span class="s0"># this is used when using this ResultMetaData in a Core-only cache</span>
+        <span class="s0"># retrieval context.  it's initialized on first cache retrieval</span>
+        <span class="s0"># when the _result_disable_adapt_to_context execution option</span>
+        <span class="s0"># (which the ORM generally sets) is not set.</span>
+        <span class="s1">self._keymap_by_result_column_idx = </span><span class="s3">None</span>
+
+        <span class="s0"># for compiled SQL constructs, copy additional lookup keys into</span>
+        <span class="s0"># the key lookup map, such as Column objects, labels,</span>
+        <span class="s0"># column keys and other names</span>
+        <span class="s3">if </span><span class="s1">num_ctx_cols:</span>
+            <span class="s0"># keymap by primary string...</span>
+            <span class="s1">by_key = {</span>
+                <span class="s1">metadata_entry[MD_LOOKUP_KEY]: metadata_entry</span>
+                <span class="s3">for </span><span class="s1">metadata_entry </span><span class="s3">in </span><span class="s1">raw</span>
+            <span class="s1">}</span>
+
+            <span class="s3">if </span><span class="s1">len(by_key) != num_ctx_cols:</span>
+                <span class="s0"># if by-primary-string dictionary smaller than</span>
+                <span class="s0"># number of columns, assume we have dupes; (this check</span>
+                <span class="s0"># is also in place if string dictionary is bigger, as</span>
+                <span class="s0"># can occur when '*' was used as one of the compiled columns,</span>
+                <span class="s0"># which may or may not be suggestive of dupes), rewrite</span>
+                <span class="s0"># dupe records with &quot;None&quot; for index which results in</span>
+                <span class="s0"># ambiguous column exception when accessed.</span>
+                <span class="s0">#</span>
+                <span class="s0"># this is considered to be the less common case as it is not</span>
+                <span class="s0"># common to have dupe column keys in a SELECT statement.</span>
+                <span class="s0">#</span>
+                <span class="s0"># new in 1.4: get the complete set of all possible keys,</span>
+                <span class="s0"># strings, objects, whatever, that are dupes across two</span>
+                <span class="s0"># different records, first.</span>
+                <span class="s1">index_by_key: Dict[Any</span><span class="s5">, </span><span class="s1">Any] = {}</span>
+                <span class="s1">dupes = set()</span>
+                <span class="s3">for </span><span class="s1">metadata_entry </span><span class="s3">in </span><span class="s1">raw:</span>
+                    <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">(metadata_entry[MD_RENDERED_NAME]</span><span class="s5">,</span><span class="s1">) + (</span>
+                        <span class="s1">metadata_entry[MD_OBJECTS] </span><span class="s3">or </span><span class="s1">()</span>
+                    <span class="s1">):</span>
+                        <span class="s1">idx = metadata_entry[MD_INDEX]</span>
+                        <span class="s0"># if this key has been associated with more than one</span>
+                        <span class="s0"># positional index, it's a dupe</span>
+                        <span class="s3">if </span><span class="s1">index_by_key.setdefault(key</span><span class="s5">, </span><span class="s1">idx) != idx:</span>
+                            <span class="s1">dupes.add(key)</span>
+
+                <span class="s0"># then put everything we have into the keymap excluding only</span>
+                <span class="s0"># those keys that are dupes.</span>
+                <span class="s1">self._keymap = {</span>
+                    <span class="s1">obj_elem: metadata_entry</span>
+                    <span class="s3">for </span><span class="s1">metadata_entry </span><span class="s3">in </span><span class="s1">raw</span>
+                    <span class="s3">if </span><span class="s1">metadata_entry[MD_OBJECTS]</span>
+                    <span class="s3">for </span><span class="s1">obj_elem </span><span class="s3">in </span><span class="s1">metadata_entry[MD_OBJECTS]</span>
+                    <span class="s3">if </span><span class="s1">obj_elem </span><span class="s3">not in </span><span class="s1">dupes</span>
+                <span class="s1">}</span>
+
+                <span class="s0"># then for the dupe keys, put the &quot;ambiguous column&quot;</span>
+                <span class="s0"># record into by_key.</span>
+                <span class="s1">by_key.update(</span>
+                    <span class="s1">{</span>
+                        <span class="s1">key: (</span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">[]</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s1">key</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+                        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">dupes</span>
+                    <span class="s1">}</span>
+                <span class="s1">)</span>
+
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s0"># no dupes - copy secondary elements from compiled</span>
+                <span class="s0"># columns into self._keymap.  this is the most common</span>
+                <span class="s0"># codepath for Core / ORM statement executions before the</span>
+                <span class="s0"># result metadata is cached</span>
+                <span class="s1">self._keymap = {</span>
+                    <span class="s1">obj_elem: metadata_entry</span>
+                    <span class="s3">for </span><span class="s1">metadata_entry </span><span class="s3">in </span><span class="s1">raw</span>
+                    <span class="s3">if </span><span class="s1">metadata_entry[MD_OBJECTS]</span>
+                    <span class="s3">for </span><span class="s1">obj_elem </span><span class="s3">in </span><span class="s1">metadata_entry[MD_OBJECTS]</span>
+                <span class="s1">}</span>
+            <span class="s0"># update keymap with primary string names taking</span>
+            <span class="s0"># precedence</span>
+            <span class="s1">self._keymap.update(by_key)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># no compiled objects to map, just create keymap by primary string</span>
+            <span class="s1">self._keymap = {</span>
+                <span class="s1">metadata_entry[MD_LOOKUP_KEY]: metadata_entry</span>
+                <span class="s3">for </span><span class="s1">metadata_entry </span><span class="s3">in </span><span class="s1">raw</span>
+            <span class="s1">}</span>
+
+        <span class="s0"># update keymap with &quot;translated&quot; names.  In SQLAlchemy this is a</span>
+        <span class="s0"># sqlite only thing, and in fact impacting only extremely old SQLite</span>
+        <span class="s0"># versions unlikely to be present in modern Python versions.</span>
+        <span class="s0"># however, the pyhive third party dialect is</span>
+        <span class="s0"># also using this hook, which means others still might use it as well.</span>
+        <span class="s0"># I dislike having this awkward hook here but as long as we need</span>
+        <span class="s0"># to use names in cursor.description in some cases we need to have</span>
+        <span class="s0"># some hook to accomplish this.</span>
+        <span class="s3">if not </span><span class="s1">num_ctx_cols </span><span class="s3">and </span><span class="s1">context._translate_colname:</span>
+            <span class="s1">self._keymap.update(</span>
+                <span class="s1">{</span>
+                    <span class="s1">metadata_entry[MD_UNTRANSLATED]: self._keymap[</span>
+                        <span class="s1">metadata_entry[MD_LOOKUP_KEY]</span>
+                    <span class="s1">]</span>
+                    <span class="s3">for </span><span class="s1">metadata_entry </span><span class="s3">in </span><span class="s1">raw</span>
+                    <span class="s3">if </span><span class="s1">metadata_entry[MD_UNTRANSLATED]</span>
+                <span class="s1">}</span>
+            <span class="s1">)</span>
+
+        <span class="s1">self._key_to_index = self._make_key_to_index(self._keymap</span><span class="s5">, </span><span class="s1">MD_INDEX)</span>
+
+    <span class="s3">def </span><span class="s1">_merge_cursor_description(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">context</span><span class="s5">,</span>
+        <span class="s1">cursor_description</span><span class="s5">,</span>
+        <span class="s1">result_columns</span><span class="s5">,</span>
+        <span class="s1">num_ctx_cols</span><span class="s5">,</span>
+        <span class="s1">cols_are_ordered</span><span class="s5">,</span>
+        <span class="s1">textual_ordered</span><span class="s5">,</span>
+        <span class="s1">ad_hoc_textual</span><span class="s5">,</span>
+        <span class="s1">loose_column_name_matching</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Merge a cursor.description with compiled result column information. 
+ 
+        There are at least four separate strategies used here, selected 
+        depending on the type of SQL construct used to start with. 
+ 
+        The most common case is that of the compiled SQL expression construct, 
+        which generated the column names present in the raw SQL string and 
+        which has the identical number of columns as were reported by 
+        cursor.description.  In this case, we assume a 1-1 positional mapping 
+        between the entries in cursor.description and the compiled object. 
+        This is also the most performant case as we disregard extracting / 
+        decoding the column names present in cursor.description since we 
+        already have the desired name we generated in the compiled SQL 
+        construct. 
+ 
+        The next common case is that of the completely raw string SQL, 
+        such as passed to connection.execute().  In this case we have no 
+        compiled construct to work with, so we extract and decode the 
+        names from cursor.description and index those as the primary 
+        result row target keys. 
+ 
+        The remaining fairly common case is that of the textual SQL 
+        that includes at least partial column information; this is when 
+        we use a :class:`_expression.TextualSelect` construct. 
+        This construct may have 
+        unordered or ordered column information.  In the ordered case, we 
+        merge the cursor.description and the compiled construct's information 
+        positionally, and warn if there are additional description names 
+        present, however we still decode the names in cursor.description 
+        as we don't have a guarantee that the names in the columns match 
+        on these.   In the unordered case, we match names in cursor.description 
+        to that of the compiled construct based on name matching. 
+        In both of these cases, the cursor.description names and the column 
+        expression objects and names are indexed as result row target keys. 
+ 
+        The final case is much less common, where we have a compiled 
+        non-textual SQL expression construct, but the number of columns 
+        in cursor.description doesn't match what's in the compiled 
+        construct.  We make the guess here that there might be textual 
+        column expressions in the compiled construct that themselves include 
+        a comma in them causing them to split.  We do the same name-matching 
+        as with textual non-ordered columns. 
+ 
+        The name-matched system of merging is the same as that used by 
+        SQLAlchemy for all cases up through the 0.9 series.   Positional 
+        matching for compiled SQL expressions was introduced in 1.0 as a 
+        major performance feature, and positional matching for textual 
+        :class:`_expression.TextualSelect` objects in 1.1. 
+        As name matching is no longer 
+        a common case, it was acceptable to factor it into smaller generator- 
+        oriented methods that are easier to understand, but incur slightly 
+        more performance overhead. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">(</span>
+            <span class="s1">num_ctx_cols</span>
+            <span class="s3">and </span><span class="s1">cols_are_ordered</span>
+            <span class="s3">and not </span><span class="s1">textual_ordered</span>
+            <span class="s3">and </span><span class="s1">num_ctx_cols == len(cursor_description)</span>
+        <span class="s1">):</span>
+            <span class="s1">self._keys = [elem[</span><span class="s6">0</span><span class="s1">] </span><span class="s3">for </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">result_columns]</span>
+            <span class="s0"># pure positional 1-1 case; doesn't need to read</span>
+            <span class="s0"># the names from cursor.description</span>
+
+            <span class="s0"># most common case for Core and ORM</span>
+
+            <span class="s0"># this metadata is safe to cache because we are guaranteed</span>
+            <span class="s0"># to have the columns in the same order for new executions</span>
+            <span class="s1">self._safe_for_cache = </span><span class="s3">True</span>
+            <span class="s3">return </span><span class="s1">[</span>
+                <span class="s1">(</span>
+                    <span class="s1">idx</span><span class="s5">,</span>
+                    <span class="s1">idx</span><span class="s5">,</span>
+                    <span class="s1">rmap_entry[RM_OBJECTS]</span><span class="s5">,</span>
+                    <span class="s1">rmap_entry[RM_NAME]</span><span class="s5">,</span>
+                    <span class="s1">rmap_entry[RM_RENDERED_NAME]</span><span class="s5">,</span>
+                    <span class="s1">context.get_result_processor(</span>
+                        <span class="s1">rmap_entry[RM_TYPE]</span><span class="s5">,</span>
+                        <span class="s1">rmap_entry[RM_RENDERED_NAME]</span><span class="s5">,</span>
+                        <span class="s1">cursor_description[idx][</span><span class="s6">1</span><span class="s1">]</span><span class="s5">,</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s3">None</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">idx</span><span class="s5">, </span><span class="s1">rmap_entry </span><span class="s3">in </span><span class="s1">enumerate(result_columns)</span>
+            <span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s0"># name-based or text-positional cases, where we need</span>
+            <span class="s0"># to read cursor.description names</span>
+
+            <span class="s3">if </span><span class="s1">textual_ordered </span><span class="s3">or </span><span class="s1">(</span>
+                <span class="s1">ad_hoc_textual </span><span class="s3">and </span><span class="s1">len(cursor_description) == num_ctx_cols</span>
+            <span class="s1">):</span>
+                <span class="s1">self._safe_for_cache = </span><span class="s3">True</span>
+                <span class="s0"># textual positional case</span>
+                <span class="s1">raw_iterator = self._merge_textual_cols_by_position(</span>
+                    <span class="s1">context</span><span class="s5">, </span><span class="s1">cursor_description</span><span class="s5">, </span><span class="s1">result_columns</span>
+                <span class="s1">)</span>
+            <span class="s3">elif </span><span class="s1">num_ctx_cols:</span>
+                <span class="s0"># compiled SQL with a mismatch of description cols</span>
+                <span class="s0"># vs. compiled cols, or textual w/ unordered columns</span>
+                <span class="s0"># the order of columns can change if the query is</span>
+                <span class="s0"># against a &quot;select *&quot;, so not safe to cache</span>
+                <span class="s1">self._safe_for_cache = </span><span class="s3">False</span>
+                <span class="s1">raw_iterator = self._merge_cols_by_name(</span>
+                    <span class="s1">context</span><span class="s5">,</span>
+                    <span class="s1">cursor_description</span><span class="s5">,</span>
+                    <span class="s1">result_columns</span><span class="s5">,</span>
+                    <span class="s1">loose_column_name_matching</span><span class="s5">,</span>
+                <span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s0"># no compiled SQL, just a raw string, order of columns</span>
+                <span class="s0"># can change for &quot;select *&quot;</span>
+                <span class="s1">self._safe_for_cache = </span><span class="s3">False</span>
+                <span class="s1">raw_iterator = self._merge_cols_by_none(</span>
+                    <span class="s1">context</span><span class="s5">, </span><span class="s1">cursor_description</span>
+                <span class="s1">)</span>
+
+            <span class="s3">return </span><span class="s1">[</span>
+                <span class="s1">(</span>
+                    <span class="s1">idx</span><span class="s5">,</span>
+                    <span class="s1">ridx</span><span class="s5">,</span>
+                    <span class="s1">obj</span><span class="s5">,</span>
+                    <span class="s1">cursor_colname</span><span class="s5">,</span>
+                    <span class="s1">cursor_colname</span><span class="s5">,</span>
+                    <span class="s1">context.get_result_processor(</span>
+                        <span class="s1">mapped_type</span><span class="s5">, </span><span class="s1">cursor_colname</span><span class="s5">, </span><span class="s1">coltype</span>
+                    <span class="s1">)</span><span class="s5">,</span>
+                    <span class="s1">untranslated</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">(</span>
+                    <span class="s1">idx</span><span class="s5">,</span>
+                    <span class="s1">ridx</span><span class="s5">,</span>
+                    <span class="s1">cursor_colname</span><span class="s5">,</span>
+                    <span class="s1">mapped_type</span><span class="s5">,</span>
+                    <span class="s1">coltype</span><span class="s5">,</span>
+                    <span class="s1">obj</span><span class="s5">,</span>
+                    <span class="s1">untranslated</span><span class="s5">,</span>
+                <span class="s1">) </span><span class="s3">in </span><span class="s1">raw_iterator</span>
+            <span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">_colnames_from_description(self</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">cursor_description):</span>
+        <span class="s2">&quot;&quot;&quot;Extract column names and data types from a cursor.description. 
+ 
+        Applies unicode decoding, column translation, &quot;normalization&quot;, 
+        and case sensitivity rules to the names based on the dialect. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">dialect = context.dialect</span>
+        <span class="s1">translate_colname = context._translate_colname</span>
+        <span class="s1">normalize_name = (</span>
+            <span class="s1">dialect.normalize_name </span><span class="s3">if </span><span class="s1">dialect.requires_name_normalize </span><span class="s3">else None</span>
+        <span class="s1">)</span>
+        <span class="s1">untranslated = </span><span class="s3">None</span>
+
+        <span class="s1">self._keys = []</span>
+
+        <span class="s3">for </span><span class="s1">idx</span><span class="s5">, </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">enumerate(cursor_description):</span>
+            <span class="s1">colname = rec[</span><span class="s6">0</span><span class="s1">]</span>
+            <span class="s1">coltype = rec[</span><span class="s6">1</span><span class="s1">]</span>
+
+            <span class="s3">if </span><span class="s1">translate_colname:</span>
+                <span class="s1">colname</span><span class="s5">, </span><span class="s1">untranslated = translate_colname(colname)</span>
+
+            <span class="s3">if </span><span class="s1">normalize_name:</span>
+                <span class="s1">colname = normalize_name(colname)</span>
+
+            <span class="s1">self._keys.append(colname)</span>
+
+            <span class="s3">yield </span><span class="s1">idx</span><span class="s5">, </span><span class="s1">colname</span><span class="s5">, </span><span class="s1">untranslated</span><span class="s5">, </span><span class="s1">coltype</span>
+
+    <span class="s3">def </span><span class="s1">_merge_textual_cols_by_position(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">cursor_description</span><span class="s5">, </span><span class="s1">result_columns</span>
+    <span class="s1">):</span>
+        <span class="s1">num_ctx_cols = len(result_columns)</span>
+
+        <span class="s3">if </span><span class="s1">num_ctx_cols &gt; len(cursor_description):</span>
+            <span class="s1">util.warn(</span>
+                <span class="s4">&quot;Number of columns in textual SQL (%d) is &quot;</span>
+                <span class="s4">&quot;smaller than number of columns requested (%d)&quot;</span>
+                <span class="s1">% (num_ctx_cols</span><span class="s5">, </span><span class="s1">len(cursor_description))</span>
+            <span class="s1">)</span>
+        <span class="s1">seen = set()</span>
+
+        <span class="s3">for </span><span class="s1">(</span>
+            <span class="s1">idx</span><span class="s5">,</span>
+            <span class="s1">colname</span><span class="s5">,</span>
+            <span class="s1">untranslated</span><span class="s5">,</span>
+            <span class="s1">coltype</span><span class="s5">,</span>
+        <span class="s1">) </span><span class="s3">in </span><span class="s1">self._colnames_from_description(context</span><span class="s5">, </span><span class="s1">cursor_description):</span>
+            <span class="s3">if </span><span class="s1">idx &lt; num_ctx_cols:</span>
+                <span class="s1">ctx_rec = result_columns[idx]</span>
+                <span class="s1">obj = ctx_rec[RM_OBJECTS]</span>
+                <span class="s1">ridx = idx</span>
+                <span class="s1">mapped_type = ctx_rec[RM_TYPE]</span>
+                <span class="s3">if </span><span class="s1">obj[</span><span class="s6">0</span><span class="s1">] </span><span class="s3">in </span><span class="s1">seen:</span>
+                    <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                        <span class="s4">&quot;Duplicate column expression requested &quot;</span>
+                        <span class="s4">&quot;in textual SQL: %r&quot; </span><span class="s1">% obj[</span><span class="s6">0</span><span class="s1">]</span>
+                    <span class="s1">)</span>
+                <span class="s1">seen.add(obj[</span><span class="s6">0</span><span class="s1">])</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">mapped_type = sqltypes.NULLTYPE</span>
+                <span class="s1">obj = </span><span class="s3">None</span>
+                <span class="s1">ridx = </span><span class="s3">None</span>
+            <span class="s3">yield </span><span class="s1">idx</span><span class="s5">, </span><span class="s1">ridx</span><span class="s5">, </span><span class="s1">colname</span><span class="s5">, </span><span class="s1">mapped_type</span><span class="s5">, </span><span class="s1">coltype</span><span class="s5">, </span><span class="s1">obj</span><span class="s5">, </span><span class="s1">untranslated</span>
+
+    <span class="s3">def </span><span class="s1">_merge_cols_by_name(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">context</span><span class="s5">,</span>
+        <span class="s1">cursor_description</span><span class="s5">,</span>
+        <span class="s1">result_columns</span><span class="s5">,</span>
+        <span class="s1">loose_column_name_matching</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">match_map = self._create_description_match_map(</span>
+            <span class="s1">result_columns</span><span class="s5">, </span><span class="s1">loose_column_name_matching</span>
+        <span class="s1">)</span>
+        <span class="s1">mapped_type: TypeEngine[Any]</span>
+
+        <span class="s3">for </span><span class="s1">(</span>
+            <span class="s1">idx</span><span class="s5">,</span>
+            <span class="s1">colname</span><span class="s5">,</span>
+            <span class="s1">untranslated</span><span class="s5">,</span>
+            <span class="s1">coltype</span><span class="s5">,</span>
+        <span class="s1">) </span><span class="s3">in </span><span class="s1">self._colnames_from_description(context</span><span class="s5">, </span><span class="s1">cursor_description):</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">ctx_rec = match_map[colname]</span>
+            <span class="s3">except </span><span class="s1">KeyError:</span>
+                <span class="s1">mapped_type = sqltypes.NULLTYPE</span>
+                <span class="s1">obj = </span><span class="s3">None</span>
+                <span class="s1">result_columns_idx = </span><span class="s3">None</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">obj = ctx_rec[</span><span class="s6">1</span><span class="s1">]</span>
+                <span class="s1">mapped_type = ctx_rec[</span><span class="s6">2</span><span class="s1">]</span>
+                <span class="s1">result_columns_idx = ctx_rec[</span><span class="s6">3</span><span class="s1">]</span>
+            <span class="s3">yield </span><span class="s1">(</span>
+                <span class="s1">idx</span><span class="s5">,</span>
+                <span class="s1">result_columns_idx</span><span class="s5">,</span>
+                <span class="s1">colname</span><span class="s5">,</span>
+                <span class="s1">mapped_type</span><span class="s5">,</span>
+                <span class="s1">coltype</span><span class="s5">,</span>
+                <span class="s1">obj</span><span class="s5">,</span>
+                <span class="s1">untranslated</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">_create_description_match_map(</span>
+        <span class="s1">cls</span><span class="s5">,</span>
+        <span class="s1">result_columns: List[ResultColumnsEntry]</span><span class="s5">,</span>
+        <span class="s1">loose_column_name_matching: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Dict[</span>
+        <span class="s1">Union[str</span><span class="s5">, </span><span class="s1">object]</span><span class="s5">, </span><span class="s1">Tuple[str</span><span class="s5">, </span><span class="s1">Tuple[Any</span><span class="s5">, </span><span class="s1">...]</span><span class="s5">, </span><span class="s1">TypeEngine[Any]</span><span class="s5">, </span><span class="s1">int]</span>
+    <span class="s1">]:</span>
+        <span class="s2">&quot;&quot;&quot;when matching cursor.description to a set of names that are present 
+        in a Compiled object, as is the case with TextualSelect, get all the 
+        names we expect might match those in cursor.description. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">d: Dict[</span>
+            <span class="s1">Union[str</span><span class="s5">, </span><span class="s1">object]</span><span class="s5">,</span>
+            <span class="s1">Tuple[str</span><span class="s5">, </span><span class="s1">Tuple[Any</span><span class="s5">, </span><span class="s1">...]</span><span class="s5">, </span><span class="s1">TypeEngine[Any]</span><span class="s5">, </span><span class="s1">int]</span><span class="s5">,</span>
+        <span class="s1">] = {}</span>
+        <span class="s3">for </span><span class="s1">ridx</span><span class="s5">, </span><span class="s1">elem </span><span class="s3">in </span><span class="s1">enumerate(result_columns):</span>
+            <span class="s1">key = elem[RM_RENDERED_NAME]</span>
+            <span class="s3">if </span><span class="s1">key </span><span class="s3">in </span><span class="s1">d:</span>
+                <span class="s0"># conflicting keyname - just add the column-linked objects</span>
+                <span class="s0"># to the existing record.  if there is a duplicate column</span>
+                <span class="s0"># name in the cursor description, this will allow all of those</span>
+                <span class="s0"># objects to raise an ambiguous column error</span>
+                <span class="s1">e_name</span><span class="s5">, </span><span class="s1">e_obj</span><span class="s5">, </span><span class="s1">e_type</span><span class="s5">, </span><span class="s1">e_ridx = d[key]</span>
+                <span class="s1">d[key] = e_name</span><span class="s5">, </span><span class="s1">e_obj + elem[RM_OBJECTS]</span><span class="s5">, </span><span class="s1">e_type</span><span class="s5">, </span><span class="s1">ridx</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">d[key] = (elem[RM_NAME]</span><span class="s5">, </span><span class="s1">elem[RM_OBJECTS]</span><span class="s5">, </span><span class="s1">elem[RM_TYPE]</span><span class="s5">, </span><span class="s1">ridx)</span>
+
+            <span class="s3">if </span><span class="s1">loose_column_name_matching:</span>
+                <span class="s0"># when using a textual statement with an unordered set</span>
+                <span class="s0"># of columns that line up, we are expecting the user</span>
+                <span class="s0"># to be using label names in the SQL that match to the column</span>
+                <span class="s0"># expressions.  Enable more liberal matching for this case;</span>
+                <span class="s0"># duplicate keys that are ambiguous will be fixed later.</span>
+                <span class="s3">for </span><span class="s1">r_key </span><span class="s3">in </span><span class="s1">elem[RM_OBJECTS]:</span>
+                    <span class="s1">d.setdefault(</span>
+                        <span class="s1">r_key</span><span class="s5">,</span>
+                        <span class="s1">(elem[RM_NAME]</span><span class="s5">, </span><span class="s1">elem[RM_OBJECTS]</span><span class="s5">, </span><span class="s1">elem[RM_TYPE]</span><span class="s5">, </span><span class="s1">ridx)</span><span class="s5">,</span>
+                    <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">d</span>
+
+    <span class="s3">def </span><span class="s1">_merge_cols_by_none(self</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">cursor_description):</span>
+        <span class="s3">for </span><span class="s1">(</span>
+            <span class="s1">idx</span><span class="s5">,</span>
+            <span class="s1">colname</span><span class="s5">,</span>
+            <span class="s1">untranslated</span><span class="s5">,</span>
+            <span class="s1">coltype</span><span class="s5">,</span>
+        <span class="s1">) </span><span class="s3">in </span><span class="s1">self._colnames_from_description(context</span><span class="s5">, </span><span class="s1">cursor_description):</span>
+            <span class="s3">yield </span><span class="s1">(</span>
+                <span class="s1">idx</span><span class="s5">,</span>
+                <span class="s3">None</span><span class="s5">,</span>
+                <span class="s1">colname</span><span class="s5">,</span>
+                <span class="s1">sqltypes.NULLTYPE</span><span class="s5">,</span>
+                <span class="s1">coltype</span><span class="s5">,</span>
+                <span class="s3">None</span><span class="s5">,</span>
+                <span class="s1">untranslated</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+    <span class="s3">if not </span><span class="s1">TYPE_CHECKING:</span>
+
+        <span class="s3">def </span><span class="s1">_key_fallback(</span>
+            <span class="s1">self</span><span class="s5">, </span><span class="s1">key: Any</span><span class="s5">, </span><span class="s1">err: Optional[Exception]</span><span class="s5">, </span><span class="s1">raiseerr: bool = </span><span class="s3">True</span>
+        <span class="s1">) -&gt; Optional[NoReturn]:</span>
+            <span class="s3">if </span><span class="s1">raiseerr:</span>
+                <span class="s3">if </span><span class="s1">self._unpickled </span><span class="s3">and </span><span class="s1">isinstance(key</span><span class="s5">, </span><span class="s1">elements.ColumnElement):</span>
+                    <span class="s3">raise </span><span class="s1">exc.NoSuchColumnError(</span>
+                        <span class="s4">&quot;Row was unpickled; lookup by ColumnElement &quot;</span>
+                        <span class="s4">&quot;is unsupported&quot;</span>
+                    <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">raise </span><span class="s1">exc.NoSuchColumnError(</span>
+                        <span class="s4">&quot;Could not locate column in row for column '%s'&quot;</span>
+                        <span class="s1">% util.string_or_unprintable(key)</span>
+                    <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">_raise_for_ambiguous_column_name(self</span><span class="s5">, </span><span class="s1">rec):</span>
+        <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+            <span class="s4">&quot;Ambiguous column name '%s' in &quot;</span>
+            <span class="s4">&quot;result set column descriptions&quot; </span><span class="s1">% rec[MD_LOOKUP_KEY]</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_index_for_key(self</span><span class="s5">, </span><span class="s1">key: Any</span><span class="s5">, </span><span class="s1">raiseerr: bool = </span><span class="s3">True</span><span class="s1">) -&gt; Optional[int]:</span>
+        <span class="s0"># TODO: can consider pre-loading ints and negative ints</span>
+        <span class="s0"># into _keymap - also no coverage here</span>
+        <span class="s3">if </span><span class="s1">isinstance(key</span><span class="s5">, </span><span class="s1">int):</span>
+            <span class="s1">key = self._keys[key]</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">rec = self._keymap[key]</span>
+        <span class="s3">except </span><span class="s1">KeyError </span><span class="s3">as </span><span class="s1">ke:</span>
+            <span class="s1">x = self._key_fallback(key</span><span class="s5">, </span><span class="s1">ke</span><span class="s5">, </span><span class="s1">raiseerr)</span>
+            <span class="s3">assert </span><span class="s1">x </span><span class="s3">is None</span>
+            <span class="s3">return None</span>
+
+        <span class="s1">index = rec[</span><span class="s6">0</span><span class="s1">]</span>
+
+        <span class="s3">if </span><span class="s1">index </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s1">self._raise_for_ambiguous_column_name(rec)</span>
+        <span class="s3">return </span><span class="s1">index</span>
+
+    <span class="s3">def </span><span class="s1">_indexes_for_keys(self</span><span class="s5">, </span><span class="s1">keys):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">[self._keymap[key][</span><span class="s6">0</span><span class="s1">] </span><span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">keys]</span>
+        <span class="s3">except </span><span class="s1">KeyError </span><span class="s3">as </span><span class="s1">ke:</span>
+            <span class="s0"># ensure it raises</span>
+            <span class="s1">CursorResultMetaData._key_fallback(self</span><span class="s5">, </span><span class="s1">ke.args[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">ke)</span>
+
+    <span class="s3">def </span><span class="s1">_metadata_for_keys(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">keys: Sequence[Any]</span>
+    <span class="s1">) -&gt; Iterator[_NonAmbigCursorKeyMapRecType]:</span>
+        <span class="s3">for </span><span class="s1">key </span><span class="s3">in </span><span class="s1">keys:</span>
+            <span class="s3">if </span><span class="s1">int </span><span class="s3">in </span><span class="s1">key.__class__.__mro__:</span>
+                <span class="s1">key = self._keys[key]</span>
+
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">rec = self._keymap[key]</span>
+            <span class="s3">except </span><span class="s1">KeyError </span><span class="s3">as </span><span class="s1">ke:</span>
+                <span class="s0"># ensure it raises</span>
+                <span class="s1">CursorResultMetaData._key_fallback(self</span><span class="s5">, </span><span class="s1">ke.args[</span><span class="s6">0</span><span class="s1">]</span><span class="s5">, </span><span class="s1">ke)</span>
+
+            <span class="s1">index = rec[MD_INDEX]</span>
+
+            <span class="s3">if </span><span class="s1">index </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">self._raise_for_ambiguous_column_name(rec)</span>
+
+            <span class="s3">yield </span><span class="s1">cast(_NonAmbigCursorKeyMapRecType</span><span class="s5">, </span><span class="s1">rec)</span>
+
+    <span class="s3">def </span><span class="s1">__getstate__(self):</span>
+        <span class="s0"># TODO: consider serializing this as SimpleResultMetaData</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s4">&quot;_keymap&quot;</span><span class="s1">: {</span>
+                <span class="s1">key: (</span>
+                    <span class="s1">rec[MD_INDEX]</span><span class="s5">,</span>
+                    <span class="s1">rec[MD_RESULT_MAP_INDEX]</span><span class="s5">,</span>
+                    <span class="s1">[]</span><span class="s5">,</span>
+                    <span class="s1">key</span><span class="s5">,</span>
+                    <span class="s1">rec[MD_RENDERED_NAME]</span><span class="s5">,</span>
+                    <span class="s3">None</span><span class="s5">,</span>
+                    <span class="s3">None</span><span class="s5">,</span>
+                <span class="s1">)</span>
+                <span class="s3">for </span><span class="s1">key</span><span class="s5">, </span><span class="s1">rec </span><span class="s3">in </span><span class="s1">self._keymap.items()</span>
+                <span class="s3">if </span><span class="s1">isinstance(key</span><span class="s5">, </span><span class="s1">(str</span><span class="s5">, </span><span class="s1">int))</span>
+            <span class="s1">}</span><span class="s5">,</span>
+            <span class="s4">&quot;_keys&quot;</span><span class="s1">: self._keys</span><span class="s5">,</span>
+            <span class="s4">&quot;_translated_indexes&quot;</span><span class="s1">: self._translated_indexes</span><span class="s5">,</span>
+        <span class="s1">}</span>
+
+    <span class="s3">def </span><span class="s1">__setstate__(self</span><span class="s5">, </span><span class="s1">state):</span>
+        <span class="s1">self._processors = [</span><span class="s3">None for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">range(len(state[</span><span class="s4">&quot;_keys&quot;</span><span class="s1">]))]</span>
+        <span class="s1">self._keymap = state[</span><span class="s4">&quot;_keymap&quot;</span><span class="s1">]</span>
+        <span class="s1">self._keymap_by_result_column_idx = </span><span class="s3">None</span>
+        <span class="s1">self._key_to_index = self._make_key_to_index(self._keymap</span><span class="s5">, </span><span class="s1">MD_INDEX)</span>
+        <span class="s1">self._keys = state[</span><span class="s4">&quot;_keys&quot;</span><span class="s1">]</span>
+        <span class="s1">self._unpickled = </span><span class="s3">True</span>
+        <span class="s3">if </span><span class="s1">state[</span><span class="s4">&quot;_translated_indexes&quot;</span><span class="s1">]:</span>
+            <span class="s1">self._translated_indexes = cast(</span>
+                <span class="s4">&quot;List[int]&quot;</span><span class="s5">, </span><span class="s1">state[</span><span class="s4">&quot;_translated_indexes&quot;</span><span class="s1">]</span>
+            <span class="s1">)</span>
+            <span class="s1">self._tuplefilter = tuplegetter(*self._translated_indexes)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._translated_indexes = self._tuplefilter = </span><span class="s3">None</span>
+
+
+<span class="s3">class </span><span class="s1">ResultFetchStrategy:</span>
+    <span class="s2">&quot;&quot;&quot;Define a fetching strategy for a result object. 
+ 
+ 
+    .. versionadded:: 1.4 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">alternate_cursor_description: Optional[_DBAPICursorDescription] = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">soft_close(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">result: CursorResult[Any]</span><span class="s5">, </span><span class="s1">dbapi_cursor: Optional[DBAPICursor]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">hard_close(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">result: CursorResult[Any]</span><span class="s5">, </span><span class="s1">dbapi_cursor: Optional[DBAPICursor]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">yield_per(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: Optional[DBAPICursor]</span><span class="s5">,</span>
+        <span class="s1">num: int</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">return</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: DBAPICursor</span><span class="s5">,</span>
+        <span class="s1">hard_close: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: DBAPICursor</span><span class="s5">,</span>
+        <span class="s1">size: Optional[int] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: DBAPICursor</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s3">def </span><span class="s1">handle_exception(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: Optional[DBAPICursor]</span><span class="s5">,</span>
+        <span class="s1">err: BaseException</span><span class="s5">,</span>
+    <span class="s1">) -&gt; NoReturn:</span>
+        <span class="s3">raise </span><span class="s1">err</span>
+
+
+<span class="s3">class </span><span class="s1">NoCursorFetchStrategy(ResultFetchStrategy):</span>
+    <span class="s2">&quot;&quot;&quot;Cursor strategy for a result that has no open cursor. 
+ 
+    There are two varieties of this strategy, one for DQL and one for 
+    DML (and also DDL), each of which represent a result that had a cursor 
+    but no longer has one. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">soft_close(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">hard_close(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">hard_close=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">self._non_result(result</span><span class="s5">, </span><span class="s3">None</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">self._non_result(result</span><span class="s5">, </span><span class="s1">[])</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s3">return </span><span class="s1">self._non_result(result</span><span class="s5">, </span><span class="s1">[])</span>
+
+    <span class="s3">def </span><span class="s1">_non_result(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">default</span><span class="s5">, </span><span class="s1">err=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s3">class </span><span class="s1">NoCursorDQLFetchStrategy(NoCursorFetchStrategy):</span>
+    <span class="s2">&quot;&quot;&quot;Cursor strategy for a DQL result that has no open cursor. 
+ 
+    This is a result set that can return rows, i.e. for a SELECT, or for an 
+    INSERT, UPDATE, DELETE that includes RETURNING. However it is in the state 
+    where the cursor is closed and no rows remain available.  The owning result 
+    object may or may not be &quot;hard closed&quot;, which determines if the fetch 
+    methods send empty results or raise for closed result. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">_non_result(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">default</span><span class="s5">, </span><span class="s1">err=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">result.closed:</span>
+            <span class="s3">raise </span><span class="s1">exc.ResourceClosedError(</span>
+                <span class="s4">&quot;This result object is closed.&quot;</span>
+            <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">default</span>
+
+
+<span class="s1">_NO_CURSOR_DQL = NoCursorDQLFetchStrategy()</span>
+
+
+<span class="s3">class </span><span class="s1">NoCursorDMLFetchStrategy(NoCursorFetchStrategy):</span>
+    <span class="s2">&quot;&quot;&quot;Cursor strategy for a DML result that has no open cursor. 
+ 
+    This is a result set that does not return rows, i.e. for an INSERT, 
+    UPDATE, DELETE that does not include RETURNING. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">_non_result(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">default</span><span class="s5">, </span><span class="s1">err=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s0"># we only expect to have a _NoResultMetaData() here right now.</span>
+        <span class="s3">assert not </span><span class="s1">result._metadata.returns_rows</span>
+        <span class="s1">result._metadata._we_dont_return_rows(err)</span>
+
+
+<span class="s1">_NO_CURSOR_DML = NoCursorDMLFetchStrategy()</span>
+
+
+<span class="s3">class </span><span class="s1">CursorFetchStrategy(ResultFetchStrategy):</span>
+    <span class="s2">&quot;&quot;&quot;Call fetch methods from a DBAPI cursor. 
+ 
+    Alternate versions of this class may instead buffer the rows from 
+    cursors or not use cursors at all. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s3">def </span><span class="s1">soft_close(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">result: CursorResult[Any]</span><span class="s5">, </span><span class="s1">dbapi_cursor: Optional[DBAPICursor]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">result.cursor_strategy = _NO_CURSOR_DQL</span>
+
+    <span class="s3">def </span><span class="s1">hard_close(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">result: CursorResult[Any]</span><span class="s5">, </span><span class="s1">dbapi_cursor: Optional[DBAPICursor]</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">result.cursor_strategy = _NO_CURSOR_DQL</span>
+
+    <span class="s3">def </span><span class="s1">handle_exception(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: Optional[DBAPICursor]</span><span class="s5">,</span>
+        <span class="s1">err: BaseException</span><span class="s5">,</span>
+    <span class="s1">) -&gt; NoReturn:</span>
+        <span class="s1">result.connection._handle_dbapi_exception(</span>
+            <span class="s1">err</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s3">None</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">result.context</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">yield_per(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: Optional[DBAPICursor]</span><span class="s5">,</span>
+        <span class="s1">num: int</span><span class="s5">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">result.cursor_strategy = BufferedRowCursorFetchStrategy(</span>
+            <span class="s1">dbapi_cursor</span><span class="s5">,</span>
+            <span class="s1">{</span><span class="s4">&quot;max_row_buffer&quot;</span><span class="s1">: num}</span><span class="s5">,</span>
+            <span class="s1">initial_buffer=collections.deque()</span><span class="s5">,</span>
+            <span class="s1">growth_factor=</span><span class="s6">0</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: DBAPICursor</span><span class="s5">,</span>
+        <span class="s1">hard_close: bool = </span><span class="s3">False</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">row = dbapi_cursor.fetchone()</span>
+            <span class="s3">if </span><span class="s1">row </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">result._soft_close(hard=hard_close)</span>
+            <span class="s3">return </span><span class="s1">row</span>
+        <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">e:</span>
+            <span class="s1">self.handle_exception(result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">e)</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: DBAPICursor</span><span class="s5">,</span>
+        <span class="s1">size: Optional[int] = </span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">size </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s1">l = dbapi_cursor.fetchmany()</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">l = dbapi_cursor.fetchmany(size)</span>
+
+            <span class="s3">if not </span><span class="s1">l:</span>
+                <span class="s1">result._soft_close()</span>
+            <span class="s3">return </span><span class="s1">l</span>
+        <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">e:</span>
+            <span class="s1">self.handle_exception(result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">e)</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">result: CursorResult[Any]</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor: DBAPICursor</span><span class="s5">,</span>
+    <span class="s1">) -&gt; Any:</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">rows = dbapi_cursor.fetchall()</span>
+            <span class="s1">result._soft_close()</span>
+            <span class="s3">return </span><span class="s1">rows</span>
+        <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">e:</span>
+            <span class="s1">self.handle_exception(result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">e)</span>
+
+
+<span class="s1">_DEFAULT_FETCH = CursorFetchStrategy()</span>
+
+
+<span class="s3">class </span><span class="s1">BufferedRowCursorFetchStrategy(CursorFetchStrategy):</span>
+    <span class="s2">&quot;&quot;&quot;A cursor fetch strategy with row buffering behavior. 
+ 
+    This strategy buffers the contents of a selection of rows 
+    before ``fetchone()`` is called.  This is to allow the results of 
+    ``cursor.description`` to be available immediately, when 
+    interfacing with a DB-API that requires rows to be consumed before 
+    this information is available (currently psycopg2, when used with 
+    server-side cursors). 
+ 
+    The pre-fetching behavior fetches only one row initially, and then 
+    grows its buffer size by a fixed amount with each successive need 
+    for additional rows up the ``max_row_buffer`` size, which defaults 
+    to 1000:: 
+ 
+        with psycopg2_engine.connect() as conn: 
+ 
+            result = conn.execution_options( 
+                stream_results=True, max_row_buffer=50 
+                ).execute(text(&quot;select * from table&quot;)) 
+ 
+    .. versionadded:: 1.4 ``max_row_buffer`` may now exceed 1000 rows. 
+ 
+    .. seealso:: 
+ 
+        :ref:`psycopg2_execution_options` 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;_max_row_buffer&quot;</span><span class="s5">, </span><span class="s4">&quot;_rowbuffer&quot;</span><span class="s5">, </span><span class="s4">&quot;_bufsize&quot;</span><span class="s5">, </span><span class="s4">&quot;_growth_factor&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">dbapi_cursor</span><span class="s5">,</span>
+        <span class="s1">execution_options</span><span class="s5">,</span>
+        <span class="s1">growth_factor=</span><span class="s6">5</span><span class="s5">,</span>
+        <span class="s1">initial_buffer=</span><span class="s3">None</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self._max_row_buffer = execution_options.get(</span><span class="s4">&quot;max_row_buffer&quot;</span><span class="s5">, </span><span class="s6">1000</span><span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">initial_buffer </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self._rowbuffer = initial_buffer</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._rowbuffer = collections.deque(dbapi_cursor.fetchmany(</span><span class="s6">1</span><span class="s1">))</span>
+        <span class="s1">self._growth_factor = growth_factor</span>
+
+        <span class="s3">if </span><span class="s1">growth_factor:</span>
+            <span class="s1">self._bufsize = min(self._max_row_buffer</span><span class="s5">, </span><span class="s1">self._growth_factor)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._bufsize = self._max_row_buffer</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s3">def </span><span class="s1">create(cls</span><span class="s5">, </span><span class="s1">result):</span>
+        <span class="s3">return </span><span class="s1">BufferedRowCursorFetchStrategy(</span>
+            <span class="s1">result.cursor</span><span class="s5">,</span>
+            <span class="s1">result.context.execution_options</span><span class="s5">,</span>
+        <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">_buffer_rows(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s2">&quot;&quot;&quot;this is currently used only by fetchone().&quot;&quot;&quot;</span>
+
+        <span class="s1">size = self._bufsize</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">size &lt; </span><span class="s6">1</span><span class="s1">:</span>
+                <span class="s1">new_rows = dbapi_cursor.fetchall()</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">new_rows = dbapi_cursor.fetchmany(size)</span>
+        <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">e:</span>
+            <span class="s1">self.handle_exception(result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">e)</span>
+
+        <span class="s3">if not </span><span class="s1">new_rows:</span>
+            <span class="s3">return</span>
+        <span class="s1">self._rowbuffer = collections.deque(new_rows)</span>
+        <span class="s3">if </span><span class="s1">self._growth_factor </span><span class="s3">and </span><span class="s1">size &lt; self._max_row_buffer:</span>
+            <span class="s1">self._bufsize = min(</span>
+                <span class="s1">self._max_row_buffer</span><span class="s5">, </span><span class="s1">size * self._growth_factor</span>
+            <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">yield_per(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">num):</span>
+        <span class="s1">self._growth_factor = </span><span class="s6">0</span>
+        <span class="s1">self._max_row_buffer = self._bufsize = num</span>
+
+    <span class="s3">def </span><span class="s1">soft_close(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s1">self._rowbuffer.clear()</span>
+        <span class="s1">super().soft_close(result</span><span class="s5">, </span><span class="s1">dbapi_cursor)</span>
+
+    <span class="s3">def </span><span class="s1">hard_close(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s1">self._rowbuffer.clear()</span>
+        <span class="s1">super().hard_close(result</span><span class="s5">, </span><span class="s1">dbapi_cursor)</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">hard_close=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">self._rowbuffer:</span>
+            <span class="s1">self._buffer_rows(result</span><span class="s5">, </span><span class="s1">dbapi_cursor)</span>
+            <span class="s3">if not </span><span class="s1">self._rowbuffer:</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">result._soft_close(hard=hard_close)</span>
+                <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">e:</span>
+                    <span class="s1">self.handle_exception(result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">e)</span>
+                <span class="s3">return None</span>
+        <span class="s3">return </span><span class="s1">self._rowbuffer.popleft()</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">size </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.fetchall(result</span><span class="s5">, </span><span class="s1">dbapi_cursor)</span>
+
+        <span class="s1">rb = self._rowbuffer</span>
+        <span class="s1">lb = len(rb)</span>
+        <span class="s1">close = </span><span class="s3">False</span>
+        <span class="s3">if </span><span class="s1">size &gt; lb:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">new = dbapi_cursor.fetchmany(size - lb)</span>
+            <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">e:</span>
+                <span class="s1">self.handle_exception(result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">e)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">if not </span><span class="s1">new:</span>
+                    <span class="s0"># defer closing since it may clear the row buffer</span>
+                    <span class="s1">close = </span><span class="s3">True</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">rb.extend(new)</span>
+
+        <span class="s1">res = [rb.popleft() </span><span class="s3">for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">range(min(size</span><span class="s5">, </span><span class="s1">len(rb)))]</span>
+        <span class="s3">if </span><span class="s1">close:</span>
+            <span class="s1">result._soft_close()</span>
+        <span class="s3">return </span><span class="s1">res</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">ret = list(self._rowbuffer) + list(dbapi_cursor.fetchall())</span>
+            <span class="s1">self._rowbuffer.clear()</span>
+            <span class="s1">result._soft_close()</span>
+            <span class="s3">return </span><span class="s1">ret</span>
+        <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">e:</span>
+            <span class="s1">self.handle_exception(result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">e)</span>
+
+
+<span class="s3">class </span><span class="s1">FullyBufferedCursorFetchStrategy(CursorFetchStrategy):</span>
+    <span class="s2">&quot;&quot;&quot;A cursor strategy that buffers rows fully upon creation. 
+ 
+    Used for operations where a result is to be delivered 
+    after the database conversation can not be continued, 
+    such as MSSQL INSERT...OUTPUT after an autocommit. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;_rowbuffer&quot;</span><span class="s5">, </span><span class="s4">&quot;alternate_cursor_description&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">alternate_description=</span><span class="s3">None</span><span class="s5">, </span><span class="s1">initial_buffer=</span><span class="s3">None</span>
+    <span class="s1">):</span>
+        <span class="s1">self.alternate_cursor_description = alternate_description</span>
+        <span class="s3">if </span><span class="s1">initial_buffer </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self._rowbuffer = collections.deque(initial_buffer)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._rowbuffer = collections.deque(dbapi_cursor.fetchall())</span>
+
+    <span class="s3">def </span><span class="s1">yield_per(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">num):</span>
+        <span class="s3">pass</span>
+
+    <span class="s3">def </span><span class="s1">soft_close(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s1">self._rowbuffer.clear()</span>
+        <span class="s1">super().soft_close(result</span><span class="s5">, </span><span class="s1">dbapi_cursor)</span>
+
+    <span class="s3">def </span><span class="s1">hard_close(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s1">self._rowbuffer.clear()</span>
+        <span class="s1">super().hard_close(result</span><span class="s5">, </span><span class="s1">dbapi_cursor)</span>
+
+    <span class="s3">def </span><span class="s1">fetchone(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">hard_close=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">self._rowbuffer:</span>
+            <span class="s3">return </span><span class="s1">self._rowbuffer.popleft()</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">result._soft_close(hard=hard_close)</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">fetchmany(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor</span><span class="s5">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if </span><span class="s1">size </span><span class="s3">is None</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.fetchall(result</span><span class="s5">, </span><span class="s1">dbapi_cursor)</span>
+
+        <span class="s1">rb = self._rowbuffer</span>
+        <span class="s1">rows = [rb.popleft() </span><span class="s3">for </span><span class="s1">_ </span><span class="s3">in </span><span class="s1">range(min(size</span><span class="s5">, </span><span class="s1">len(rb)))]</span>
+        <span class="s3">if not </span><span class="s1">rows:</span>
+            <span class="s1">result._soft_close()</span>
+        <span class="s3">return </span><span class="s1">rows</span>
+
+    <span class="s3">def </span><span class="s1">fetchall(self</span><span class="s5">, </span><span class="s1">result</span><span class="s5">, </span><span class="s1">dbapi_cursor):</span>
+        <span class="s1">ret = self._rowbuffer</span>
+        <span class="s1">self._rowbuffer = collections.deque()</span>
+        <span class="s1">result._soft_close()</span>
+        <span class="s3">return </span><span class="s1">ret</span>
+
+
+<span class="s3">class </span><span class="s1">_NoResultMetaData(ResultMetaData):</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">returns_rows = </span><span class="s3">False</span>
+
+    <span class="s3">def </span><span class="s1">_we_dont_return_rows(self</span><span class="s5">, </span><span class="s1">err=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">raise </span><span class="s1">exc.ResourceClosedError(</span>
+            <span class="s4">&quot;This result object does not return rows. &quot;</span>
+            <span class="s4">&quot;It has been closed automatically.&quot;</span>
+        <span class="s1">) </span><span class="s3">from </span><span class="s1">err</span>
+
+    <span class="s3">def </span><span class="s1">_index_for_key(self</span><span class="s5">, </span><span class="s1">keys</span><span class="s5">, </span><span class="s1">raiseerr):</span>
+        <span class="s1">self._we_dont_return_rows()</span>
+
+    <span class="s3">def </span><span class="s1">_metadata_for_keys(self</span><span class="s5">, </span><span class="s1">key):</span>
+        <span class="s1">self._we_dont_return_rows()</span>
+
+    <span class="s3">def </span><span class="s1">_reduce(self</span><span class="s5">, </span><span class="s1">keys):</span>
+        <span class="s1">self._we_dont_return_rows()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_keymap(self):</span>
+        <span class="s1">self._we_dont_return_rows()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_key_to_index(self):</span>
+        <span class="s1">self._we_dont_return_rows()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">_processors(self):</span>
+        <span class="s1">self._we_dont_return_rows()</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">keys(self):</span>
+        <span class="s1">self._we_dont_return_rows()</span>
+
+
+<span class="s1">_NO_RESULT_METADATA = _NoResultMetaData()</span>
+
+
+<span class="s3">def </span><span class="s1">null_dml_result() -&gt; IteratorResult[Any]:</span>
+    <span class="s1">it: IteratorResult[Any] = IteratorResult(_NoResultMetaData()</span><span class="s5">, </span><span class="s1">iter([]))</span>
+    <span class="s1">it._soft_close()</span>
+    <span class="s3">return </span><span class="s1">it</span>
+
+
+<span class="s3">class </span><span class="s1">CursorResult(Result[_T]):</span>
+    <span class="s2">&quot;&quot;&quot;A Result that is representing state from a DBAPI cursor. 
+ 
+    .. versionchanged:: 1.4  The :class:`.CursorResult`` 
+       class replaces the previous :class:`.ResultProxy` interface. 
+       This classes are based on the :class:`.Result` calling API 
+       which provides an updated usage model and calling facade for 
+       SQLAlchemy Core and SQLAlchemy ORM. 
+ 
+    Returns database rows via the :class:`.Row` class, which provides 
+    additional API features and behaviors on top of the raw data returned by 
+    the DBAPI.   Through the use of filters such as the :meth:`.Result.scalars` 
+    method, other kinds of objects may also be returned. 
+ 
+    .. seealso:: 
+ 
+        :ref:`tutorial_selecting_data` - introductory material for accessing 
+        :class:`_engine.CursorResult` and :class:`.Row` objects. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;context&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;dialect&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;cursor&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;cursor_strategy&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;_echo&quot;</span><span class="s5">,</span>
+        <span class="s4">&quot;connection&quot;</span><span class="s5">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">_metadata: Union[CursorResultMetaData</span><span class="s5">, </span><span class="s1">_NoResultMetaData]</span>
+    <span class="s1">_no_result_metadata = _NO_RESULT_METADATA</span>
+    <span class="s1">_soft_closed: bool = </span><span class="s3">False</span>
+    <span class="s1">closed: bool = </span><span class="s3">False</span>
+    <span class="s1">_is_cursor = </span><span class="s3">True</span>
+
+    <span class="s1">context: DefaultExecutionContext</span>
+    <span class="s1">dialect: Dialect</span>
+    <span class="s1">cursor_strategy: ResultFetchStrategy</span>
+    <span class="s1">connection: Connection</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s5">,</span>
+        <span class="s1">context: DefaultExecutionContext</span><span class="s5">,</span>
+        <span class="s1">cursor_strategy: ResultFetchStrategy</span><span class="s5">,</span>
+        <span class="s1">cursor_description: Optional[_DBAPICursorDescription]</span><span class="s5">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.context = context</span>
+        <span class="s1">self.dialect = context.dialect</span>
+        <span class="s1">self.cursor = context.cursor</span>
+        <span class="s1">self.cursor_strategy = cursor_strategy</span>
+        <span class="s1">self.connection = context.root_connection</span>
+        <span class="s1">self._echo = echo = (</span>
+            <span class="s1">self.connection._echo </span><span class="s3">and </span><span class="s1">context.engine._should_log_debug()</span>
+        <span class="s1">)</span>
+
+        <span class="s3">if </span><span class="s1">cursor_description </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s0"># inline of Result._row_getter(), set up an initial row</span>
+            <span class="s0"># getter assuming no transformations will be called as this</span>
+            <span class="s0"># is the most common case</span>
+
+            <span class="s1">metadata = self._init_metadata(context</span><span class="s5">, </span><span class="s1">cursor_description)</span>
+
+            <span class="s1">_make_row: Any</span>
+            <span class="s1">_make_row = functools.partial(</span>
+                <span class="s1">Row</span><span class="s5">,</span>
+                <span class="s1">metadata</span><span class="s5">,</span>
+                <span class="s1">metadata._effective_processors</span><span class="s5">,</span>
+                <span class="s1">metadata._key_to_index</span><span class="s5">,</span>
+            <span class="s1">)</span>
+
+            <span class="s3">if </span><span class="s1">context._num_sentinel_cols:</span>
+                <span class="s1">sentinel_filter = operator.itemgetter(</span>
+                    <span class="s1">slice(-context._num_sentinel_cols)</span>
+                <span class="s1">)</span>
+
+                <span class="s3">def </span><span class="s1">_sliced_row(raw_data):</span>
+                    <span class="s3">return </span><span class="s1">_make_row(sentinel_filter(raw_data))</span>
+
+                <span class="s1">sliced_row = _sliced_row</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">sliced_row = _make_row</span>
+
+            <span class="s3">if </span><span class="s1">echo:</span>
+                <span class="s1">log = self.context.connection._log_debug</span>
+
+                <span class="s3">def </span><span class="s1">_log_row(row):</span>
+                    <span class="s1">log(</span><span class="s4">&quot;Row %r&quot;</span><span class="s5">, </span><span class="s1">sql_util._repr_row(row))</span>
+                    <span class="s3">return </span><span class="s1">row</span>
+
+                <span class="s1">self._row_logging_fn = _log_row</span>
+
+                <span class="s3">def </span><span class="s1">_make_row_2(row):</span>
+                    <span class="s3">return </span><span class="s1">_log_row(sliced_row(row))</span>
+
+                <span class="s1">make_row = _make_row_2</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">make_row = sliced_row</span>
+            <span class="s1">self._set_memoized_attribute(</span><span class="s4">&quot;_row_getter&quot;</span><span class="s5">, </span><span class="s1">make_row)</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">assert </span><span class="s1">context._num_sentinel_cols == </span><span class="s6">0</span>
+            <span class="s1">self._metadata = self._no_result_metadata</span>
+
+    <span class="s3">def </span><span class="s1">_init_metadata(self</span><span class="s5">, </span><span class="s1">context</span><span class="s5">, </span><span class="s1">cursor_description):</span>
+        <span class="s3">if </span><span class="s1">context.compiled:</span>
+            <span class="s1">compiled = context.compiled</span>
+
+            <span class="s3">if </span><span class="s1">compiled._cached_metadata:</span>
+                <span class="s1">metadata = compiled._cached_metadata</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">metadata = CursorResultMetaData(self</span><span class="s5">, </span><span class="s1">cursor_description)</span>
+                <span class="s3">if </span><span class="s1">metadata._safe_for_cache:</span>
+                    <span class="s1">compiled._cached_metadata = metadata</span>
+
+            <span class="s0"># result rewrite/ adapt step.  this is to suit the case</span>
+            <span class="s0"># when we are invoked against a cached Compiled object, we want</span>
+            <span class="s0"># to rewrite the ResultMetaData to reflect the Column objects</span>
+            <span class="s0"># that are in our current SQL statement object, not the one</span>
+            <span class="s0"># that is associated with the cached Compiled object.</span>
+            <span class="s0"># the Compiled object may also tell us to not</span>
+            <span class="s0"># actually do this step; this is to support the ORM where</span>
+            <span class="s0"># it is to produce a new Result object in any case, and will</span>
+            <span class="s0"># be using the cached Column objects against this database result</span>
+            <span class="s0"># so we don't want to rewrite them.</span>
+            <span class="s0">#</span>
+            <span class="s0"># Basically this step suits the use case where the end user</span>
+            <span class="s0"># is using Core SQL expressions and is accessing columns in the</span>
+            <span class="s0"># result row using row._mapping[table.c.column].</span>
+            <span class="s3">if </span><span class="s1">(</span>
+                <span class="s3">not </span><span class="s1">context.execution_options.get(</span>
+                    <span class="s4">&quot;_result_disable_adapt_to_context&quot;</span><span class="s5">, </span><span class="s3">False</span>
+                <span class="s1">)</span>
+                <span class="s3">and </span><span class="s1">compiled._result_columns</span>
+                <span class="s3">and </span><span class="s1">context.cache_hit </span><span class="s3">is </span><span class="s1">context.dialect.CACHE_HIT</span>
+                <span class="s3">and </span><span class="s1">compiled.statement </span><span class="s3">is not </span><span class="s1">context.invoked_statement</span>
+            <span class="s1">):</span>
+                <span class="s1">metadata = metadata._adapt_to_context(context)</span>
+
+            <span class="s1">self._metadata = metadata</span>
+
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self._metadata = metadata = CursorResultMetaData(</span>
+                <span class="s1">self</span><span class="s5">, </span><span class="s1">cursor_description</span>
+            <span class="s1">)</span>
+        <span class="s3">if </span><span class="s1">self._echo:</span>
+            <span class="s1">context.connection._log_debug(</span>
+                <span class="s4">&quot;Col %r&quot;</span><span class="s5">, </span><span class="s1">tuple(x[</span><span class="s6">0</span><span class="s1">] </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">cursor_description)</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">metadata</span>
+
+    <span class="s3">def </span><span class="s1">_soft_close(self</span><span class="s5">, </span><span class="s1">hard=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s2">&quot;&quot;&quot;Soft close this :class:`_engine.CursorResult`. 
+ 
+        This releases all DBAPI cursor resources, but leaves the 
+        CursorResult &quot;open&quot; from a semantic perspective, meaning the 
+        fetchXXX() methods will continue to return empty results. 
+ 
+        This method is called automatically when: 
+ 
+        * all result rows are exhausted using the fetchXXX() methods. 
+        * cursor.description is None. 
+ 
+        This method is **not public**, but is documented in order to clarify 
+        the &quot;autoclose&quot; process used. 
+ 
+        .. seealso:: 
+ 
+            :meth:`_engine.CursorResult.close` 
+ 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">not </span><span class="s1">hard </span><span class="s3">and </span><span class="s1">self._soft_closed) </span><span class="s3">or </span><span class="s1">(hard </span><span class="s3">and </span><span class="s1">self.closed):</span>
+            <span class="s3">return</span>
+
+        <span class="s3">if </span><span class="s1">hard:</span>
+            <span class="s1">self.closed = </span><span class="s3">True</span>
+            <span class="s1">self.cursor_strategy.hard_close(self</span><span class="s5">, </span><span class="s1">self.cursor)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">self.cursor_strategy.soft_close(self</span><span class="s5">, </span><span class="s1">self.cursor)</span>
+
+        <span class="s3">if not </span><span class="s1">self._soft_closed:</span>
+            <span class="s1">cursor = self.cursor</span>
+            <span class="s1">self.cursor = </span><span class="s3">None  </span><span class="s0"># type: ignore</span>
+            <span class="s1">self.connection._safe_close_cursor(cursor)</span>
+            <span class="s1">self._soft_closed = </span><span class="s3">True</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">inserted_primary_key_rows(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return the value of 
+        :attr:`_engine.CursorResult.inserted_primary_key` 
+        as a row contained within a list; some dialects may support a 
+        multiple row form as well. 
+ 
+        .. note:: As indicated below, in current SQLAlchemy versions this 
+           accessor is only useful beyond what's already supplied by 
+           :attr:`_engine.CursorResult.inserted_primary_key` when using the 
+           :ref:`postgresql_psycopg2` dialect.   Future versions hope to 
+           generalize this feature to more dialects. 
+ 
+        This accessor is added to support dialects that offer the feature 
+        that is currently implemented by the :ref:`psycopg2_executemany_mode` 
+        feature, currently **only the psycopg2 dialect**, which provides 
+        for many rows to be INSERTed at once while still retaining the 
+        behavior of being able to return server-generated primary key values. 
+ 
+        * **When using the psycopg2 dialect, or other dialects that may support 
+          &quot;fast executemany&quot; style inserts in upcoming releases** : When 
+          invoking an INSERT statement while passing a list of rows as the 
+          second argument to :meth:`_engine.Connection.execute`, this accessor 
+          will then provide a list of rows, where each row contains the primary 
+          key value for each row that was INSERTed. 
+ 
+        * **When using all other dialects / backends that don't yet support 
+          this feature**: This accessor is only useful for **single row INSERT 
+          statements**, and returns the same information as that of the 
+          :attr:`_engine.CursorResult.inserted_primary_key` within a 
+          single-element list. When an INSERT statement is executed in 
+          conjunction with a list of rows to be INSERTed, the list will contain 
+          one row per row inserted in the statement, however it will contain 
+          ``None`` for any server-generated values. 
+ 
+        Future releases of SQLAlchemy will further generalize the 
+        &quot;fast execution helper&quot; feature of psycopg2 to suit other dialects, 
+        thus allowing this accessor to be of more general use. 
+ 
+        .. versionadded:: 1.4 
+ 
+        .. seealso:: 
+ 
+            :attr:`_engine.CursorResult.inserted_primary_key` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">self.context.compiled:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not a compiled expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">elif not </span><span class="s1">self.context.isinsert:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not an insert() expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">self.context._is_explicit_returning:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Can't call inserted_primary_key &quot;</span>
+                <span class="s4">&quot;when returning() &quot;</span>
+                <span class="s4">&quot;is used.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self.context.inserted_primary_key_rows</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">inserted_primary_key(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return the primary key for the row just inserted. 
+ 
+        The return value is a :class:`_result.Row` object representing 
+        a named tuple of primary key values in the order in which the 
+        primary key columns are configured in the source 
+        :class:`_schema.Table`. 
+ 
+        .. versionchanged:: 1.4.8 - the 
+           :attr:`_engine.CursorResult.inserted_primary_key` 
+           value is now a named tuple via the :class:`_result.Row` class, 
+           rather than a plain tuple. 
+ 
+        This accessor only applies to single row :func:`_expression.insert` 
+        constructs which did not explicitly specify 
+        :meth:`_expression.Insert.returning`.    Support for multirow inserts, 
+        while not yet available for most backends, would be accessed using 
+        the :attr:`_engine.CursorResult.inserted_primary_key_rows` accessor. 
+ 
+        Note that primary key columns which specify a server_default clause, or 
+        otherwise do not qualify as &quot;autoincrement&quot; columns (see the notes at 
+        :class:`_schema.Column`), and were generated using the database-side 
+        default, will appear in this list as ``None`` unless the backend 
+        supports &quot;returning&quot; and the insert statement executed with the 
+        &quot;implicit returning&quot; enabled. 
+ 
+        Raises :class:`~sqlalchemy.exc.InvalidRequestError` if the executed 
+        statement is not a compiled expression construct 
+        or is not an insert() construct. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">self.context.executemany:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;This statement was an executemany call; if primary key &quot;</span>
+                <span class="s4">&quot;returning is supported, please &quot;</span>
+                <span class="s4">&quot;use .inserted_primary_key_rows.&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">ikp = self.inserted_primary_key_rows</span>
+        <span class="s3">if </span><span class="s1">ikp:</span>
+            <span class="s3">return </span><span class="s1">ikp[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">last_updated_params(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return the collection of updated parameters from this 
+        execution. 
+ 
+        Raises :class:`~sqlalchemy.exc.InvalidRequestError` if the executed 
+        statement is not a compiled expression construct 
+        or is not an update() construct. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">self.context.compiled:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not a compiled expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">elif not </span><span class="s1">self.context.isupdate:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not an update() expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">self.context.executemany:</span>
+            <span class="s3">return </span><span class="s1">self.context.compiled_parameters</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.context.compiled_parameters[</span><span class="s6">0</span><span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">last_inserted_params(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return the collection of inserted parameters from this 
+        execution. 
+ 
+        Raises :class:`~sqlalchemy.exc.InvalidRequestError` if the executed 
+        statement is not a compiled expression construct 
+        or is not an insert() construct. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">self.context.compiled:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not a compiled expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">elif not </span><span class="s1">self.context.isinsert:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not an insert() expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">elif </span><span class="s1">self.context.executemany:</span>
+            <span class="s3">return </span><span class="s1">self.context.compiled_parameters</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.context.compiled_parameters[</span><span class="s6">0</span><span class="s1">]</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">returned_defaults_rows(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return a list of rows each containing the values of default 
+        columns that were fetched using 
+        the :meth:`.ValuesBase.return_defaults` feature. 
+ 
+        The return value is a list of :class:`.Row` objects. 
+ 
+        .. versionadded:: 1.4 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.context.returned_default_rows</span>
+
+    <span class="s3">def </span><span class="s1">splice_horizontally(self</span><span class="s5">, </span><span class="s1">other):</span>
+        <span class="s2">&quot;&quot;&quot;Return a new :class:`.CursorResult` that &quot;horizontally splices&quot; 
+        together the rows of this :class:`.CursorResult` with that of another 
+        :class:`.CursorResult`. 
+ 
+        .. tip::  This method is for the benefit of the SQLAlchemy ORM and is 
+           not intended for general use. 
+ 
+        &quot;horizontally splices&quot; means that for each row in the first and second 
+        result sets, a new row that concatenates the two rows together is 
+        produced, which then becomes the new row.  The incoming 
+        :class:`.CursorResult` must have the identical number of rows.  It is 
+        typically expected that the two result sets come from the same sort 
+        order as well, as the result rows are spliced together based on their 
+        position in the result. 
+ 
+        The expected use case here is so that multiple INSERT..RETURNING 
+        statements (which definitely need to be sorted) against different 
+        tables can produce a single result that looks like a JOIN of those two 
+        tables. 
+ 
+        E.g.:: 
+ 
+            r1 = connection.execute( 
+                users.insert().returning( 
+                    users.c.user_name, 
+                    users.c.user_id, 
+                    sort_by_parameter_order=True 
+                ), 
+                user_values 
+            ) 
+ 
+            r2 = connection.execute( 
+                addresses.insert().returning( 
+                    addresses.c.address_id, 
+                    addresses.c.address, 
+                    addresses.c.user_id, 
+                    sort_by_parameter_order=True 
+                ), 
+                address_values 
+            ) 
+ 
+            rows = r1.splice_horizontally(r2).all() 
+            assert ( 
+                rows == 
+                [ 
+                    (&quot;john&quot;, 1, 1, &quot;foo@bar.com&quot;, 1), 
+                    (&quot;jack&quot;, 2, 2, &quot;bar@bat.com&quot;, 2), 
+                ] 
+            ) 
+ 
+        .. versionadded:: 2.0 
+ 
+        .. seealso:: 
+ 
+            :meth:`.CursorResult.splice_vertically` 
+ 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">clone = self._generate()</span>
+        <span class="s1">total_rows = [</span>
+            <span class="s1">tuple(r1) + tuple(r2)</span>
+            <span class="s3">for </span><span class="s1">r1</span><span class="s5">, </span><span class="s1">r2 </span><span class="s3">in </span><span class="s1">zip(</span>
+                <span class="s1">list(self._raw_row_iterator())</span><span class="s5">,</span>
+                <span class="s1">list(other._raw_row_iterator())</span><span class="s5">,</span>
+            <span class="s1">)</span>
+        <span class="s1">]</span>
+
+        <span class="s1">clone._metadata = clone._metadata._splice_horizontally(other._metadata)</span>
+
+        <span class="s1">clone.cursor_strategy = FullyBufferedCursorFetchStrategy(</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">initial_buffer=total_rows</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">clone._reset_memoizations()</span>
+        <span class="s3">return </span><span class="s1">clone</span>
+
+    <span class="s3">def </span><span class="s1">splice_vertically(self</span><span class="s5">, </span><span class="s1">other):</span>
+        <span class="s2">&quot;&quot;&quot;Return a new :class:`.CursorResult` that &quot;vertically splices&quot;, 
+        i.e. &quot;extends&quot;, the rows of this :class:`.CursorResult` with that of 
+        another :class:`.CursorResult`. 
+ 
+        .. tip::  This method is for the benefit of the SQLAlchemy ORM and is 
+           not intended for general use. 
+ 
+        &quot;vertically splices&quot; means the rows of the given result are appended to 
+        the rows of this cursor result. The incoming :class:`.CursorResult` 
+        must have rows that represent the identical list of columns in the 
+        identical order as they are in this :class:`.CursorResult`. 
+ 
+        .. versionadded:: 2.0 
+ 
+        .. seealso:: 
+ 
+            :meth:`.CursorResult.splice_horizontally` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">clone = self._generate()</span>
+        <span class="s1">total_rows = list(self._raw_row_iterator()) + list(</span>
+            <span class="s1">other._raw_row_iterator()</span>
+        <span class="s1">)</span>
+
+        <span class="s1">clone.cursor_strategy = FullyBufferedCursorFetchStrategy(</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s1">initial_buffer=total_rows</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">clone._reset_memoizations()</span>
+        <span class="s3">return </span><span class="s1">clone</span>
+
+    <span class="s3">def </span><span class="s1">_rewind(self</span><span class="s5">, </span><span class="s1">rows):</span>
+        <span class="s2">&quot;&quot;&quot;rewind this result back to the given rowset. 
+ 
+        this is used internally for the case where an :class:`.Insert` 
+        construct combines the use of 
+        :meth:`.Insert.return_defaults` along with the 
+        &quot;supplemental columns&quot; feature. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">self._echo:</span>
+            <span class="s1">self.context.connection._log_debug(</span>
+                <span class="s4">&quot;CursorResult rewound %d row(s)&quot;</span><span class="s5">, </span><span class="s1">len(rows)</span>
+            <span class="s1">)</span>
+
+        <span class="s0"># the rows given are expected to be Row objects, so we</span>
+        <span class="s0"># have to clear out processors which have already run on these</span>
+        <span class="s0"># rows</span>
+        <span class="s1">self._metadata = cast(</span>
+            <span class="s1">CursorResultMetaData</span><span class="s5">, </span><span class="s1">self._metadata</span>
+        <span class="s1">)._remove_processors()</span>
+
+        <span class="s1">self.cursor_strategy = FullyBufferedCursorFetchStrategy(</span>
+            <span class="s3">None</span><span class="s5">,</span>
+            <span class="s0"># TODO: if these are Row objects, can we save on not having to</span>
+            <span class="s0"># re-make new Row objects out of them a second time?  is that</span>
+            <span class="s0"># what's actually happening right now?  maybe look into this</span>
+            <span class="s1">initial_buffer=rows</span><span class="s5">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self._reset_memoizations()</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">returned_defaults(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return the values of default columns that were fetched using 
+        the :meth:`.ValuesBase.return_defaults` feature. 
+ 
+        The value is an instance of :class:`.Row`, or ``None`` 
+        if :meth:`.ValuesBase.return_defaults` was not used or if the 
+        backend does not support RETURNING. 
+ 
+        .. seealso:: 
+ 
+            :meth:`.ValuesBase.return_defaults` 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if </span><span class="s1">self.context.executemany:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;This statement was an executemany call; if return defaults &quot;</span>
+                <span class="s4">&quot;is supported, please use .returned_defaults_rows.&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">rows = self.context.returned_default_rows</span>
+        <span class="s3">if </span><span class="s1">rows:</span>
+            <span class="s3">return </span><span class="s1">rows[</span><span class="s6">0</span><span class="s1">]</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">return None</span>
+
+    <span class="s3">def </span><span class="s1">lastrow_has_defaults(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return ``lastrow_has_defaults()`` from the underlying 
+        :class:`.ExecutionContext`. 
+ 
+        See :class:`.ExecutionContext` for details. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">self.context.lastrow_has_defaults()</span>
+
+    <span class="s3">def </span><span class="s1">postfetch_cols(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return ``postfetch_cols()`` from the underlying 
+        :class:`.ExecutionContext`. 
+ 
+        See :class:`.ExecutionContext` for details. 
+ 
+        Raises :class:`~sqlalchemy.exc.InvalidRequestError` if the executed 
+        statement is not a compiled expression construct 
+        or is not an insert() or update() construct. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if not </span><span class="s1">self.context.compiled:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not a compiled expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">elif not </span><span class="s1">self.context.isinsert </span><span class="s3">and not </span><span class="s1">self.context.isupdate:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not an insert() or update() &quot;</span>
+                <span class="s4">&quot;expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self.context.postfetch_cols</span>
+
+    <span class="s3">def </span><span class="s1">prefetch_cols(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return ``prefetch_cols()`` from the underlying 
+        :class:`.ExecutionContext`. 
+ 
+        See :class:`.ExecutionContext` for details. 
+ 
+        Raises :class:`~sqlalchemy.exc.InvalidRequestError` if the executed 
+        statement is not a compiled expression construct 
+        or is not an insert() or update() construct. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">if not </span><span class="s1">self.context.compiled:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not a compiled expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">elif not </span><span class="s1">self.context.isinsert </span><span class="s3">and not </span><span class="s1">self.context.isupdate:</span>
+            <span class="s3">raise </span><span class="s1">exc.InvalidRequestError(</span>
+                <span class="s4">&quot;Statement is not an insert() or update() &quot;</span>
+                <span class="s4">&quot;expression construct.&quot;</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">self.context.prefetch_cols</span>
+
+    <span class="s3">def </span><span class="s1">supports_sane_rowcount(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return ``supports_sane_rowcount`` from the dialect. 
+ 
+        See :attr:`_engine.CursorResult.rowcount` for background. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">self.dialect.supports_sane_rowcount</span>
+
+    <span class="s3">def </span><span class="s1">supports_sane_multi_rowcount(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return ``supports_sane_multi_rowcount`` from the dialect. 
+ 
+        See :attr:`_engine.CursorResult.rowcount` for background. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">return </span><span class="s1">self.dialect.supports_sane_multi_rowcount</span>
+
+    <span class="s1">@util.memoized_property</span>
+    <span class="s3">def </span><span class="s1">rowcount(self) -&gt; int:</span>
+        <span class="s4">&quot;&quot;&quot;Return the 'rowcount' for this result. 
+ 
+        The primary purpose of 'rowcount' is to report the number of rows 
+        matched by the WHERE criterion of an UPDATE or DELETE statement 
+        executed once (i.e. for a single parameter set), which may then be 
+        compared to the number of rows expected to be updated or deleted as a 
+        means of asserting data integrity. 
+ 
+        This attribute is transferred from the ``cursor.rowcount`` attribute 
+        of the DBAPI before the cursor is closed, to support DBAPIs that 
+        don't make this value available after cursor close.   Some DBAPIs may 
+        offer meaningful values for other kinds of statements, such as INSERT 
+        and SELECT statements as well.  In order to retrieve ``cursor.rowcount`` 
+        for these statements, set the 
+        :paramref:`.Connection.execution_options.preserve_rowcount` 
+        execution option to True, which will cause the ``cursor.rowcount`` 
+        value to be unconditionally memoized before any results are returned 
+        or the cursor is closed, regardless of statement type. 
+ 
+        For cases where the DBAPI does not support rowcount for a particular 
+        kind of statement and/or execution, the returned value will be ``-1``, 
+        which is delivered directly from the DBAPI and is part of :pep:`249`. 
+        All DBAPIs should support rowcount for single-parameter-set 
+        UPDATE and DELETE statements, however. 
+ 
+        .. note:: 
+ 
+           Notes regarding :attr:`_engine.CursorResult.rowcount`: 
+ 
+ 
+           * This attribute returns the number of rows *matched*, 
+             which is not necessarily the same as the number of rows 
+             that were actually *modified*. For example, an UPDATE statement 
+             may have no net change on a given row if the SET values 
+             given are the same as those present in the row already. 
+             Such a row would be matched but not modified. 
+             On backends that feature both styles, such as MySQL, 
+             rowcount is configured to return the match 
+             count in all cases. 
+ 
+           * :attr:`_engine.CursorResult.rowcount` in the default case is 
+             *only* useful in conjunction with an UPDATE or DELETE statement, 
+             and only with a single set of parameters. For other kinds of 
+             statements, SQLAlchemy will not attempt to pre-memoize the value 
+             unless the 
+             :paramref:`.Connection.execution_options.preserve_rowcount` 
+             execution option is used.  Note that contrary to :pep:`249`, many 
+             DBAPIs do not support rowcount values for statements that are not 
+             UPDATE or DELETE, particularly when rows are being returned which 
+             are not fully pre-buffered.   DBAPIs that dont support rowcount 
+             for a particular kind of statement should return the value ``-1`` 
+             for such statements. 
+ 
+           * :attr:`_engine.CursorResult.rowcount` may not be meaningful 
+             when executing a single statement with multiple parameter sets 
+             (i.e. an :term:`executemany`). Most DBAPIs do not sum &quot;rowcount&quot; 
+             values across multiple parameter sets and will return ``-1`` 
+             when accessed. 
+ 
+           * SQLAlchemy's :ref:`engine_insertmanyvalues` feature does support 
+             a correct population of :attr:`_engine.CursorResult.rowcount` 
+             when the :paramref:`.Connection.execution_options.preserve_rowcount` 
+             execution option is set to True. 
+ 
+           * Statements that use RETURNING may not support rowcount, returning 
+             a ``-1`` value instead. 
+ 
+        .. seealso:: 
+ 
+            :ref:`tutorial_update_delete_rowcount` - in the :ref:`unified_tutorial` 
+ 
+            :paramref:`.Connection.execution_options.preserve_rowcount` 
+ 
+        &quot;&quot;&quot;  </span><span class="s0"># noqa: E501</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.context.rowcount</span>
+        <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">e:</span>
+            <span class="s1">self.cursor_strategy.handle_exception(self</span><span class="s5">, </span><span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">e)</span>
+            <span class="s3">raise  </span><span class="s0"># not called</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">lastrowid(self):</span>
+        <span class="s2">&quot;&quot;&quot;Return the 'lastrowid' accessor on the DBAPI cursor. 
+ 
+        This is a DBAPI specific method and is only functional 
+        for those backends which support it, for statements 
+        where it is appropriate.  It's behavior is not 
+        consistent across backends. 
+ 
+        Usage of this method is normally unnecessary when 
+        using insert() expression constructs; the 
+        :attr:`~CursorResult.inserted_primary_key` attribute provides a 
+        tuple of primary key values for a newly inserted row, 
+        regardless of database backend. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">return </span><span class="s1">self.context.get_lastrowid()</span>
+        <span class="s3">except </span><span class="s1">BaseException </span><span class="s3">as </span><span class="s1">e:</span>
+            <span class="s1">self.cursor_strategy.handle_exception(self</span><span class="s5">, </span><span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">e)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">returns_rows(self):</span>
+        <span class="s2">&quot;&quot;&quot;True if this :class:`_engine.CursorResult` returns zero or more 
+        rows. 
+ 
+        I.e. if it is legal to call the methods 
+        :meth:`_engine.CursorResult.fetchone`, 
+        :meth:`_engine.CursorResult.fetchmany` 
+        :meth:`_engine.CursorResult.fetchall`. 
+ 
+        Overall, the value of :attr:`_engine.CursorResult.returns_rows` should 
+        always be synonymous with whether or not the DBAPI cursor had a 
+        ``.description`` attribute, indicating the presence of result columns, 
+        noting that a cursor that returns zero rows still has a 
+        ``.description`` if a row-returning statement was emitted. 
+ 
+        This attribute should be True for all results that are against 
+        SELECT statements, as well as for DML statements INSERT/UPDATE/DELETE 
+        that use RETURNING.   For INSERT/UPDATE/DELETE statements that were 
+        not using RETURNING, the value will usually be False, however 
+        there are some dialect-specific exceptions to this, such as when 
+        using the MSSQL / pyodbc dialect a SELECT is emitted inline in 
+        order to retrieve an inserted primary key value. 
+ 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._metadata.returns_rows</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">is_insert(self):</span>
+        <span class="s2">&quot;&quot;&quot;True if this :class:`_engine.CursorResult` is the result 
+        of a executing an expression language compiled 
+        :func:`_expression.insert` construct. 
+ 
+        When True, this implies that the 
+        :attr:`inserted_primary_key` attribute is accessible, 
+        assuming the statement did not include 
+        a user defined &quot;returning&quot; construct. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.context.isinsert</span>
+
+    <span class="s3">def </span><span class="s1">_fetchiter_impl(self):</span>
+        <span class="s1">fetchone = self.cursor_strategy.fetchone</span>
+
+        <span class="s3">while True</span><span class="s1">:</span>
+            <span class="s1">row = fetchone(self</span><span class="s5">, </span><span class="s1">self.cursor)</span>
+            <span class="s3">if </span><span class="s1">row </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">break</span>
+            <span class="s3">yield </span><span class="s1">row</span>
+
+    <span class="s3">def </span><span class="s1">_fetchone_impl(self</span><span class="s5">, </span><span class="s1">hard_close=</span><span class="s3">False</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">self.cursor_strategy.fetchone(self</span><span class="s5">, </span><span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">hard_close)</span>
+
+    <span class="s3">def </span><span class="s1">_fetchall_impl(self):</span>
+        <span class="s3">return </span><span class="s1">self.cursor_strategy.fetchall(self</span><span class="s5">, </span><span class="s1">self.cursor)</span>
+
+    <span class="s3">def </span><span class="s1">_fetchmany_impl(self</span><span class="s5">, </span><span class="s1">size=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">return </span><span class="s1">self.cursor_strategy.fetchmany(self</span><span class="s5">, </span><span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">size)</span>
+
+    <span class="s3">def </span><span class="s1">_raw_row_iterator(self):</span>
+        <span class="s3">return </span><span class="s1">self._fetchiter_impl()</span>
+
+    <span class="s3">def </span><span class="s1">merge(self</span><span class="s5">, </span><span class="s1">*others: Result[Any]) -&gt; MergedResult[Any]:</span>
+        <span class="s1">merged_result = super().merge(*others)</span>
+        <span class="s3">if </span><span class="s1">self.context._has_rowcount:</span>
+            <span class="s1">merged_result.rowcount = sum(</span>
+                <span class="s1">cast(</span><span class="s4">&quot;CursorResult[Any]&quot;</span><span class="s5">, </span><span class="s1">result).rowcount</span>
+                <span class="s3">for </span><span class="s1">result </span><span class="s3">in </span><span class="s1">(self</span><span class="s5">,</span><span class="s1">) + others</span>
+            <span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">merged_result</span>
+
+    <span class="s3">def </span><span class="s1">close(self) -&gt; Any:</span>
+        <span class="s2">&quot;&quot;&quot;Close this :class:`_engine.CursorResult`. 
+ 
+        This closes out the underlying DBAPI cursor corresponding to the 
+        statement execution, if one is still present.  Note that the DBAPI 
+        cursor is automatically released when the :class:`_engine.CursorResult` 
+        exhausts all available rows.  :meth:`_engine.CursorResult.close` is 
+        generally an optional method except in the case when discarding a 
+        :class:`_engine.CursorResult` that still has additional rows pending 
+        for fetch. 
+ 
+        After this method is called, it is no longer valid to call upon 
+        the fetch methods, which will raise a :class:`.ResourceClosedError` 
+        on subsequent use. 
+ 
+        .. seealso:: 
+ 
+            :ref:`connections_toplevel` 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._soft_close(hard=</span><span class="s3">True</span><span class="s1">)</span>
+
+    <span class="s1">@_generative</span>
+    <span class="s3">def </span><span class="s1">yield_per(self</span><span class="s5">, </span><span class="s1">num: int) -&gt; Self:</span>
+        <span class="s1">self._yield_per = num</span>
+        <span class="s1">self.cursor_strategy.yield_per(self</span><span class="s5">, </span><span class="s1">self.cursor</span><span class="s5">, </span><span class="s1">num)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+
+<span class="s1">ResultProxy = CursorResult</span>
+</pre>
+</body>
+</html>
