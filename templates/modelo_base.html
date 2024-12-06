@@ -9,27 +9,34 @@
 <body>
   <div class="nav-bar">
     <ul class="menu">
-        <div class="usuario-btn">
-              <a href="{{ url_for('login') }}">
-                  <button id="usuario-btn">Login</button>
-              </a>
+        <div class="menssagem">
+            {% if current_user.is_authenticated %}
+                <span>Bem vindo(a), {{ current_user.username}}!</span>
+                <a href="{{ url_for('logout') }}"><button class="logout">Sair</button></a>
+            {% else %}
+            <a href="{{ url_for('login')}}"><button class="login">Login </button></a>
+            {% endif %}
         </div>
-        <li><a href="{{ url_for('home') }}">MENU</a></li>
-        <li><a href="{{ url_for('gerenciamento') }}">GERENCIAMENTO</a></li>
-        <li><a href="{{ url_for('grafico_movimentacoes') }}">RELATORIO</a></li>
+        <li><a class="link" href="{{ url_for('home') }}">MENU</a></li>
+        <li><a class="link" href="{{ url_for('gerenciamento') }}">GERENCIAMENTO</a></li>
+        <li><a class="link" href="{{url_for('grafico_movimentacoes') }}">RELATORIO</a></li>
     </ul>
     <span class="search-icon" id="search-icon">
         <i class="fas fa-search"></i> <!-- Ícone de lupa do Font Awesome -->
     </span>
     <div class="search-box" id="search-box">
-        <input type="text" id="search-input" placeholder="Buscar...">
-        <button id="search-btn">Buscar</button>
+        <form action="{{ url_for('search') }}" method="GET">
+            <input type="text" id="search-input" placeholder="Buscar...">
+            <button id="search-btn">Buscar</button>
+        </form>
+
     </div>
 </div>
 <header class="header-banner">
-    {% block conteudoNav %}
-        <!-- Conteúdo do cabeçalho pode ser dinâmico -->
-    {% endblock %}
+        <div class="cardinicio">
+        <h1>Bem-vindo à Empresa de Eletrônicos "TechStock &COPY;"!</h1>
+        <p>Na TechStock você encontra tudo o que precisa para imergir na tecnologia!</p>
+    </div>
 </header>
 
 

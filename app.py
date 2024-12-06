@@ -1,20 +1,74 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session
-from models import db, Funcionario, Fornecedor, Produto, Categoria, Movimentacao, User
+from sqlalchemy import select, result_tuple
+from models import  db, Funcionario, Fornecedor, Produto, Categoria, Movimentacao, User
 from datetime import datetime
-from flask_login import login_user
+from flask_login import login_user, UserMixin, LoginManager, login_required, logout_user, current_user
+from functools import wraps
+
 
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///funcionarios.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.secret_key = 'techstock123'
 
-# Inicializar o banco de dados com o app
+app.secret_key = 'techstock123'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///test.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
-@app.route('/')
+
+
+# Configuração do LoginManager
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'  # Nome da rota para a página de login
+login_manager.login_message = "Por favor, faça login para acessar esta página."
+login_manager.login_message_category = "info"
+
+
+
+# Função user_loader
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))  # Certifique-se de que 'User' é o nome correto do seu modelo
+
+
+
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated:
+            flash('Acesso negado, login necessário!', 'danger')
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+
+@app.route('/search', methods=['GET', 'POST'])
+def search():
+    query = request.args.get('query')  # Obtém o termo de pesquisa do query string
+    if query:
+        produtos = Produto.query.filter(Produto.nome.like(f'%{query}%')).all()
+    else:
+        produtos = Produto.query.all()  # Caso não haja filtro, retorna todos os produtos
+
+    return render_template('index.html', query=query, produtos=produtos)
+
+
+
+@app.route('/', methods=['GET', 'POST'])
 def home():
-    return render_template('index.html')
+    lista_produtos = select(Produto)
+    lista_produtos = db.session.execute(lista_produtos).scalars().all()
+    result = []
+    print(lista_produtos)
+    for produto in lista_produtos:
+        result.append(produto.serialize())
+    return render_template(
+        'index.html',
+        lista_produtos=result,
+    )
 
 # Página de gerenciamento
 @app.route('/gerenciamento')
@@ -22,7 +76,7 @@ def gerenciamento():
     return render_template('gerenciamento.html')
 
 # Gerenciar funcionários
-@app.route('/gerenciar_funcionarios')
+@app.route('/gerenciar/funcionarios')
 def gerenciar_funcionarios():
     # Buscar todos os funcionários
     funcionarios = Funcionario.query.all()
@@ -30,7 +84,8 @@ def gerenciar_funcionarios():
 
 
 # Criar funcionário
-@app.route('/criar_funcionario', methods=['GET', 'POST'])
+@app.route('/criar/funcionario', methods=['GET', 'POST'])
+@login_required
 def criar_funcionario():
     if request.method == 'POST':
         nome = request.form['nome']
@@ -75,14 +130,15 @@ def criar_funcionario():
     return render_template('funcionarios/criar_funcionario.html')
 
 # Listar funcionários
-@app.route('/listar_funcionarios')
+@app.route('/listar/funcionarios')
 def listar_funcionarios():
     funcionarios = Funcionario.query.all()
     return render_template('funcionarios/listar_funcionarios.html', funcionarios=funcionarios)
 
 
 
-@app.route('/editar_funcionario/<int:id>', methods=['GET', 'POST'])
+@app.route('/editar/funcionario/<int:id>', methods=['GET', 'POST'])
+@login_required
 def editar_funcionario(id):
     # Buscar o funcionário no banco de dados usando o ID
     funcionario = Funcionario.query.get(id)
@@ -109,7 +165,8 @@ def editar_funcionario(id):
 
     return render_template('funcionarios/editar_funcionario.html', funcionario=funcionario)
 
-@app.route('/deletar_funcionario/<int:id>', methods=['GET', 'POST'])
+@app.route('/deletar/funcionario/<int:id>', methods=['GET', 'POST'])
+@login_required
 def deletar_funcionario(id):
     funcionario = Funcionario.query.get(id)
     if funcionario:
@@ -121,13 +178,14 @@ def deletar_funcionario(id):
 
 
 # Gerenciar fornecedores
-@app.route('/gerenciar_fornecedores')
+@app.route('/gerenciar/fornecedores')
 def gerenciar_fornecedores():
     fornecedores = Fornecedor.query.all()
     return render_template('fornecedores/gerenciar_fornecedores.html', fornecedores=fornecedores)
 
 # Criar fornecedor
-@app.route('/criar_fornecedor', methods=['GET', 'POST'])
+@app.route('/criar/fornecedor', methods=['GET', 'POST'])
+@login_required
 def criar_fornecedor():
     if request.method == 'POST':
         nome_fornecedor = request.form['nome_fornecedor']
@@ -155,13 +213,14 @@ def criar_fornecedor():
     return render_template('fornecedores/criar_fornecedor.html')
 
 # Listar fornecedores
-@app.route('/listar_fornecedores')
+@app.route('/listar/fornecedores')
 def listar_fornecedores():
     fornecedores = Fornecedor.query.all()
     return render_template('fornecedores/listar_fornecedores.html', fornecedores=fornecedores)
 
 # Editar fornecedor
-@app.route('/editar_fornecedor/<int:id>', methods=['GET', 'POST'])
+@app.route('/editar/fornecedor/<int:id>', methods=['GET', 'POST'])
+@login_required
 def editar_fornecedor(id):
     fornecedor = Fornecedor.query.get(id)
 
@@ -181,7 +240,8 @@ def editar_fornecedor(id):
     return render_template('fornecedores/editar_fornecedor.html', fornecedor=fornecedor)
 
 # Deletar fornecedor
-@app.route('/deletar_fornecedor/<int:id>', methods=['GET', 'POST'])
+@app.route('/deletar/fornecedor/<int:id>', methods=['GET', 'POST'])
+@login_required
 def deletar_fornecedor(id):
     fornecedor = Fornecedor.query.get(id)
     if fornecedor:
@@ -195,12 +255,13 @@ def deletar_fornecedor(id):
 
 
 # Gerenciar produtos
-@app.route('/gerenciar_produtos')
+@app.route('/gerenciar/produtos')
 def gerenciar_produtos():
     produtos = Produto.query.all()
     return render_template('produtos/gerenciar_produtos.html', produtos=produtos)
 
 @app.route('/criar_produto', methods=['GET', 'POST'])
+@login_required
 def criar_produto():
     if request.method == 'POST':
         # Captura os dados do formulário
@@ -233,13 +294,14 @@ def criar_produto():
     fornecedores = Fornecedor.query.all()
     return render_template('produtos/criar_produto.html', fornecedores=fornecedores)
 # Listar produtos
-@app.route('/listar_produtos')
+@app.route('/listar/produtos')
 def listar_produtos():
     produtos = Produto.query.all()  # Recupera todos os produtos do banco de dados
     return render_template('produtos/listar_produtos.html', produtos=produtos)
 
 # Editar produto
-@app.route('/editar_produto/<int:id>', methods=['GET', 'POST'])
+@app.route('/editar/produto/<int:id>', methods=['GET', 'POST'])
+@login_required
 def editar_produto(id):
     produto = Produto.query.get_or_404(id)  # Obtém o produto a ser editado
 
@@ -265,7 +327,8 @@ def editar_produto(id):
 
 
 # Deletar produto
-@app.route('/deletar_produto/<int:id>', methods=['GET', 'POST'])
+@app.route('/deletar/produto/<int:id>', methods=['GET', 'POST'])
+@login_required
 def deletar_produto(id):
     produto = Produto.query.get(id)
     if produto:
@@ -316,7 +379,8 @@ def movimentacao_produto():
     return render_template('movimentacao/movimentacao.html', produtos=produtos, funcionarios=funcionarios)
 
 
-@app.route('/grafico_movimentacoes')
+@app.route('/grafico/movimentacoes')
+@login_required
 def grafico_movimentacoes():
     # Consulta para obter movimentações agrupadas por produto
     movimentacoes = db.session.query(
@@ -352,17 +416,15 @@ def cadastro():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-        confirm_password = request.form['confirm_password']
+        is_admin = request.form.get('is_admin') == 'on'
 
         # Verifica se o nome de usuário já existe
+        if not username or not password or not is_admin:
+            flash('Preencha todos os campos!')
         if User.query.filter_by(username=username).first():
             flash('Nome de usuário já existe. Escolha outro.', 'danger')
-        elif password != confirm_password:  # Verifica se as senhas não coincidem
-            flash('As senhas não coincidem. Tente novamente.', 'danger')
         else:
-            # Cria o usuário e usa o método set_password para definir a senha
-            user = User(username=username)
-            user.set_password(password)  # Configura a senha usando o método set_password
+            user = User(username=username, password_hash=password, is_admin=is_admin)
             db.session.add(user)
             db.session.commit()
             flash('Cadastro realizado com sucesso! Faça o login.', 'success')
@@ -382,7 +444,7 @@ def login():
         if user and user.check_password(password):
             login_user(user)  # Faz o login do usuário
             flash('Login realizado com sucesso!', 'success')  # Mensagem de sucesso
-            return redirect(url_for('dashboard'))  # Redireciona para o dashboard
+            return redirect(url_for('home'))
         else:
             flash('Usuário ou senha inválidos. Tente novamente.', 'danger')  # Mensagem de erro
 
@@ -393,17 +455,16 @@ def login():
 
 @app.route('/logout')
 def logout():
-    session.pop('user_id', None)
-    session.pop('username', None)
+    logout_user()
     flash('Logout realizado com sucesso.', 'success')
     return redirect(url_for('login'))
 
 
 
-
-
-
 if __name__ == '__main__':
+    print("Criando contexto da aplicação...")
     with app.app_context():
+        print("Contexto criado. Inicializando o banco de dados...")
         db.create_all()
+    print("Banco de dados inicializado. Iniciando aplicação.")
     app.run(debug=True)

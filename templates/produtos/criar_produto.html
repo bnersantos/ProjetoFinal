@@ -3,22 +3,17 @@
 {% block conteudo %}
 
 <!-- Formulário para criar um novo produto -->
-<form class="form-criar" action="{{ url_for('criar_produto') }}" method="POST">
+<form class="   criar" action="{{ url_for('criar_produto') }}" method="POST">
 
-    <!-- Fornecedor -->
-    <div class="form-group">
-        <label for="id_fornecedor">Fornecedor:</label>
+        <label for="id_fornecedor">Fornecedor:</label><br>
         <select name="id_fornecedor" id="id_fornecedor" required>
             <option value="" disabled selected>Selecione um fornecedor</option>
             {% for fornecedor in fornecedores %}
                 <option value="{{ fornecedor.id }}">{{ fornecedor.nome_fornecedor }}</option>
             {% endfor %}
         </select>
-    </div>
 
-    <!-- Categoria -->
-    <div class="form-group">
-        <label for="id_categoria">Categoria do Produto:</label>
+        <label class="criar" for="id_categoria">Categoria do Produto:</label>
         <select name="id_categoria" id="id_categoria" required>
             <option value="1">Smartphones</option>
             <option value="2">Tablets</option>
@@ -27,39 +22,26 @@
             <option value="5">Câmeras Digitais</option>
             <option value="6">Consoles de Videogame</option>
         </select>
-    </div>
 
-    <!-- Nome do Produto -->
-    <div class="form-group">
-        <label for="nome">Nome do Produto:</label>
-        <input type="text" name="nome" id="nome" required>
-    </div>
+        <label class="criar" for="nome">Nome do Produto:</label>
+        <input class="criar" type="text" name="nome" id="nome" required>
 
-    <!-- Descrição -->
-    <div class="form-group">
-        <label for="descricao">Descrição:</label>
+        <label class="criar" for="descricao">Descrição:</label>
         <textarea name="descricao" id="descricao" required></textarea>
-    </div>
 
-    <!-- Preço -->
-    <div class="form-group">
-        <label for="preco">Preço (R$):</label>
-        <input type="number" name="preco" id="preco" step="0.01" min="0" required>
-    </div>
+        <label class="criar" for="preco">Preço (R$):</label>
+        <input class="criar" type="number" name="preco" id="preco" step="0.01" min="0" required>
 
-    <!-- Quantidade -->
-    <div class="form-group">
-        <label for="quantidade">Quantidade:</label>
-        <input type="number" name="quantidade" id="quantidade" min="1" required>
-    </div>
 
-    <!-- Validade -->
-    <div class="form-group">
-        <label for="validade">Validade:</label>
-        <input type="date" name="validade" id="validade" required>
-    </div>
 
-    <button type="submit">Criar Produto</button>
+        <label class="criar" for="quantidade">Quantidade:</label>
+        <input class="criar" type="number" name="quantidade" id="quantidade" min="1" required>
+
+
+        <label class="criar" for="validade">Validade:</label>
+        <input class="criar" type="date" name="validade" id="validade" required>
+
+    <button class="criar" type="submit" >Criar Produto</button>
 </form>
 
 {% endblock %}

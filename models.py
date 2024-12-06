@@ -1,28 +1,64 @@
 from flask import Flask
+from flask_login import UserMixin
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, Boolean, Date, NullPool
+from sqlalchemy.orm import scoped_session, sessionmaker, declarative_base, relationship
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 
-# Inicialização do Flask e SQLAlchemy
 
-db = SQLAlchemy()
+
+
+# Inicialização do Flask e SQLAlchemy
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///test.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
 
 # Modelo de Usuário (User)
-class User(db.Model):
+class User(db.Model, UserMixin):
     __tablename__ = 'TAB_USER'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
 
+    def __init__(self, username, password_hash, is_admin=False):
+        self.username = username
+        self.is_admin = is_admin
+        self.set_password(password_hash)  # Chamando corretamente o método de hash
+
     def set_password(self, password):
-        """Gera hash para a senha."""
-        self.password_hash = generate_password_hash(password)
+        self.password_hash = generate_password_hash(password)  # Armazena o hash da senha
 
     def check_password(self, password):
-        """Verifica a senha fornecida com o hash armazenado."""
-        return check_password_hash(self.password_hash, password)
+        return check_password_hash(self.password_hash, password)  # Verifica a senha
 
+    def __repr__(self):
+        return f'<User {self.username}>'
+
+    def serialize(self):
+        return {
+            'id': self.id,
+            'username': self.username,
+            'is_admin': self.is_admin,
+        }
+
+    def create_user(username, password, is_admin=False):
+        try:
+            user = User(username=username, password=password, is_admin=is_admin)
+            db.session.add(user)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()  # Reverte a transação em caso de erro
+            print(f"Erro ao criar usuário: {e}")
+
+    def verify_user(username, password):
+        user = db.session.query(User).filter_by(username=username).first()
+        if user and user.check_password(password):
+            return True  # Senha correta
+        return False  # Senha incorreta
 
 class Categoria(db.Model):
     __tablename__ = 'CATEGORIA'
@@ -62,6 +98,16 @@ class Produto(db.Model):
 
     # Relacionamento com Movimentacao
     movimentacoes = db.relationship('Movimentacao', back_populates='produto')
+
+    def serialize(self):
+        return {
+            'id': self.id,
+            'nome': self.nome,
+            'preco': self.preco,
+            'descricao': self.descricao,
+            'validade': self.validade,
+        }
+
 
 # Modelo de Funcionário
 class Funcionario(db.Model):

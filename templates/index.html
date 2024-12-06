@@ -5,47 +5,54 @@
 {% endblock %}
 
 {% block conteudo %}
-<!-- Aqui teremos o conteúdo da main -->
-<div class="content">
+<div class="cards_container">
+    {% for produto in lista_produtos %}
     <div class="box">
-        <div class="icon-container">
-            <img src="{{ url_for('static', filename='mouse.jpg') }}" alt="mouse" class="icon">
-            <div class="hover-info">
-                <p>Quantidade: 10</p>
-                <p>Já saíram: 5</p>
-                <p>Detalhes: Blá blá blá</p>
-            </div>
-        </div>
+        <p>{{ produto['nome'] }}</p>
+        <p>R$ {{ produto['preco'] | default(0) | round(2) }}</p>
     </div>
-    <div class="box">
-        <div class="icon-container">
-            <img src="{{ url_for('static', filename='teclado.jpg') }}" alt="Hardware" class="icon">
-            <div class="hover-info">
-                <p>Quantidade: 20</p>
-                <p>Já saíram: 15</p>
-                <p>Detalhes: Blá blá blá</p>
-            </div>
-        </div>
-    </div>
-    <div class="box">
-        <div class="icon-container">
-            <img src="{{ url_for('static', filename='hardware.png') }}" alt="Hardware" class="icon">
-            <div class="hover-info">
-                <p>Quantidade: 30</p>
-                <p>Já saíram: 25</p>
-                <p>Detalhes: Blá blá blá</p>
-            </div>
-        </div>
-    </div>
-    <div class="box">
-        <div class="icon-container">
-            <img src="{{ url_for('static', filename='mouse.png') }}" alt="Hardware" class="icon">
-            <div class="hover-info">
-                <p>Quantidade: 50</p>
-                <p>Já saíram: 40</p>
-                <p>Detalhes: Blá blá blá</p>
-            </div>
-        </div>
+    {% else %}
+    <p>Nenhum produto encontrado.</p>
+    {% endfor %}
+</div>
+
+
+<div>
+    <div class="pagination">
+        <button onclick="previousPage()">Anterior</button>
+        <span id="page-info">Página 1</span>
+        <button onclick="nextPage()">Próxima</button>
     </div>
 </div>
+
+<script>
+    const itemsPerPage = 6; // Quantas pessoas por página
+    let currentPage = 1;
+    const cards = document.querySelectorAll('.cards');
+    const totalPages = Math.ceil(cards.length / itemsPerPage);
+
+    function showPage(page) {
+        cards.forEach((card, index) => {
+            card.style.display = (index >= (page - 1) * itemsPerPage && index < page * itemsPerPage) ? 'block' : 'none';
+        });
+        document.getElementById('page-info').textContent = `Página ${page}`;
+    }
+
+    function nextPage() {
+        if (currentPage < totalPages) {
+            currentPage++;
+            showPage(currentPage);
+        }
+    }
+
+    function previousPage() {
+        if (currentPage > 1) {
+            currentPage--;
+            showPage(currentPage);
+        }
+    }
+
+    showPage(currentPage); // Mostrar a primeira página inicialmente
+</script>
+
 {% endblock %}

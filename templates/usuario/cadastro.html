@@ -27,14 +27,15 @@
             <button type="submit">Entrar</button>
         {% elif 'cadastro' in request.url %}
             <h2>Cadastro</h2>
-            <label for="username">Nome de Usuário:</label>
-            <input type="text" id="username" name="username" required><br><br>
+            <label for="username2">Nome de Usuário:</label>
+            <input type="text" id="username2" name="username" required><br><br>
 
             <label for="password">Senha:</label>
-            <input type="password" id="password" name="password" required><br><br>
+            <input type="password" id="password2" name="password" required><br><br>
 
-            <label for="confirm_password">Confirmar Senha:</label>
-            <input type="password" id="confirm_password" name="confirm_password" required><br><br>
+            <label for="admin">ADMIN:</label>
+            <input type="checkbox" id="admin" name="admin"><br><br>
+
 
             <button type="submit">Cadastrar</button>
         {% endif %}

@@ -14,7 +14,7 @@ body {
 /* Barra de navegação */
 .nav-bar {
     height: 50px;
-    background-color: #333; /* Fundo escuro */
+    background-color: black; /* Fundo escuro */
     padding: 10px 20px;
     display: flex;
     justify-content: space-between; /* Espaça os itens de navegação e a lupa */
@@ -47,7 +47,7 @@ body {
 .search-box {
     height: 22px;
     display: none; /* Oculta a caixa de pesquisa por padrão */
-    background-color: #05fa00;
+    background-color: black;
     position: absolute;
     top: 14px; /* Posiciona a caixa abaixo da barra de navegação */
     right: 70px;
@@ -71,7 +71,7 @@ body {
     right: -60px;
     position: absolute;
     height: 28px;
-    background-color: #121aff;
+    background-color: #4804cb;
     color: white;
     padding: 8px;
     border: none;
@@ -80,7 +80,7 @@ body {
 }
 
 .search-box button:hover {
-    background-color: #f4a261;
+    background-color: #2f0080;
 }
 
 /* Responsividade */
@@ -102,7 +102,7 @@ body {
 
 /* Banner/cabeçalho */
 .header-banner {
-    background-color: #800000; /* Vermelho escuro */
+    background-color: #16043b; /* Vermelho escuro */
     height: 240px;
     display: flex;
     align-items: center;
@@ -125,12 +125,13 @@ body {
 }
 
 .box {
+    padding: 30px;
     margin-top: 50px;
     width: 140px; /* Largura fixa inicial */
     height: 140px;
     aspect-ratio: 1 / 1; /* Mantém o formato quadrado */
     border-radius: 10px;
-    display: flex;
+    display: inline-block;
     align-items: center;
     justify-content: center;
     color: white;
@@ -141,7 +142,7 @@ body {
 
 /* Estilização dinâmica por posição */
 .box {
-    background-color: #333; /* Preto */
+    background-color: #232323; /* Preto */
 }
 
 
@@ -170,7 +171,7 @@ body {
 
 /* Banner/cabeçalho */
 .header-banner {
-    background-color: #800000; /* Cor de fundo do banner */
+    background-color: #16043b; /* Cor de fundo do banner */
     height: 254px; /* Altura do banner */
     display: flex;
     align-items: center; /* Alinha os itens verticalmente no centro */
@@ -208,23 +209,26 @@ body {
     padding: 5px 10px;
     border-radius: 5px;
     box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
-    display: flex;
     gap: 10px;
     align-items: center;
 }
 
 
-.usuario-btn button {
+.login  {
     top: 8px;
-    left: 12px;
+    left: -45px;
     position: absolute;
     height: 30px;
-    background-color: #f1a500;
+    width: 65px;
+    background-color: #4804cb;
     color: white;
     padding: 8px;
     border: none;
     border-radius: 5px;
     cursor: pointer;
+}
+.login:hover {
+    background-color: #2f0080;
 }
 
 .usuario-box button:hover {
@@ -304,4 +308,124 @@ banner-img {
     flex-wrap: wrap;
     justify-content: space-around;
 }
+.menssagem {
+    color: white;
+    position: absolute;
+    background-color: black;
+    width: 300px;
+    height: 50px;
+    left: 50px;
+}
 
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+
+.pagination button {
+    padding: 10px 20px;
+    background-color: #7300ff;
+    color: #ffffff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.pagination button:hover {
+    background-color: #5600ff;
+}
+
+.cards_container {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        padding: 20px;
+        gap: 20px;
+        background-color: #ffffff; /* Cor de fundo mais suave */
+    }
+
+    /* Card de boas-vindas */
+    .cardinicio {
+        width: 100%;
+        text-align: center;
+        margin-bottom: 40px;
+    }
+
+    .cardinicio h1 {
+        font-size: 2rem;
+        color: white;
+    }
+
+    .cardinicio p {
+        font-size: 1.2rem;
+        color: black;
+        margin-top: 10px;
+    }
+
+
+    /* Estilos da paginação */
+    .pagination {
+        text-align: center; /* Centraliza a paginação */
+        margin-top: 40px; /* Espaçamento acima da paginação */
+        font-size: 1rem;
+    }
+
+    .pagination button {
+        background-color: #2f0080; /* Cor de fundo do botão */
+        color: #ffffff; /* Cor do texto */
+        border: none;
+        padding: 10px 20px;
+        margin: 0 10px;
+        font-size: 1rem;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+    }
+
+    .pagination button:hover {
+        background-color: #0056b3; /* Cor de fundo quando passa o mouse */
+    }
+
+    /* Responsividade para telas menores */
+    @media (max-width: 768px) {
+        .cards {
+            width: calc(50% - 20px); /* Dois cards por linha em telas menores */
+        }
+    }
+
+    @media (max-width: 480px) {
+        .cards {
+            width: 100%; /* Um card por linha em telas muito pequenas */
+        }
+
+        .cardinicio h1 {
+            font-size: 1.5rem; /* Menor tamanho do título em telas pequenas */
+        }
+
+        .cardinicio p {
+            font-size: 1rem; /* Menor tamanho da descrição */
+        }
+    }
+.link {
+    font-size: 20px;
+    color: #7e44e8;
+}
+.link:hover {
+    color: white;
+}
+.logout  {
+    top: 4px;
+    left: 190px;
+    position: absolute;
+    height: 30px;
+    width: 65px;
+    background-color: #4804cb;
+    color: white;
+    padding: 8px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}

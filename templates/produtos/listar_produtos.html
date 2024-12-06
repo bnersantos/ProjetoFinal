@@ -2,7 +2,7 @@
 
 {% block conteudo %}
     <h2>Lista de Produtos</h2>
-    <table>
+    <table class="tabela-funcionarios">
         <thead>
             <tr>
                 <th>Nome</th>
@@ -30,4 +30,5 @@
             {% endfor %}
         </tbody>
     </table>
+<a href="{{ url_for('gerenciar_produtos ') }}" class="btn3 voltar">Voltar</a>
 {% endblock %}

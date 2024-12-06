@@ -5,12 +5,17 @@
 {% block conteudoNav %}
 <div class="nav-bar">
     <ul class="menu">
-        <div class="usuario-btn">
-          <button id="usuario-btn">login</button>
+        <div class="menssagem">
+            {% if current_user.is_authenticated %}
+                <span>Bem vindo(a), {{ current_user.username}}!</span>
+                <a href="{{ url_for('logout') }}"><button class="logout">Sair</button></a>
+            {% else %}
+            <a href="{{ url_for('login')}}"><button class="login">Login </button></a>
+            {% endif %}
         </div>
-        <li><a href="{{ url_for('home') }}">MENU</a></li>
-        <li><a href="{{ url_for('gerenciar_funcionarios') }}">Voltar</a></li>
-        <li><a href="{{ url_for('grafico_movimentacoes') }}">RELATORIO</a></li>
+        <li><a class="link" href="{{ url_for('home') }}">MENU</a></li>
+        <li><a class="link" href="{{ url_for('gerenciar_funcionarios') }}">Voltar</a></li>
+        <li><a class="link" href="{{ url_for('grafico_movimentacoes') }}">RELATORIO</a></li>
     </ul>
     <span class="search-icon" id="search-icon">
         <i class="fas fa-search"></i> <!-- Ícone de lupa do Font Awesome -->

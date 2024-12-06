@@ -12,95 +12,32 @@ body {
     color: #333; /* Cor do texto padrão */
 }
 /* Barra de navegação */
-.nav-bar {
-    height: 50px;
-    background-color: #333; /* Fundo escuro */
-    padding: 10px 20px;
-    display: flex;
-    justify-content: space-between; /* Espaça os itens de navegação e a lupa */
-    align-items: center; /* Centraliza verticalmente */
-}
-
-.nav-bar .menu {
-    list-style: none;
-    display: flex;
-    gap: 20px;
-    align-items: center;
-    justify-content: center; /* Centraliza os itens da navegação */
-    flex-grow: 1; /* Faz os itens da navegação ocuparem o espaço disponível */
-}
-
-.nav-bar .menu li {
-    color: white;
-    cursor: pointer;
-    text-transform: uppercase;
-    font-size: 14px;
-    transition: color 0.3s ease;
-}
-
-.nav-bar .menu li:hover {
-    color: #f4a261; /* Cor de destaque ao passar o mouse */
-}
 
 
 /* Caixa de pesquisa */
-.search-box {
-    height: 22px;
-    display: none; /* Oculta a caixa de pesquisa por padrão */
-    background-color: #05fa00;
-    position: absolute;
-    top: 14px; /* Posiciona a caixa abaixo da barra de navegação */
-    right: 70px;
-    padding: 5px 10px;
-    border-radius: 5px;
-    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+.
+/* Responsividade */
+
+.pagination {
     display: flex;
+    justify-content: center;
     gap: 10px;
-    align-items: center;
+    margin-top: 20px;
 }
 
-.search-box input {
-    height: 18px;
-    padding: 8px;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-}
 
-.search-box button {
-    top: -5px;
-    right: -60px;
-    position: absolute;
-    height: 28px;
-    background-color: #121aff;
-    color: white;
-    padding: 8px;
+.pagination button {
+    padding: 10px 20px;
+    background-color: #7300ff;
+    color: #ffffff;
     border: none;
     border-radius: 5px;
     cursor: pointer;
 }
 
-.search-box button:hover {
-    background-color: #f4a261;
+.pagination button:hover {
+    background-color: #5600ff;
 }
-
-/* Responsividade */
-@media (max-width: 768px) {
-    .nav-bar .menu {
-        flex-direction: column; /* Coloca os itens da navegação em coluna em telas menores */
-        gap: 10px;
-    }
-
-    .search-icon {
-        font-size: 18px;
-    }
-
-    .search-box {
-        right: 10px; /* Ajusta a posição da caixa em telas menores */
-        top: 40px;
-    }
-}
-
-
 
 /* Conteúdo principal */
 .content {
@@ -170,39 +107,9 @@ body {
 
 
 
-/* Caixa de pesquisa */
-.usuario-box {
-    height: 22px;
-    display: none; /* Oculta a caixa de pesquisa por padrão */
-    background-color: #05fa00;
-    position: absolute;
-    top: 14px; /* Posiciona a caixa abaixo da barra de navegação */
-    right: 70px;
-    padding: 5px 10px;
-    border-radius: 5px;
-    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
-    display: flex;
-    gap: 10px;
-    align-items: center;
-}
 
 
-.usuario-btn button {
-    top: 8px;
-    left: 12px;
-    position: absolute;
-    height: 30px;
-    background-color: #f1a500;
-    color: white;
-    padding: 8px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-}
 
-.usuario-box button:hover {
-    background-color: #ffffff;
-}
 
 /* Contêiner de cards */
 .card-container {
@@ -244,7 +151,7 @@ body {
 .card .btn {
     display: inline-block;
     padding: 10px 20px;
-    background-color: #4CAF50;
+    background-color: #2f0080;
     color: #ffffff;
     text-decoration: none;
     border-radius: 5px;
@@ -252,7 +159,7 @@ body {
 }
 
 .card .btn:hover {
-    background-color: #45a049;
+    background-color: #2f0080;
 }
 
 /* Estilo do botão de Voltar */
@@ -261,7 +168,7 @@ body {
     width: 200px;
     margin: 30px auto;
     text-align: center;
-    background-color: #f44336;
+    background-color: #16043b;
     padding: 10px;
     border-radius: 5px;
     color: #ffffff;
@@ -271,10 +178,10 @@ body {
 }
 
 .voltar:hover {
-    background-color: #e53935;
+    background-color: #2f0080;
 }
 .TituloGerenciamento {
-    color: #cb00c4;
+    color: #16043b;
     text-align: center;
 
 }
@@ -284,7 +191,7 @@ h1 {
 }
 a {
     text-decoration: none;
-    color: #fc0000;
+    color: #4804cb;
 }
 a {
     font-family: -apple-system, BlinkMacSystemFont, avenir next, avenir, segoe ui, helvetica neue, helvetica, Cantarell, Ubuntu, roboto, noto, arial, sans-serif;
@@ -334,7 +241,7 @@ a {
 .card2 .btn {
     display: inline-block;
     padding: 12px 25px;
-    background-color: #4CAF50;
+    background-color: #2f0080;
     color: #ffffff;
     text-decoration: none;
     border-radius: 5px;
@@ -344,7 +251,7 @@ a {
 }
 
 .card2 .btn:hover {
-    background-color: #45a049;
+    background-color: #16043b;
 }
 
 /* Estilo do botão Voltar */
@@ -353,7 +260,7 @@ a {
     width: 200px;
     margin-top: 30px;
     text-align: center;
-    background-color: #f44336;
+    background-color: #16043b;
     padding: 12px;
     border-radius: 5px;
     color: #ffffff;
@@ -364,7 +271,7 @@ a {
 }
 
 .voltar2:hover {
-    background-color: #e53935;
+    background-color: #2f0080;
 }
 
 /* Estilos gerais para a tabela */
@@ -384,7 +291,7 @@ a {
 
 /* Cabeçalho da tabela */
 .tabela-funcionarios th {
-    background-color: #4CAF50;
+    background-color: #16043b;
     color: white;
 }
 
@@ -427,14 +334,14 @@ a {
 
 .btn3.voltar {
     padding: 10px 15px;
-    background-color: #009688;
+    background-color: #16043b;
     text-decoration: none;
     border-radius: 5px;
     color: white;
 }
 
 .btn3.voltar:hover {
-    background-color: #00796b;
+    background-color: #2f0080;
 }
 
 /* Responsividade */
@@ -484,7 +391,7 @@ input.criar[type="tel"] {
 
 /* Estilo específico para o botão de envio */
 button.criar {
-    background-color: #4CAF50;
+    background-color: #16043b;
     color: white;
     border: none;
     cursor: pointer;
@@ -493,7 +400,7 @@ button.criar {
 }
 
 button.criar:hover {
-    background-color: #45a049;
+    background-color: #2f0080;
 }
 
 /* Estilo das mensagens de erro e sucesso */
@@ -581,3 +488,80 @@ ul {
 li {
     margin-bottom: 10px;
 }
+.menssagem {
+    background-color: purple;
+    width: 50px;
+    height: 50px;
+}
+
+.cards_container {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        padding: 20px;
+        gap: 20px;
+        background-color: #ffffff; /* Cor de fundo mais suave */
+    }
+
+    /* Card de boas-vindas */
+    .cardinicio {
+        width: 100%;
+        text-align: center;
+        margin-bottom: 40px;
+    }
+
+    .cardinicio h1 {
+        font-size: 2rem;
+        color: #333;
+    }
+
+    .cardinicio p {
+        font-size: 1.2rem;
+        color: #555;
+        margin-top: 10px;
+    }
+
+
+    /* Estilos da paginação */
+    .pagination {
+        text-align: center; /* Centraliza a paginação */
+        margin-top: 40px; /* Espaçamento acima da paginação */
+        font-size: 1rem;
+    }
+
+    .pagination button {
+        background-color: #007bff; /* Cor de fundo do botão */
+        color: #ffffff; /* Cor do texto */
+        border: none;
+        padding: 10px 20px;
+        margin: 0 10px;
+        font-size: 1rem;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+    }
+
+    .pagination button:hover {
+        background-color: #0056b3; /* Cor de fundo quando passa o mouse */
+    }
+
+    /* Responsividade para telas menores */
+    @media (max-width: 768px) {
+        .cards {
+            width: calc(50% - 20px); /* Dois cards por linha em telas menores */
+        }
+    }
+
+    @media (max-width: 480px) {
+        .cards {
+            width: 100%; /* Um card por linha em telas muito pequenas */
+        }
+
+        .cardinicio h1 {
+            font-size: 1.5rem; /* Menor tamanho do título em telas pequenas */
+        }
+
+        .cardinicio p {
+            font-size: 1rem; /* Menor tamanho da descrição */
+        }
+    }
